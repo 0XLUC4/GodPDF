@@ -2,12 +2,9 @@
 
 use std::path::PathBuf;
 
-use egui::{
-    Button, CornerRadius, Frame, Margin, RichText, ScrollArea, Sense, Stroke, TextureHandle, Ui,
-    vec2,
-};
+use egui::{Button, CornerRadius, RichText, ScrollArea, Stroke, Ui, vec2};
 
-use crate::commands::{self, Cmd, Group};
+use crate::commands::Cmd;
 use crate::theme::Palette;
 use crate::widgets::{icon, with_icon};
 
@@ -19,37 +16,19 @@ pub struct Output {
     pub new_pdf: bool,
 }
 
-pub fn show(ui: &mut Ui, logo: Option<&TextureHandle>, recent: &[PathBuf]) -> Output {
+pub fn show(ui: &mut Ui, recent: &[PathBuf]) -> Output {
     let palette = Palette::of(ui);
     let mut out = Output::default();
+    // The buttons and the list sit in the middle of the view: how tall they are is known
+    // from the frame before.
+    let id = ui.id().with("welcome-height");
+    let view = ui.available_height();
+    let known: f32 = ui.data(|data| data.get_temp(id)).unwrap_or(0.0);
     ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.set_max_width(980.0);
-            ui.add_space(36.0);
-            if let Some(logo) = logo {
-                ui.add(
-                    egui::Image::new(logo)
-                        .fit_to_exact_size(vec2(120.0, 120.0))
-                        .corner_radius(CornerRadius::same(26)),
-                );
-            }
-            ui.add_space(10.0);
-            ui.label(
-                RichText::new(crate::APP_NAME)
-                    .size(40.0)
-                    .strong()
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new("Every PDF tool. Local. Pure Rust.")
-                    .size(17.0)
-                    .color(palette.accent_text),
-            );
-            let (bar, _) = ui.allocate_exact_size(vec2(56.0, 3.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(bar, CornerRadius::same(2), palette.accent);
-            ui.add_space(22.0);
-
+            ui.add_space(((view - known) / 2.0).max(16.0));
+            let top = ui.cursor().min.y;
             ui.horizontal(|ui| {
                 // Center the three primary buttons.
                 let width = 3.0 * 170.0 + 2.0 * ui.spacing().item_spacing.x;
@@ -82,9 +61,6 @@ pub fn show(ui: &mut Ui, logo: Option<&TextureHandle>, recent: &[PathBuf]) -> Ou
                     out.cmd = Some(Cmd::Merge);
                 }
             });
-            ui.label(
-                RichText::new("…or drop PDF files anywhere on this window").color(palette.text_dim),
-            );
 
             if !recent.is_empty() {
                 ui.add_space(26.0);
@@ -103,11 +79,12 @@ pub fn show(ui: &mut Ui, logo: Option<&TextureHandle>, recent: &[PathBuf]) -> Ou
                 }
             }
 
-            ui.add_space(30.0);
-            section_title(ui, "TOOLS", &palette);
-            ui.add_space(6.0);
-            tool_grid(ui, &palette, &mut out);
-            ui.add_space(30.0);
+            let height = ui.cursor().min.y - top;
+            if (height - known).abs() > 0.5 {
+                ui.data_mut(|data| data.insert_temp(id, height));
+                ui.ctx().request_repaint();
+            }
+            ui.add_space(16.0);
         });
     });
     out
@@ -120,66 +97,4 @@ fn section_title(ui: &mut Ui, title: &str, palette: &Palette) {
             .strong()
             .color(palette.accent_text),
     );
-}
-
-fn tool_grid(ui: &mut Ui, palette: &Palette, out: &mut Output) {
-    let card_size = vec2(220.0, 84.0);
-    let gap = 12.0;
-    let columns = ((ui.available_width() + gap) / (card_size.x + gap))
-        .floor()
-        .max(1.0) as usize;
-    let tools: Vec<Cmd> = Group::TOOLS
-        .iter()
-        .flat_map(|group| commands::in_group(*group))
-        .filter(|cmd| !matches!(cmd, Cmd::RotateRight | Cmd::MoveEarlier | Cmd::MoveLater))
-        .collect();
-    for row in tools.chunks(columns) {
-        ui.horizontal(|ui| {
-            let used = row.len() as f32 * (card_size.x + gap) - gap;
-            ui.add_space(((ui.available_width() - used) / 2.0).max(0.0));
-            ui.spacing_mut().item_spacing.x = gap;
-            for cmd in row {
-                if card(ui, *cmd, card_size, palette) {
-                    out.cmd = Some(*cmd);
-                }
-            }
-        });
-        ui.add_space(gap);
-    }
-}
-
-fn card(ui: &mut Ui, cmd: Cmd, size: egui::Vec2, palette: &Palette) -> bool {
-    let response = Frame::new()
-        .fill(palette.surface)
-        .stroke(Stroke::new(1.0, palette.border))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::same(12))
-        .show(ui, |ui| {
-            ui.set_min_size(size - vec2(24.0, 24.0));
-            ui.set_max_size(size - vec2(24.0, 24.0));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(cmd.icon()).size(22.0).color(palette.accent));
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(cmd.label().trim_end_matches('…')).strong());
-                    ui.label(
-                        RichText::new(cmd.description())
-                            .small()
-                            .color(palette.text_dim),
-                    );
-                });
-            });
-        })
-        .response
-        .interact(Sense::click());
-    if response.hovered() {
-        ui.painter().rect_stroke(
-            response.rect,
-            CornerRadius::same(12),
-            Stroke::new(1.5, palette.accent),
-            egui::StrokeKind::Inside,
-        );
-    }
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
 }

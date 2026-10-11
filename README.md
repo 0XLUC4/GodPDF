@@ -3,8 +3,15 @@
 <h1 align="center">GodPDF</h1>
 <p align="center">Every PDF tool. Local. Pure Rust.</p>
 
+<p align="center"><img src="docs/screenshot.png" alt="GodPDF with a document open" width="900"></p>
+
 A PDF workbench.
 No account, no cloud, no telemetry: your documents never leave your machine.
+
+## Download
+
+Windows: get `GodPDF-windows-x64.exe` from the [latest release](https://github.com/0XLUC4/GodPDF/releases/latest).
+It is a single file, nothing to install. It is not signed, so Windows SmartScreen may ask before running it.
 
 ## Features
 

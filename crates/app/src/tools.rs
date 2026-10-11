@@ -143,7 +143,7 @@ pub fn panel(ui: &mut Ui, mode: Mode, expanded: &mut bool) -> Output {
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             let mut row = |ui: &mut Ui, action: Action, glyph: &str, label: &str| {
-                let mut response = widgets::tool_row(ui, glyph, label, None);
+                let mut response = widgets::tool_row(ui, glyph, tint(action), label, None);
                 if !hint(action).is_empty() {
                     response = response.on_hover_text(hint(action));
                 }
@@ -195,6 +195,17 @@ pub fn panel(ui: &mut Ui, mode: Mode, expanded: &mut bool) -> Output {
             }
         });
     out
+}
+
+/// The colour of the icon of a row: the one of the command, or of the tools a mode shows.
+fn tint(action: Action) -> egui::Color32 {
+    match action {
+        Action::Run(cmd) => cmd.tint(),
+        Action::Mode(Mode::Organize) => Group::Organize.tint(),
+        Action::Mode(Mode::Comment) => Group::Comment.tint(),
+        Action::Mode(Mode::Protect) => Group::Protect.tint(),
+        Action::Mode(Mode::AllTools | Mode::Read) => Group::View.tint(),
+    }
 }
 
 fn hint(action: Action) -> &'static str {

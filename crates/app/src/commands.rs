@@ -1,7 +1,7 @@
 //! Every user-facing command: label, icon, group, shortcut. Menus, the tools panel,
 //! welcome cards and the command palette are all generated from this one list.
 
-use egui::{Key, KeyboardShortcut, Modifiers};
+use egui::{Color32, Key, KeyboardShortcut, Modifiers};
 
 use crate::widgets::icon;
 
@@ -11,6 +11,7 @@ pub enum Cmd {
     Merge,
     Save,
     SaveAs,
+    Print,
     Close,
     ExportPages,
     Quit,
@@ -62,7 +63,28 @@ pub enum Group {
     Help,
 }
 
+const GREEN: Color32 = Color32::from_rgb(0x3F, 0xB9, 0x50);
+const PURPLE: Color32 = Color32::from_rgb(0xA3, 0x71, 0xF7);
+const AMBER: Color32 = Color32::from_rgb(0xE3, 0xA0, 0x08);
+const BLUE: Color32 = Color32::from_rgb(0x4C, 0x8D, 0xF6);
+const TEAL: Color32 = Color32::from_rgb(0x1F, 0xB5, 0xA5);
+const PINK: Color32 = Color32::from_rgb(0xE8, 0x5A, 0xAD);
+const RED: Color32 = Color32::from_rgb(0xF0, 0x52, 0x52);
+
 impl Group {
+    /// The colour of the icons of its tools: one per family, to find a tool by eye. Each
+    /// reads on the dark theme as on the light one.
+    pub fn tint(self) -> Color32 {
+        match self {
+            Self::Organize => GREEN,
+            Self::Combine => PURPLE,
+            Self::Comment => AMBER,
+            Self::Protect | Self::Edit | Self::Help => BLUE,
+            Self::File | Self::View => TEAL,
+            Self::Document => PINK,
+        }
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Self::File => "File",
@@ -113,11 +135,12 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 40] = [
+    pub const ALL: [Cmd; 41] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
         Cmd::SaveAs,
+        Cmd::Print,
         Cmd::Close,
         Cmd::ExportPages,
         Cmd::Quit,
@@ -162,6 +185,7 @@ impl Cmd {
             Self::Merge => "Merge PDFs…",
             Self::Save => "Save",
             Self::SaveAs => "Save As…",
+            Self::Print => "Print…",
             Self::Close => "Close tab",
             Self::ExportPages => "Export pages…",
             Self::Quit => "Quit",
@@ -207,6 +231,7 @@ impl Cmd {
             Self::Merge => icon::STACK,
             Self::Save => icon::FLOPPY_DISK,
             Self::SaveAs => icon::FLOPPY_DISK_BACK,
+            Self::Print => icon::PRINTER,
             Self::Close => icon::X,
             Self::Quit => icon::SIGN_OUT,
             Self::ExportPages | Self::Extract => icon::EXPORT,
@@ -242,6 +267,17 @@ impl Cmd {
             Self::Find => icon::MAGNIFYING_GLASS,
             Self::Palette => icon::COMMAND,
             Self::About => icon::QUESTION,
+        }
+    }
+
+    /// The colour of its icon in the lists of tools: the one of its family, save for what
+    /// takes pages out (red) and what writes them elsewhere (teal).
+    pub fn tint(self) -> Color32 {
+        match self {
+            Self::DeletePages => RED,
+            Self::Extract | Self::ExportPages | Self::ExtractText => TEAL,
+            Self::Find | Self::Properties => BLUE,
+            other => other.group().tint(),
         }
     }
 
@@ -295,6 +331,7 @@ impl Cmd {
             Self::Open
             | Self::Save
             | Self::SaveAs
+            | Self::Print
             | Self::Close
             | Self::ExportPages
             | Self::Quit => Group::File,
@@ -357,6 +394,7 @@ impl Cmd {
             Self::Open => (CMD, Key::O),
             Self::Save => (CMD, Key::S),
             Self::SaveAs => (CMD_SHIFT, Key::S),
+            Self::Print => (CMD, Key::P),
             Self::Close => (CMD, Key::W),
             Self::Undo => (CMD, Key::Z),
             Self::Redo => (CMD, Key::Y),

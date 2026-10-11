@@ -1,0 +1,19 @@
+[package]
+name = "godpdf-core"
+description = "PDF editing operations for GodPDF (no UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true
+# Random key for AES-256 encryption and unique annotation ids.
+getrandom = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
+# Parallel parsing + clock only where threads and a system clock exist.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { workspace = true, features = ["rayon", "chrono-clock"] }

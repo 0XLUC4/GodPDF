@@ -1,0 +1,4 @@
+target/
+*.pdf
+!tests/fixtures/*.pdf
+dist/

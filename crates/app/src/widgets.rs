@@ -49,8 +49,14 @@ pub fn rail_button(ui: &mut Ui, glyph: &str, tooltip: &str, selected: bool) -> R
     .on_hover_text(tooltip)
 }
 
-/// Full-width list row: 20px icon + label (+ dimmed description), hover background.
-pub fn tool_row(ui: &mut Ui, glyph: &str, label: &str, description: Option<&str>) -> Response {
+/// Full-width list row: 20px icon in `tint` + label (+ dimmed description), hover background.
+pub fn tool_row(
+    ui: &mut Ui,
+    glyph: &str,
+    tint: egui::Color32,
+    label: &str,
+    description: Option<&str>,
+) -> Response {
     let palette = crate::theme::Palette::of(ui);
     let height = if description.is_some() { 52.0 } else { 40.0 };
     let (rect, response) =
@@ -65,7 +71,7 @@ pub fn tool_row(ui: &mut Ui, glyph: &str, label: &str, description: Option<&str>
         egui::Align2::CENTER_CENTER,
         glyph,
         egui::FontId::proportional(20.0),
-        palette.text,
+        tint,
     );
     let text_x = left + 32.0;
     match description {

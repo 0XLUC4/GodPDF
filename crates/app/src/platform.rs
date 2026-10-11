@@ -132,6 +132,50 @@ mod native {
         Ok(Saved::To(Some(target)))
     }
 
+    /// Hand `bytes` to the system to print, as a file of its own: what was changed here need
+    /// not be saved first. Returns what was done, to tell the user.
+    pub fn print_pdf(name: &str, bytes: &[u8]) -> Result<&'static str, String> {
+        let path = std::env::temp_dir().join(format!("godpdf-print-{}", pdf_name(name)));
+        std::fs::write(&path, bytes)
+            .map_err(|err| format!("Cannot write {}: {err}", path.display()))?;
+        hand_to_printer(&path)
+    }
+
+    /// The program that opens PDFs prints the file when it says it can; otherwise it opens
+    /// it, to print from there.
+    #[cfg(windows)]
+    fn hand_to_printer(path: &Path) -> Result<&'static str, String> {
+        use std::os::windows::process::CommandExt as _;
+        // The path goes by the environment: no quoting to get wrong.
+        let start = |verb: &str| {
+            let script = format!("Start-Process -FilePath $env:GODPDF_FILE {verb}");
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .env("GODPDF_FILE", path)
+                // No console window of its own.
+                .creation_flags(0x0800_0000)
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        if start("-Verb Print") {
+            Ok("Sent to the printer by your PDF program")
+        } else if start("") {
+            Ok("Opened in your PDF program: print from there (Ctrl+P)")
+        } else {
+            Err("No program on this PC opens PDF files to print them".to_owned())
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn hand_to_printer(path: &Path) -> Result<&'static str, String> {
+        let sent = std::process::Command::new("lp").arg(path).status();
+        if sent.is_ok_and(|status| status.success()) {
+            Ok("Sent to the default printer")
+        } else {
+            Err("Could not print: is the `lp` command installed?".to_owned())
+        }
+    }
+
     /// Ask for a folder and write `base_part1.pdf`, ... Returns the folder, `None` if cancelled.
     pub fn save_parts(base: &str, parts: &[Vec<u8>]) -> Result<Option<String>, String> {
         let Some(folder) = rfd::FileDialog::new().pick_folder() else {
@@ -240,6 +284,10 @@ mod web {
     pub fn save_pdf(name: &str, _path: Option<&Path>, bytes: &[u8]) -> Result<Saved, String> {
         download(&pdf_name(name), bytes)?;
         Ok(Saved::To(None))
+    }
+
+    pub fn print_pdf(_name: &str, _bytes: &[u8]) -> Result<&'static str, String> {
+        Err("Printing is not available in the browser: save the file and print it".to_owned())
     }
 
     pub fn save_parts(base: &str, parts: &[Vec<u8>]) -> Result<Option<String>, String> {

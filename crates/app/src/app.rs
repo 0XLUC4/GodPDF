@@ -250,6 +250,7 @@ impl GodApp {
             ui.separator();
             item(ui, Cmd::Save, clicked);
             item(ui, Cmd::SaveAs, clicked);
+            item(ui, Cmd::Print, clicked);
             item(ui, Cmd::ExportPages, clicked);
             ui.separator();
             item(ui, Cmd::Close, clicked);
@@ -764,6 +765,7 @@ impl GodApp {
             Cmd::SaveAs => {
                 self.save(self.active, true);
             }
+            Cmd::Print => self.print(),
             Cmd::Close => self.request_close(self.active),
             Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             Cmd::Undo | Cmd::Redo => self.undo_redo(cmd == Cmd::Undo),
@@ -1213,6 +1215,17 @@ impl GodApp {
     }
 
     /// Returns true when written.
+    /// Hand the document in front, as it is now, to the system to print.
+    fn print(&mut self) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        match platform::print_pdf(&tab.session.name, tab.session.bytes()) {
+            Ok(done) => self.toasts.success(done),
+            Err(err) => self.toasts.error(err),
+        }
+    }
+
     fn save(&mut self, index: usize, save_as: bool) -> bool {
         let Some(tab) = self.tabs.get_mut(index) else {
             return false;

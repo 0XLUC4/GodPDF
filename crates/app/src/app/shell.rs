@@ -144,6 +144,7 @@ impl GodApp {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let buttons = [
+                    (icon::PRINTER, "Print… (Ctrl+P)", Cmd::Print),
                     (icon::EXPORT, "Save a copy… (Ctrl+Shift+S)", Cmd::SaveAs),
                     (icon::FLOPPY_DISK, "Save (Ctrl+S)", Cmd::Save),
                     (icon::INFO, "Document properties", Cmd::Properties),
@@ -462,7 +463,7 @@ impl GodApp {
     // ------------------------------------------------------------ welcome
 
     pub(super) fn welcome_central(&mut self, ui: &mut Ui, clicked: &mut Vec<Cmd>) {
-        let out = welcome::show(ui, self.logo.as_ref(), &self.recent);
+        let out = welcome::show(ui, &self.recent);
         if let Some(path) = out.open_recent {
             self.open_path(&path);
         }

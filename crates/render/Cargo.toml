@@ -1,0 +1,13 @@
+[package]
+name = "godpdf-render"
+description = "PDF page rasterization for GodPDF (no UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hayro.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+lopdf.workspace = true

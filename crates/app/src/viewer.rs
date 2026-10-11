@@ -239,10 +239,19 @@ fn paint_page(
 
     let texture = tab
         .page_texture(ui.ctx(), page, scale, budget)
-        .map(|tex| tex.id());
-    if let Some(texture) = texture {
+        .map(|tex| (tex.id(), tex.size_vec2()));
+    if let Some((texture, pixels)) = texture {
+        // Drawn pixel for pixel: a page that starts between two pixels of the screen, or is
+        // stretched by a fraction of one, has every letter smeared over its neighbours.
+        let ppp = ui.ctx().pixels_per_point();
+        let on_pixel = |at: f32| (at * ppp).round() / ppp;
+        let min = pos2(on_pixel(rect.min.x), on_pixel(rect.min.y));
+        // A page drawn for another zoom, shown while the right one is made, is stretched.
+        let own = pixels / ppp;
+        let fits = (own.x - rect.width()).abs() <= 1.0 && (own.y - rect.height()).abs() <= 1.0;
+        let size = if fits { own } else { rect.size() };
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-        painter.image(texture, rect, uv, Color32::WHITE);
+        painter.image(texture, Rect::from_min_size(min, size), uv, Color32::WHITE);
     } else {
         let text = tab.page_error(page).map_or_else(
             || format!("Rendering page {}…", page + 1),
@@ -256,7 +265,7 @@ fn paint_page(
             palette.text_dim,
         );
     }
-    texture
+    texture.map(|(texture, _)| texture)
 }
 
 /// Edit-text mode: the line under the pointer is framed, and a click asks to change it.

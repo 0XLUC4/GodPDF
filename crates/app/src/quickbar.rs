@@ -143,12 +143,14 @@ pub enum StyleKind {
 }
 
 /// Content colors written into the PDF (the only colors the UI shows besides greys).
-pub const SWATCHES: [(Color32, &str); 5] = [
+pub const SWATCHES: [(Color32, &str); 7] = [
     (Color32::BLACK, "Black"),
     (Color32::from_rgb(0x55, 0x55, 0x55), "Dark grey"),
     (Color32::from_rgb(0xD9, 0x2D, 0x20), "Red"),
     (Color32::from_rgb(0x1F, 0x5F, 0xD6), "Blue"),
-    (Color32::from_rgb(0xF2, 0xC9, 0x4C), "Yellow"),
+    (Color32::from_rgb(0xFF, 0xF2, 0x00), "Fluo yellow"),
+    (Color32::from_rgb(0x39, 0xFF, 0x14), "Fluo green"),
+    (Color32::from_rgb(0xFF, 0x3E, 0xC8), "Fluo pink"),
 ];
 const YELLOW: Color32 = SWATCHES[4].0;
 

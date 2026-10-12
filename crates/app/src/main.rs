@@ -20,6 +20,7 @@ mod textsel;
 mod theme;
 mod toasts;
 mod tools;
+mod updates;
 mod viewer;
 mod welcome;
 mod widgets;

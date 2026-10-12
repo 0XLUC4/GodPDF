@@ -25,6 +25,7 @@ fn free_text(text: &str, rect: Rect) -> Annotation {
         text: text.into(),
         font_size: 13.5,
         color: BLUE,
+        rotation: 0,
     }
 }
 
@@ -34,6 +35,7 @@ fn assert_free_text(annotation: &Option<Annotation>, text: &str, rect: Rect) {
         text: got_text,
         font_size,
         color,
+        ..
     }) = annotation
     else {
         panic!("not a FreeText: {annotation:?}");
@@ -73,6 +75,7 @@ fn free_text_wraps_inside_its_box_and_grows_downwards() {
         text: "Hello world again".into(),
         font_size: 12.0,
         color: BLUE,
+        rotation: 0,
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let placed = &annotations(&pdf, 0).unwrap()[0];
@@ -291,6 +294,7 @@ fn free_text_rect_keeps_its_anchor_through_a_round_trip() {
             g: 0.0,
             b: 0.0,
         },
+        rotation: 0,
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let placed = &annotations(&pdf, 0).unwrap()[0];

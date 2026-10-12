@@ -18,7 +18,7 @@ mod text;
 pub use annotate::{
     Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING,
     PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
-    remove_annotation, replace_annotation, wrap_free_text,
+    free_text_width, remove_annotation, replace_annotation, wrap_free_text,
 };
 pub use error::{Error, Result};
 pub use helvetica::line_width as helvetica_line_width;

@@ -87,6 +87,19 @@ impl GodApp {
                 if widgets::icon_button(ui, icon::QUESTION, "About GodPDF").clicked() {
                     clicked.push(Cmd::About);
                 }
+                let newest = self.updates.newest();
+                let tip = newest.as_ref().map_or_else(
+                    || "Updates".to_owned(),
+                    |release| format!("Update available: {}", release.tag),
+                );
+                let response = widgets::icon_button(ui, icon::ARROW_CIRCLE_UP, &tip);
+                if newest.is_some() {
+                    let dot = response.rect.right_top() + vec2(-6.0, 6.0);
+                    ui.painter().circle_filled(dot, 4.0, palette.accent);
+                }
+                if response.clicked() {
+                    clicked.push(Cmd::Updates);
+                }
             });
         });
         if let Some(index) = select {

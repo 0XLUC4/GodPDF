@@ -24,9 +24,10 @@ pub struct Output {
     pub move_page: Option<(usize, isize)>,
 }
 
-const TOOLBAR: [Cmd; 8] = [
+const TOOLBAR: [Cmd; 9] = [
     Cmd::RotateLeft,
     Cmd::RotateRight,
+    Cmd::RotateAll,
     Cmd::MoveEarlier,
     Cmd::MoveLater,
     Cmd::DeletePages,

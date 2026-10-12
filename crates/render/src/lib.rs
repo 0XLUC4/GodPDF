@@ -155,7 +155,7 @@ fn effective_scale(page_w: f32, page_h: f32, scale: f32) -> f32 {
 
 /// A piece of page text (usually one character; ligatures give several) and where it is drawn.
 ///
-/// Coordinates are displayed page points: origin top-left, after /Rotate — the same space as
+/// Coordinates are displayed page points: origin top-left, after /Rotate, the same space as
 /// [`PageSize`] and a bitmap rendered at scale 1.0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextChar {

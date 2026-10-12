@@ -50,6 +50,7 @@ fn free_text_rect_round_trips_through_annotations() {
         text: "Bonjour\nà tous".into(),
         font_size: 14.0,
         color: BLACK,
+        rotation: 0,
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let listed = annotations(&pdf, 0).unwrap();
@@ -105,6 +106,7 @@ fn moved_annotation_keeps_its_id() {
         text: "Move me".into(),
         font_size: 12.0,
         color: BLACK,
+        rotation: 0,
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &text).unwrap();
     let id = annotations(&pdf, 0).unwrap()[0].id.clone();
@@ -114,4 +116,37 @@ fn moved_annotation_keeps_its_id() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, id);
     assert_eq!(listed[0].annotation.as_ref(), Some(&moved));
+}
+
+#[test]
+fn turned_free_text_keeps_its_rotation_and_runs_along_y() {
+    let rect = Rect {
+        x0: 100.0,
+        y0: 200.0,
+        x1: 130.0,
+        y1: 400.0,
+    };
+    let annotation = Annotation::FreeText {
+        rect,
+        text: "Turned".into(),
+        font_size: 12.0,
+        color: BLACK,
+        rotation: 90,
+    };
+    let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
+    let listed = annotations(&pdf, 0).unwrap();
+    let Some(Annotation::FreeText {
+        rect: got,
+        rotation,
+        ..
+    }) = &listed[0].annotation
+    else {
+        panic!("not a FreeText");
+    };
+    assert_eq!(*rotation, 90);
+    assert!(close(got.y0, 200.0) && close(got.y1, 400.0) && close(got.x0, 100.0));
+    assert!(close(
+        got.x1 - got.x0,
+        12.0 * FREE_TEXT_LINE_HEIGHT + 2.0 * FREE_TEXT_PADDING
+    ));
 }

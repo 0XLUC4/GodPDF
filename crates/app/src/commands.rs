@@ -28,6 +28,7 @@ pub enum Cmd {
     Organize,
     RotateLeft,
     RotateRight,
+    RotateAll,
     DeletePages,
     MoveEarlier,
     MoveLater,
@@ -48,6 +49,7 @@ pub enum Cmd {
     Find,
     Palette,
     About,
+    Updates,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,7 +137,7 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 41] = [
+    pub const ALL: [Cmd; 43] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
@@ -157,6 +159,7 @@ impl Cmd {
         Cmd::Organize,
         Cmd::RotateLeft,
         Cmd::RotateRight,
+        Cmd::RotateAll,
         Cmd::DeletePages,
         Cmd::MoveEarlier,
         Cmd::MoveLater,
@@ -177,6 +180,7 @@ impl Cmd {
         Cmd::Find,
         Cmd::Palette,
         Cmd::About,
+        Cmd::Updates,
     ];
 
     pub fn label(self) -> &'static str {
@@ -202,6 +206,7 @@ impl Cmd {
             Self::Organize => "Organize pages",
             Self::RotateLeft => "Rotate left",
             Self::RotateRight => "Rotate right",
+            Self::RotateAll => "Rotate all pages",
             Self::DeletePages => "Delete pages",
             Self::MoveEarlier => "Move earlier",
             Self::MoveLater => "Move later",
@@ -222,6 +227,7 @@ impl Cmd {
             Self::Find => "Search text",
             Self::Palette => "Command palette",
             Self::About => "About GodPDF",
+            Self::Updates => "Updates",
         }
     }
 
@@ -248,6 +254,7 @@ impl Cmd {
             Self::Organize => icon::SQUARES_FOUR,
             Self::RotateLeft => icon::ARROW_COUNTER_CLOCKWISE,
             Self::RotateRight => icon::ARROW_CLOCKWISE,
+            Self::RotateAll => icon::ARROWS_CLOCKWISE,
             Self::DeletePages => icon::TRASH,
             Self::MoveEarlier => icon::CARET_LEFT,
             Self::MoveLater => icon::CARET_RIGHT,
@@ -267,6 +274,7 @@ impl Cmd {
             Self::Find => icon::MAGNIFYING_GLASS,
             Self::Palette => icon::COMMAND,
             Self::About => icon::QUESTION,
+            Self::Updates => icon::ARROW_CIRCLE_UP,
         }
     }
 
@@ -301,7 +309,9 @@ impl Cmd {
     pub fn description(self) -> &'static str {
         match self {
             Self::Organize => "Reorder, rotate and delete pages in a grid",
-            Self::RotateLeft | Self::RotateRight => "Turn pages by 90°",
+            Self::RotateLeft | Self::RotateRight => "Turn the current page by 90°",
+            Self::RotateAll => "Turn every page by 90°",
+            Self::Updates => "New versions of GodPDF and what they bring",
             Self::DeletePages => "Remove pages for good",
             Self::MoveEarlier => "Move the selected pages one place earlier",
             Self::MoveLater => "Move the selected pages one place later",
@@ -347,6 +357,7 @@ impl Cmd {
             Self::Organize
             | Self::RotateLeft
             | Self::RotateRight
+            | Self::RotateAll
             | Self::DeletePages
             | Self::MoveEarlier
             | Self::MoveLater
@@ -360,7 +371,7 @@ impl Cmd {
             }
             Self::Encrypt | Self::RemovePassword => Group::Protect,
             Self::Properties | Self::ExtractText | Self::EditText | Self::Find => Group::Document,
-            Self::About => Group::Help,
+            Self::About | Self::Updates => Group::Help,
         }
     }
 
@@ -385,6 +396,7 @@ impl Cmd {
                 | Self::ToggleTheme
                 | Self::Palette
                 | Self::About
+                | Self::Updates
                 | Self::ToggleThumbnails
         )
     }

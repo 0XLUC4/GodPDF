@@ -38,6 +38,7 @@ pub enum Annotation {
         text: String,
         font_size: f32,
         color: Color,
+        rotation: i32,
     },
     Square {
         rect: Rect,
@@ -95,13 +96,12 @@ impl Annotation {
                 rect,
                 text,
                 font_size,
+                rotation,
                 ..
             } => {
-                let lines = wrap_free_text(text, *font_size, to.x1 - to.x0).len();
-                *rect = Rect {
-                    y0: to.y1 - free_text_height(lines, *font_size),
-                    ..to
-                };
+                let width = free_text_width(to, *rotation);
+                let lines = wrap_free_text(text, *font_size, width).len();
+                *rect = with_free_text_height(to, *rotation, free_text_height(lines, *font_size));
             }
             Self::Ink { strokes, .. } => {
                 let scale = |value: f32, from0: f32, from1: f32, to0: f32, to1: f32| {
@@ -210,6 +210,48 @@ pub fn wrap_free_text(text: &str, font_size: f32, width: f32) -> Vec<String> {
     lines
 }
 
+fn quarter_turns(rotation: i32) -> i32 {
+    (rotation.rem_euclid(360) + 45) / 90 % 4 * 90
+}
+
+pub fn free_text_width(rect: Rect, rotation: i32) -> f32 {
+    if quarter_turns(rotation) % 180 == 0 {
+        rect.x1 - rect.x0
+    } else {
+        rect.y1 - rect.y0
+    }
+}
+
+fn with_free_text_height(rect: Rect, rotation: i32, height: f32) -> Rect {
+    match quarter_turns(rotation) {
+        90 => Rect {
+            x1: rect.x0 + height,
+            ..rect
+        },
+        180 => Rect {
+            y1: rect.y0 + height,
+            ..rect
+        },
+        270 => Rect {
+            x0: rect.x1 - height,
+            ..rect
+        },
+        _ => Rect {
+            y0: rect.y1 - height,
+            ..rect
+        },
+    }
+}
+
+fn upright_matrix(rect: Rect, rotation: i32) -> [f32; 6] {
+    match quarter_turns(rotation) {
+        90 => [0.0, 1.0, -1.0, 0.0, rect.x1, rect.y0],
+        180 => [-1.0, 0.0, 0.0, -1.0, rect.x1, rect.y1],
+        270 => [0.0, -1.0, 1.0, 0.0, rect.x0, rect.y1],
+        _ => [1.0, 0.0, 0.0, 1.0, rect.x0, rect.y0],
+    }
+}
+
 /// Height of a free-text box showing `lines` lines.
 fn free_text_height(lines: usize, font_size: f32) -> f32 {
     lines.max(1) as f32 * font_size * FREE_TEXT_LINE_HEIGHT + 2.0 * FREE_TEXT_PADDING
@@ -254,7 +296,8 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             text,
             font_size,
             color,
-        } => free_text(normalized(*rect)?, text, *font_size, *color),
+            rotation,
+        } => free_text(normalized(*rect)?, text, *font_size, *color, *rotation),
         Annotation::Square { rect, color, width } => square(normalized(*rect)?, *color, *width),
         Annotation::Ink {
             strokes,
@@ -344,26 +387,38 @@ fn note(rect: Rect, text: &str) -> Parts {
 }
 
 /// Helvetica text wrapped to the rectangle's width. The rectangle keeps its top edge and
-/// width; its height is set to fit the wrapped lines, so the text never leaves it.
-fn free_text(rect: Rect, text: &str, font_size: f32, color: Color) -> Result<Parts> {
+/// width; its height is set to fit the wrapped lines, so the text never leaves it. Width,
+/// height and top are as read on the page turned by `rotation`.
+fn free_text(rect: Rect, text: &str, font_size: f32, color: Color, rotation: i32) -> Result<Parts> {
     if !(font_size.is_finite() && font_size > 0.0) {
         return Err(Error::InvalidArgument(format!(
             "invalid font size {font_size}"
         )));
     }
-    let lines = wrap_free_text(text, font_size, rect.x1 - rect.x0);
-    let rect = Rect {
-        y0: rect.y1 - free_text_height(lines.len(), font_size),
-        ..rect
+    let rotation = quarter_turns(rotation);
+    let width = free_text_width(rect, rotation);
+    let lines = wrap_free_text(text, font_size, width);
+    let height = free_text_height(lines.len(), font_size);
+    let rect = with_free_text_height(rect, rotation, height);
+    let upright = Rect {
+        x0: 0.0,
+        y0: 0.0,
+        x1: width,
+        y1: height,
     };
+    let matrix = upright_matrix(rect, rotation)
+        .iter()
+        .map(|value| num(*value))
+        .collect::<Vec<_>>()
+        .join(" ");
     let size = num(font_size);
     let mut appearance = format!(
-        "q {} re W n BT /Helv {size} Tf {} rg {} TL {} {} Td",
-        rect_ops(rect),
+        "q {matrix} cm {} re W n BT /Helv {size} Tf {} rg {} TL {} {} Td",
+        rect_ops(upright),
         rgb(color),
         num(font_size * FREE_TEXT_LINE_HEIGHT),
-        num(rect.x0 + FREE_TEXT_PADDING),
-        num(rect.y1 - FREE_TEXT_PADDING - FREE_TEXT_ASCENT * font_size),
+        num(FREE_TEXT_PADDING),
+        num(height - FREE_TEXT_PADDING - FREE_TEXT_ASCENT * font_size),
     );
     for (index, line) in lines.iter().enumerate() {
         let advance = if index == 0 { "" } else { " T*" };
@@ -376,15 +431,19 @@ fn free_text(rect: Rect, text: &str, font_size: f32, color: Color) -> Result<Par
         "BaseFont" => "Helvetica",
         "Encoding" => "WinAnsiEncoding",
     };
+    let mut extra = dictionary! {
+        "Contents" => contents_string(text),
+        "DA" => Object::string_literal(format!("/Helv {size} Tf {} rg", rgb(color))),
+    };
+    if rotation != 0 {
+        extra.set("Rotate", i64::from(rotation));
+    }
     Ok(Parts {
         subtype: "FreeText",
         rect,
         // /C would paint a background in some viewers; the text colour lives in /DA.
         color: None,
-        extra: dictionary! {
-            "Contents" => contents_string(text),
-            "DA" => Object::string_literal(format!("/Helv {size} Tf {} rg", rgb(color))),
-        },
+        extra,
         appearance,
         resources: dictionary! { "Font" => dictionary! { "Helv" => font } },
     })
@@ -839,11 +898,17 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
         }),
         b"FreeText" => {
             let (font_size, color) = parse_da(doc, dict);
+            let rotation = dict
+                .get(b"Rotate")
+                .ok()
+                .and_then(|rotate| number(doc, rotate))
+                .map_or(0, |rotate| quarter_turns(rotate.round() as i32));
             Some(Annotation::FreeText {
                 rect: read_rect(doc, dict)?,
                 text: read_text(doc, dict),
                 font_size,
                 color,
+                rotation,
             })
         }
         b"Square" => Some(Annotation::Square {

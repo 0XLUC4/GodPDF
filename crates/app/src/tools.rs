@@ -70,9 +70,9 @@ pub enum Action {
 }
 
 /// "All tools" list; rows past this count hide behind "View more".
-const FOLDED: usize = 10;
+const FOLDED: usize = 11;
 
-const ALL_TOOLS: [(Action, &str, &str); 16] = [
+const ALL_TOOLS: [(Action, &str, &str); 17] = [
     (Action::Run(Cmd::SaveAs), icon::EXPORT, "Export a PDF"),
     (Action::Run(Cmd::Merge), icon::STACK, "Combine files"),
     (
@@ -90,7 +90,12 @@ const ALL_TOOLS: [(Action, &str, &str); 16] = [
     (
         Action::Run(Cmd::RotateRight),
         icon::ARROW_CLOCKWISE,
-        "Rotate pages",
+        "Rotate page",
+    ),
+    (
+        Action::Run(Cmd::RotateAll),
+        icon::ARROWS_CLOCKWISE,
+        "Rotate all pages",
     ),
     (
         Action::Run(Cmd::InsertBlank),

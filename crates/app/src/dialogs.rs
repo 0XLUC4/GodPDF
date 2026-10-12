@@ -70,6 +70,7 @@ pub enum Dialog {
         error: Option<String>,
     },
     About,
+    Updates,
     Preferences,
 }
 
@@ -88,6 +89,7 @@ pub enum Outcome {
 pub struct Env<'a> {
     pub logo: Option<&'a TextureHandle>,
     pub dark: &'a mut bool,
+    pub updates: &'a crate::updates::Checker,
 }
 
 pub fn show(ctx: &Context, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
@@ -383,6 +385,10 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
             });
             buttons(ui, "Close", None, enter).map_or(Outcome::Keep, |_| Outcome::Cancel)
         }
+        Dialog::Updates => {
+            updates(ui, env.updates, &palette);
+            buttons(ui, "Close", None, enter).map_or(Outcome::Keep, |_| Outcome::Cancel)
+        }
         Dialog::Preferences => {
             title(ui, &with_icon(icon::GEAR, "Preferences"));
             ui.horizontal(|ui| {
@@ -393,6 +399,71 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
             buttons(ui, "Done", None, enter).map_or(Outcome::Keep, |_| Outcome::Cancel)
         }
     }
+}
+
+fn updates(ui: &mut Ui, checker: &crate::updates::Checker, palette: &Palette) {
+    use crate::updates::{RELEASES_PAGE, State};
+    title(ui, &with_icon(icon::ARROW_CIRCLE_UP, "Updates"));
+    let current = env!("CARGO_PKG_VERSION");
+    match checker.state() {
+        State::Idle | State::Loading => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Looking for new versions…");
+            });
+        }
+        State::Failed(err) => {
+            ui.label(RichText::new(err).color(palette.error));
+            if ui
+                .button(with_icon(icon::ARROW_CLOCKWISE, "Try again"))
+                .clicked()
+            {
+                checker.check(ui.ctx());
+            }
+        }
+        State::Ready(releases) => {
+            let newest = releases.iter().find(|release| release.is_newer());
+            let status = match newest {
+                Some(release) => format!("{} is out. You have version {current}.", release.tag),
+                None => format!("You have the latest version ({current})."),
+            };
+            ui.label(RichText::new(status).strong());
+            ui.add_space(6.0);
+            if releases.is_empty() {
+                ui.label(RichText::new("No release published yet.").color(palette.text_dim));
+            }
+            ScrollArea::vertical()
+                .max_height(360.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for release in &releases {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&release.name).size(16.0).strong());
+                            if release.is_newer() {
+                                ui.label(RichText::new("New").color(palette.accent_text).strong());
+                            }
+                        });
+                        ui.label(
+                            RichText::new(format!("{} · {}", release.tag, release.date))
+                                .small()
+                                .color(palette.text_dim),
+                        );
+                        if !release.notes.is_empty() {
+                            ui.label(&release.notes);
+                        }
+                        if !release.url.is_empty() {
+                            ui.hyperlink_to(
+                                with_icon(icon::DOWNLOAD_SIMPLE, "Download"),
+                                &release.url,
+                            );
+                        }
+                    }
+                });
+        }
+    }
+    ui.add_space(6.0);
+    ui.hyperlink_to("All releases on GitHub", RELEASES_PAGE);
 }
 
 fn merge(ui: &mut Ui, files: &mut Vec<PickedFile>, palette: &Palette) -> Outcome {

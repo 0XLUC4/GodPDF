@@ -42,6 +42,7 @@ fn all_kinds() -> Vec<Annotation> {
             text: "Line (1)\nLine \\2 — ü".into(),
             font_size: 12.0,
             color: RED,
+            rotation: 0,
         },
         Annotation::Square {
             rect: RECT,
@@ -124,6 +125,7 @@ fn annotation_rejects_bad_input() {
         text: "x".into(),
         font_size: 0.0,
         color: RED,
+        rotation: 0,
     };
     assert!(matches!(
         add_annotation(&pdf, 0, &bad_font),

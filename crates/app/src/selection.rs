@@ -259,9 +259,12 @@ fn paint_shape(painter: &egui::Painter, view: &View, annotation: &Annotation) {
             text,
             font_size,
             color,
+            rotation,
         } => {
             let frame = view.pdf_rect(rect);
-            textbox::paint(painter, frame, text, *font_size, zoom, egui_color(*color));
+            let turn = view.geom.rotation - rotation;
+            let color = egui_color(*color);
+            textbox::paint(painter, frame, turn, text, *font_size, zoom, color);
         }
         Annotation::Note { .. } => {}
     }

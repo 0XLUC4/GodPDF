@@ -24,7 +24,7 @@ use crate::theme::{self, Palette};
 use crate::toasts::Toasts;
 use crate::tools::{CommentStyle, Mode};
 use crate::widgets::{icon, with_icon};
-use crate::{branding, comments, geometry, organize, ranges, sidebar, viewer};
+use crate::{branding, comments, geometry, organize, ranges, sidebar, updates, viewer};
 
 const MAX_RECENT: usize = 8;
 const ZOOM_STEP: f32 = 1.2;
@@ -76,6 +76,7 @@ pub struct GodApp {
     split: Option<u64>,
     /// A click on a line of the page changes its words (Tools: Edit PDF text).
     edit_text: bool,
+    updates: updates::Checker,
 }
 
 impl GodApp {
@@ -131,7 +132,9 @@ impl GodApp {
             window_title: String::new(),
             split: None,
             edit_text: false,
+            updates: updates::Checker::default(),
         };
+        app.updates.check(&cc.egui_ctx);
         for path in files {
             app.open_path(&path);
         }
@@ -551,6 +554,7 @@ impl GodApp {
             let env = dialogs::Env {
                 logo: self.logo.as_ref(),
                 dark: &mut dark,
+                updates: &self.updates,
             };
             let outcome = dialogs::show(ctx, &mut dialog, env);
             if dark != self.dark {
@@ -801,6 +805,16 @@ impl GodApp {
                 }
                 self.report(result, None);
             }
+            Cmd::RotateAll => {
+                let tab = &mut self.tabs[self.active];
+                let pages: Vec<usize> = (0..tab.page_count()).collect();
+                let selection = tab.selection.clone();
+                let result = tab.apply(cmd.label(), |pdf| core::rotate_pages(pdf, &pages, 90));
+                if result.is_ok() {
+                    tab.selection = selection;
+                }
+                self.report(result, None);
+            }
             Cmd::DeletePages => {
                 let tab = &mut self.tabs[self.active];
                 let pages = tab.target_pages();
@@ -910,6 +924,12 @@ impl GodApp {
             }
             Cmd::Palette => self.palette = Some(PaletteState::default()),
             Cmd::About => self.dialog = Some(Dialog::About),
+            Cmd::Updates => {
+                if !matches!(self.updates.state(), updates::State::Ready(_)) {
+                    self.updates.check(ctx);
+                }
+                self.dialog = Some(Dialog::Updates);
+            }
             Cmd::Highlight | Cmd::Note | Cmd::FreeText | Cmd::Rectangle | Cmd::Ink => {}
         }
     }
@@ -1042,12 +1062,18 @@ impl GodApp {
                 color,
                 width: style.width,
             },
-            Annotation::FreeText { rect, text, .. } => Annotation::FreeText {
+            Annotation::FreeText {
+                rect,
+                text,
+                rotation,
+                ..
+            } => Annotation::FreeText {
                 // Same top edge and width; core refits the height to the wrapped text.
                 rect,
                 text,
                 font_size: style.font_size,
                 color,
+                rotation,
             },
             Annotation::Note { .. } => return,
         };
@@ -1132,6 +1158,7 @@ impl GodApp {
         match cmd {
             Cmd::Organize
             | Cmd::RotateLeft
+            | Cmd::RotateAll
             | Cmd::DeletePages
             | Cmd::InsertBlank
             | Cmd::InsertFile => {
@@ -1647,11 +1674,13 @@ impl GodApp {
                     text,
                     font_size,
                     color,
+                    rotation,
                 } = &original
                 else {
                     return;
                 };
-                let anchor = (rect.x0, rect.y1);
+                let anchor = geometry::from_pdf_rect(&geom, size, rect).min;
+                let width = core::free_text_width(*rect, *rotation);
                 let text = text.clone();
                 self.styles.text.font_size = *font_size;
                 self.styles.text.color = egui_color(*color);
@@ -1663,7 +1692,7 @@ impl GodApp {
                 let place = Placement {
                     page,
                     anchor,
-                    width: Some(rect.x1 - rect.x0),
+                    width: Some(width),
                     geom,
                     displayed: size,
                 };
@@ -1676,7 +1705,7 @@ impl GodApp {
                     core::FREE_TEXT_PADDING,
                     core::FREE_TEXT_PADDING + font_size * 0.6,
                 );
-                let anchor = geometry::to_pdf(&geom, size, (point - offset).max(egui::Pos2::ZERO));
+                let anchor = (point - offset).max(egui::Pos2::ZERO);
                 let place = Placement {
                     page,
                     anchor,
@@ -1710,6 +1739,7 @@ impl GodApp {
             text: text_box.text.trim_end().to_owned(),
             font_size: style.font_size,
             color: core_color(style.color),
+            rotation: text_box.rotation(),
         };
         let add = |pdf: &[u8]| core::add_annotation(pdf, text_box.page, &annotation);
         let result = if text_box.original.is_some() {
@@ -2020,7 +2050,7 @@ impl GodApp {
                     }
                 }
             }
-            Dialog::About | Dialog::Preferences => {}
+            Dialog::About | Dialog::Updates | Dialog::Preferences => {}
         }
     }
 }

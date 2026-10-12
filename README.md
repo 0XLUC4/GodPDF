@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" width="160" alt="GodPDF logo"></p>
+<p align="center"><img src="assets/icon.svg" width="160" alt="GodPDF logo"></p>
 
 <h1 align="center">GodPDF</h1>
 <p align="center">Every PDF tool. Local. Pure Rust.</p>

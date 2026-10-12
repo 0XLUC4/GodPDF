@@ -12,15 +12,18 @@ No account, no cloud, no telemetry: your documents never leave your machine.
 
 Windows: get `GodPDF-windows-x64.exe` from the [latest release](https://github.com/0XLUC4/GodPDF/releases/latest).
 It is a single file, nothing to install. It is not signed, so Windows SmartScreen may ask before running it.
+New versions come through the Updates button: it downloads one and restarts on it.
 
 ## Features
 
-- View: tabs, continuous scroll, zoom, thumbnails, bookmarks, search, dark/light theme
-- Organize: drag-and-drop reorder, rotate, delete, insert blank or from file, extract, split
+- View: tabs, continuous scroll, zoom, thumbnails, bookmarks, search, two documents side by side, dark/light theme
+- Large pages: plans in A3 to A0 stay sharp at any zoom
+- Organize: drag-and-drop reorder, rotate one page or all, delete, insert blank or from file, extract, split
 - Combine: merge any number of PDFs
-- Comment: highlight, sticky note, free text, rectangle, ink
+- Comment: highlight in fluo colors, sticky note, free text, rectangle, ink; comments can be moved, resized and erased
+- Edit the text of a page, line by line
 - Protect: open encrypted PDFs, add or remove a password
-- Document properties, text extraction, undo/redo history, command palette (`Ctrl+K`)
+- Print, document properties, text extraction, undo/redo history, command palette (`Ctrl+K`)
 
 ## Build
 

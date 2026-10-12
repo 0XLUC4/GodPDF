@@ -402,7 +402,7 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
 }
 
 fn updates(ui: &mut Ui, checker: &crate::updates::Checker, palette: &Palette) {
-    use crate::updates::{RELEASES_PAGE, State};
+    use crate::updates::{CAN_INSTALL, RELEASES_PAGE, State};
     title(ui, &with_icon(icon::ARROW_CIRCLE_UP, "Updates"));
     let current = env!("CARGO_PKG_VERSION");
     match checker.state() {
@@ -450,13 +450,18 @@ fn updates(ui: &mut Ui, checker: &crate::updates::Checker, palette: &Palette) {
                                 .color(palette.text_dim),
                         );
                         if !release.notes.is_empty() {
-                            ui.label(&release.notes);
+                            markdown(ui, &release.notes, palette);
                         }
-                        if !release.url.is_empty() {
-                            ui.hyperlink_to(
-                                with_icon(icon::DOWNLOAD_SIMPLE, "Download"),
-                                &release.url,
-                            );
+                        let latest = newest.is_some_and(|newest| newest.tag == release.tag);
+                        match (&release.asset, latest && CAN_INSTALL) {
+                            (Some(asset), true) => install_row(ui, checker, asset, palette),
+                            _ if !release.url.is_empty() => {
+                                ui.hyperlink_to(
+                                    with_icon(icon::ARROW_SQUARE_OUT, "View on GitHub"),
+                                    &release.url,
+                                );
+                            }
+                            _ => {}
                         }
                     }
                 });
@@ -464,6 +469,94 @@ fn updates(ui: &mut Ui, checker: &crate::updates::Checker, palette: &Palette) {
     }
     ui.add_space(6.0);
     ui.hyperlink_to("All releases on GitHub", RELEASES_PAGE);
+}
+
+const DOWNLOAD_BLUE: egui::Color32 = egui::Color32::from_rgb(0x25, 0x63, 0xEB);
+
+fn install_row(ui: &mut Ui, checker: &crate::updates::Checker, asset: &str, palette: &Palette) {
+    use crate::updates::Install;
+    ui.add_space(4.0);
+    match checker.install_state() {
+        Install::Downloading | Install::Ready(_) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Downloading the update… GodPDF restarts when it is done.");
+            });
+        }
+        state => {
+            let text = RichText::new(with_icon(icon::DOWNLOAD_SIMPLE, "Download and install"))
+                .color(egui::Color32::WHITE)
+                .strong();
+            let button = Button::new(text)
+                .fill(DOWNLOAD_BLUE)
+                .min_size(vec2(0.0, 30.0));
+            if ui
+                .add(button)
+                .on_hover_text("Replace GodPDF with this version and restart")
+                .clicked()
+            {
+                checker.install(ui.ctx(), asset.to_owned());
+            }
+            if let Install::Failed(err) = state {
+                ui.label(RichText::new(err).color(palette.error));
+            }
+        }
+    }
+}
+
+fn markdown(ui: &mut Ui, text: &str, palette: &Palette) {
+    use egui::text::{LayoutJob, TextFormat};
+    use egui::{FontFamily, FontId};
+    let size = 14.0;
+    let line_job = |line: &str, size: f32, all_bold: bool, width: f32| {
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = width;
+        for (index, part) in line.split("**").enumerate() {
+            let bold = all_bold || index % 2 == 1;
+            let family = if bold {
+                FontFamily::Name(crate::textbox::BOLD_FAMILY.into())
+            } else {
+                FontFamily::Proportional
+            };
+            job.append(
+                &part.replace('`', ""),
+                0.0,
+                TextFormat {
+                    font_id: FontId::new(size, family),
+                    color: palette.text,
+                    ..Default::default()
+                },
+            );
+        }
+        job
+    };
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            ui.add_space(4.0);
+            continue;
+        }
+        if let Some(heading) = trimmed.strip_prefix('#') {
+            let heading = heading.trim_start_matches('#').trim();
+            ui.label(line_job(heading, size + 1.0, true, ui.available_width()));
+            continue;
+        }
+        let bullet = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|marker| trimmed.strip_prefix(marker));
+        match bullet {
+            Some(item) => {
+                ui.horizontal_top(|ui| {
+                    ui.label(RichText::new("•").size(size).color(palette.text));
+                    let width = ui.available_width();
+                    ui.label(line_job(item, size, false, width));
+                });
+            }
+            None => {
+                ui.label(line_job(trimmed, size, false, ui.available_width()));
+            }
+        }
+    }
 }
 
 fn merge(ui: &mut Ui, files: &mut Vec<PickedFile>, palette: &Palette) -> Outcome {

@@ -77,6 +77,7 @@ pub struct GodApp {
     /// A click on a line of the page changes its words (Tools: Edit PDF text).
     edit_text: bool,
     updates: updates::Checker,
+    restart: Option<PathBuf>,
 }
 
 impl GodApp {
@@ -133,7 +134,9 @@ impl GodApp {
             split: None,
             edit_text: false,
             updates: updates::Checker::default(),
+            restart: None,
         };
+        updates::remove_old_program();
         app.updates.check(&cc.egui_ctx);
         for path in files {
             app.open_path(&path);
@@ -150,6 +153,7 @@ impl eframe::App for GodApp {
         self.process_open_queue();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
+        self.process_update(&ctx);
         self.handle_close_request(&ctx);
         self.sync_text_box();
         if !ctx.input(|input| input.pointer.any_down()) {
@@ -562,7 +566,11 @@ impl GodApp {
             }
             match outcome {
                 Outcome::Keep => self.dialog = Some(dialog),
-                Outcome::Cancel => {}
+                Outcome::Cancel => {
+                    if matches!(dialog, Dialog::ConfirmQuit) {
+                        self.restart = None;
+                    }
+                }
                 Outcome::Primary | Outcome::Secondary => {
                     self.finish_dialog(ctx, dialog, outcome == Outcome::Primary);
                 }
@@ -708,6 +716,24 @@ impl GodApp {
         if requested && !self.quit_confirmed && self.tabs.iter().any(DocTab::is_dirty) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.dialog = Some(Dialog::ConfirmQuit);
+        } else if requested && let Some(program) = self.restart.take() {
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Err(err) = std::process::Command::new(&program).spawn() {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                self.toasts
+                    .error(format!("GodPDF is updated; start it again ({err})"));
+            }
+            #[cfg(target_arch = "wasm32")]
+            let _ = program;
+        }
+    }
+
+    fn process_update(&mut self, ctx: &Context) {
+        if let Some(program) = self.updates.take_installed() {
+            self.restart = Some(program);
+            self.dialog = None;
+            self.commit_text_box();
+            ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
 

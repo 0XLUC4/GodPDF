@@ -252,6 +252,31 @@ fn paint_page(
         let size = if fits { own } else { rect.size() };
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         painter.image(texture, Rect::from_min_size(min, size), uv, Color32::WHITE);
+        // A page too large to be drawn whole this big is stretched: what shows of it is
+        // drawn again over it, sharp.
+        let zoom = scale / ppp;
+        let seen = ui
+            .clip_rect()
+            .intersect(rect)
+            .translate(-rect.min.to_vec2());
+        let seen = Rect::from_min_max(
+            (seen.min.to_vec2() / zoom).to_pos2(),
+            (seen.max.to_vec2() / zoom).to_pos2(),
+        );
+        if let Some((detail, pixels, part)) = tab.page_detail(ui.ctx(), page, scale, seen, budget) {
+            let corner = min + part.min.to_vec2() * zoom;
+            let corner = pos2(on_pixel(corner.x), on_pixel(corner.y));
+            // Made for another zoom, it is stretched until the right one comes.
+            let (own, shown) = (pixels / ppp, part.size() * zoom);
+            let fits = (own.x - shown.x).abs() <= 1.0 && (own.y - shown.y).abs() <= 1.0;
+            let size = if fits { own } else { shown };
+            painter.image(
+                detail,
+                Rect::from_min_size(corner, size),
+                uv,
+                Color32::WHITE,
+            );
+        }
     } else {
         let text = tab.page_error(page).map_or_else(
             || format!("Rendering page {}…", page + 1),
@@ -295,15 +320,15 @@ fn text_line(
         .then(|| (page, band, crate::textsel::text(&chars, line)))
 }
 
-/// Mark every place the searched words are written on `page`.
+/// Mark every place the searched words are written on `page`, while the search shows them.
 fn paint_search_hits(ui: &Ui, tab: &mut DocTab, page: usize, rect: Rect) {
-    if tab.search.searched.is_empty() {
+    let Some(words) = tab.search.marked().map(str::to_owned) else {
         return;
-    }
+    };
     let chars = tab.text_chars(page);
     let zoom = tab.zoom;
     let fill = Color32::from_rgba_unmultiplied(255, 196, 0, 96);
-    for found in crate::textsel::find(&chars, &tab.search.searched) {
+    for found in crate::textsel::find(&chars, &words) {
         for band in crate::textsel::bands(&chars, found) {
             let min = rect.min + band.min.to_vec2() * zoom;
             let band = Rect::from_min_size(min, band.size() * zoom);

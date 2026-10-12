@@ -89,15 +89,29 @@ impl Document {
     /// `scale` is clamped to `0.05..=8.0` and reduced further if the output would exceed
     /// 40 megapixels or 16384 px on a side.
     pub fn render(&self, page: usize, scale: f32) -> Result<Bitmap> {
+        let size = self.page_size(page)?;
+        self.render_region(page, scale, [0.0, 0.0, size.width, size.height])
+    }
+
+    /// Render the part `region` of the page (left, top, right, bottom in displayed points) at
+    /// `scale`, with the limits of [`Self::render`]: a large page can be drawn sharp one part
+    /// at a time, where its whole would be too many pixels.
+    pub fn render_region(&self, page: usize, scale: f32, region: [f32; 4]) -> Result<Bitmap> {
         let page = self.page(page)?;
         let (page_w, page_h) = page.render_dimensions();
-        let scale = effective_scale(page_w, page_h, scale);
-        let width = ((page_w * scale).round() as u16).max(1);
-        let height = ((page_h * scale).round() as u16).max(1);
+        let [left, top, right, bottom] = region;
+        let (left, top) = (left.clamp(0.0, page_w), top.clamp(0.0, page_h));
+        let (part_w, part_h) = (right.min(page_w) - left, bottom.min(page_h) - top);
+        let scale = effective_scale(part_w, part_h, scale);
+        let width = ((part_w * scale).round() as u16).max(1);
+        let height = ((part_h * scale).round() as u16).max(1);
 
         let cache = RenderCache::new();
         let mut ctx = RenderContext::new(width, height);
-        let transform = Affine::scale(f64::from(scale)) * page.initial_transform(true).to_kurbo();
+        let corner = (f64::from(-left * scale), f64::from(-top * scale));
+        let transform = Affine::translate(corner)
+            * Affine::scale(f64::from(scale))
+            * page.initial_transform(true).to_kurbo();
         render_into(
             page,
             &cache,

@@ -354,6 +354,9 @@ impl GodApp {
         let tab = &mut self.tabs[index];
         if same {
             tab.swap_place();
+        } else {
+            // The search panel is that of the document in front.
+            tab.search.open = false;
         }
         let (shown, count, title) = (tab.id, tab.page_count(), tab.title().to_owned());
         let mut page = tab.current_page + 1;
@@ -410,7 +413,9 @@ impl GodApp {
     /// same document shows.
     fn document(&mut self, ui: &mut Ui, clicked: &mut Vec<Cmd>, beside: Option<(usize, usize)>) {
         let mut budget = Budget(2);
+        let searching = self.show_sidebar && self.sidebar_tab == sidebar::Tab::Search;
         let tab = &mut self.tabs[self.active];
+        tab.search.open = searching;
         match tab.mode {
             ViewMode::Read => {
                 let canvas = ui.max_rect();

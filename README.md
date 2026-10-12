@@ -38,8 +38,6 @@ cargo run --release -p godpdf
 | `crates/render` (`godpdf-render`) | Page rasterization via `hayro` |
 | `crates/app` (`godpdf`) | `egui`/`eframe` desktop app |
 
-See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
-
 ## License
 
 MIT OR Apache-2.0

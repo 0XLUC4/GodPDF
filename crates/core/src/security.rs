@@ -14,7 +14,7 @@ const CRYPT_FILTER: &[u8] = b"StdCF";
 ///
 /// Also true for owner-password-only files (empty user password). Those open without a
 /// password, so `decrypt(pdf, "")` succeeds and every other function (page_count, edits, ...)
-/// works on them directly — but edits return an **unencrypted** result. Callers that want to
+/// works on them directly, but edits return an **unencrypted** result. Callers that want to
 /// keep the protection must re-encrypt with [`crate::encrypt`] after editing.
 pub fn is_encrypted(pdf: &[u8]) -> bool {
     if let Ok(meta) = Document::load_metadata_mem(pdf) {

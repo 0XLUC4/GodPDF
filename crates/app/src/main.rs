@@ -1,4 +1,4 @@
-//! GodPDF — desktop (and later web) entry point.
+//! GodPDF: desktop (and later web) entry point.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;

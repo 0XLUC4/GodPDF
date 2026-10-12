@@ -1,10 +1,10 @@
-//! Embedded logo assets.
+//! App artwork, generated from assets/icon.svg by build.rs.
 
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
 
-const LOGO_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
+const LOGO_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/godpdf-logo.png"));
 #[cfg(not(target_arch = "wasm32"))]
-const FAVICON_PNG: &[u8] = include_bytes!("../../../assets/favicon.png");
+const FAVICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/godpdf-favicon.png"));
 
 fn decode(png: &[u8]) -> Option<image::RgbaImage> {
     image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -13,7 +13,6 @@ fn decode(png: &[u8]) -> Option<image::RgbaImage> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Window icon (favicon, falling back to the full logo).
 pub fn icon_data() -> Option<egui::IconData> {
     let img = decode(FAVICON_PNG).or_else(|| decode(LOGO_PNG))?;
     Some(egui::IconData {

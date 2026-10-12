@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "godpdf"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "godpdf-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "getrandom 0.4.3",
  "lopdf",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "godpdf-render"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "hayro",
  "lopdf",

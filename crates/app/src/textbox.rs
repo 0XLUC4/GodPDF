@@ -46,30 +46,70 @@ pub fn install_font(fonts: &mut egui::FontDefinitions) {
     fonts
         .families
         .insert(FontFamily::Name(FONT_FAMILY.into()), family);
+    let mut bold = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(bytes) = system_bold_font() {
+        fonts.font_data.insert(
+            BOLD_FAMILY.to_owned(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+        bold.insert(0, BOLD_FAMILY.to_owned());
+    }
+    fonts
+        .families
+        .insert(FontFamily::Name(BOLD_FAMILY.into()), bold);
+}
+
+pub const BOLD_FAMILY: &str = "ui-bold";
+
+#[cfg(not(target_arch = "wasm32"))]
+fn first_font(windows: &str, unix: &[&str]) -> Option<Vec<u8>> {
+    let windows = std::env::var_os("WINDIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("Fonts").join(windows));
+    windows
+        .into_iter()
+        .chain(unix.iter().map(std::path::PathBuf::from))
+        .find_map(|path| std::fs::read(path).ok())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn system_font() -> Option<Vec<u8>> {
-    let windows = std::env::var_os("WINDIR").map(|dir| {
-        std::path::PathBuf::from(dir)
-            .join("Fonts")
-            .join("arial.ttf")
-    });
-    let unix = [
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
-    ];
-    windows
-        .into_iter()
-        .chain(unix.into_iter().map(std::path::PathBuf::from))
-        .find_map(|path| std::fs::read(path).ok())
+    first_font(
+        "arial.ttf",
+        &[
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+        ],
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn system_bold_font() -> Option<Vec<u8>> {
+    first_font(
+        "arialbd.ttf",
+        &[
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+        ],
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
 fn system_font() -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+fn system_bold_font() -> Option<Vec<u8>> {
     None
 }
 

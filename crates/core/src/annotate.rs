@@ -144,7 +144,7 @@ const NOTE_COLOR: Color = Color {
     g: 0.85,
     b: 0.2,
 };
-const HIGHLIGHT_OPACITY: f32 = 0.4;
+const HIGHLIGHT_OPACITY: f32 = 0.85;
 /// Free-text layout, shared with the app's editor so typed text never moves on commit.
 /// Inner padding between the /Rect edge and the text, in points.
 pub const FREE_TEXT_PADDING: f32 = 2.0;

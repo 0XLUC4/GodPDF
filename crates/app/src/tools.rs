@@ -16,7 +16,7 @@ pub struct CommentStyle {
 impl Default for CommentStyle {
     fn default() -> Self {
         Self {
-            color: egui::Color32::from_rgb(0xF2, 0xC9, 0x4C),
+            color: egui::Color32::from_rgb(0xFF, 0xF2, 0x00),
             width: 2.0,
             font_size: 14.0,
         }

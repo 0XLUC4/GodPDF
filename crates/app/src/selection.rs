@@ -64,7 +64,7 @@ pub struct Ghost {
 }
 
 /// Opacity of a highlight drawn by the app (previews), like the one written into the PDF.
-pub const HIGHLIGHT_OPACITY: f32 = 0.4;
+pub const HIGHLIGHT_OPACITY: f32 = 0.6;
 
 /// What a drag does to the selected annotation, in displayed points.
 #[derive(Clone, Copy)]

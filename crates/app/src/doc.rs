@@ -46,6 +46,17 @@ pub struct SearchState {
     pub request: Option<String>,
     /// A search job is running.
     pub busy: bool,
+    /// The search panel is on screen.
+    pub open: bool,
+}
+
+impl SearchState {
+    /// The words to mark on the pages: those searched, for as long as the search panel
+    /// shows and its field still reads them.
+    pub fn marked(&self) -> Option<&str> {
+        let current = !self.searched.is_empty() && self.query.trim() == self.searched;
+        (self.open && current).then_some(&self.searched)
+    }
 }
 
 /// An in-progress comment gesture, in displayed page points (origin top-left).
@@ -59,6 +70,16 @@ struct Cached {
     texture: TextureHandle,
     scale: f32,
     generation: u64,
+}
+
+/// A sharp picture of the part on screen of a page too large to be drawn whole at the zoom
+/// in use. It is shown over the page, which is then drawn as large as it can be.
+struct Detail {
+    texture: TextureHandle,
+    scale: f32,
+    generation: u64,
+    /// The part of the page it shows, in displayed points.
+    region: egui::Rect,
 }
 
 /// Per-frame render allowance so a frame never starts too many renders.
@@ -84,6 +105,10 @@ enum Kind {
     Thumb,
     /// A page without one of its annotations (see [`Lifted`]).
     Lifted,
+    /// A part of a page (see [`Detail`]), for the first or the second viewer.
+    Detail {
+        second: bool,
+    },
 }
 
 enum Source {
@@ -102,6 +127,8 @@ struct Request {
     page: usize,
     kind: Kind,
     scale: f32,
+    /// For [`Kind::Detail`]: the part of the page to draw (left, top, right, bottom).
+    region: Option<[f32; 4]>,
 }
 
 struct Rendered {
@@ -109,6 +136,7 @@ struct Rendered {
     page: usize,
     kind: Kind,
     scale: f32,
+    region: Option<[f32; 4]>,
     result: Result<Bitmap, String>,
 }
 
@@ -120,6 +148,7 @@ impl Request {
             page,
             kind,
             scale,
+            region,
         } = self;
         let result = catch_unwind(AssertUnwindSafe(|| {
             let doc = match source {
@@ -131,10 +160,11 @@ impl Request {
                     Arc::new(doc)
                 }
             };
-            match kind {
-                Kind::Page | Kind::Lifted => doc.render(page, scale),
+            match (kind, region) {
+                (Kind::Detail { .. }, Some(region)) => doc.render_region(page, scale, region),
+                (Kind::Page | Kind::Lifted | Kind::Detail { .. }, _) => doc.render(page, scale),
                 // For thumbnails `scale` is the longest side in pixels.
-                Kind::Thumb => doc.thumbnail(page, scale.round().max(1.0) as u32),
+                (Kind::Thumb, _) => doc.thumbnail(page, scale.round().max(1.0) as u32),
             }
             .map_err(|err| err.to_string())
         }))
@@ -144,6 +174,7 @@ impl Request {
             page,
             kind,
             scale,
+            region,
             result,
         }
     }
@@ -201,6 +232,8 @@ pub struct DocTab {
     /// Displayed (post-rotation) page sizes in points.
     pub page_sizes: Vec<Vec2>,
     pages: HashMap<usize, Cached>,
+    /// By page and viewer (true for the second one).
+    details: HashMap<(usize, bool), Detail>,
     thumbs: HashMap<usize, Cached>,
     page_errors: HashMap<usize, String>,
     in_flight: HashSet<(usize, Kind)>,
@@ -267,6 +300,7 @@ impl DocTab {
             generation: 0,
             page_sizes: Vec::new(),
             pages: HashMap::new(),
+            details: HashMap::new(),
             thumbs: HashMap::new(),
             page_errors: HashMap::new(),
             in_flight: HashSet::new(),
@@ -390,6 +424,7 @@ impl DocTab {
         let count = self.page_count();
         if count != old_count || self.render.is_none() {
             self.pages.clear();
+            self.details.clear();
             self.thumbs.clear();
             self.lifted = None;
             self.canvas.ghost = None;
@@ -533,9 +568,56 @@ impl DocTab {
             .get(&page)
             .is_some_and(|tex| tex.generation == self.generation && same_scale(tex.scale, scale));
         if !fresh {
-            self.request(ctx, page, Kind::Page, scale, budget);
+            self.request(ctx, page, Kind::Page, scale, None, budget);
         }
         self.pages.get(&page).map(|tex| &tex.texture)
+    }
+
+    /// A sharp picture of the part of `page` on screen, when the page is too large to be drawn
+    /// whole at `scale`: its texture, its size in pixels and the part of the page it shows.
+    /// `visible` is the part on screen, in displayed points. May be stale, as page textures.
+    pub fn page_detail(
+        &mut self,
+        ctx: &Context,
+        page: usize,
+        scale: f32,
+        visible: egui::Rect,
+        budget: &mut Budget,
+    ) -> Option<(egui::TextureId, Vec2, egui::Rect)> {
+        let key = (page, self.second);
+        let size = self.page_sizes.get(page).copied()?;
+        let sheet = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let visible = visible.intersect(sheet);
+        let whole = MAX_TEXTURE_SIDE / size.x.max(size.y).max(1.0);
+        if scale <= whole * (1.0 + SCALE_TOLERANCE) || !visible.is_positive() {
+            self.details.remove(&key);
+            return None;
+        }
+        // Some of the page around what shows: scrolling a little needs no new picture.
+        let room = (Vec2::splat(MAX_TEXTURE_SIDE / scale) - visible.size()).max(Vec2::ZERO);
+        let around = visible.expand2(room.min(visible.size()) / 2.0);
+        // On whole pixels, to be drawn pixel for pixel like the page under it.
+        let min = (around.min.to_vec2() * scale).floor() / scale;
+        let max = (around.max.to_vec2() * scale).ceil() / scale;
+        let wanted = egui::Rect::from_min_max(min.to_pos2(), max.to_pos2()).intersect(sheet);
+        let fresh = self.details.get(&key).is_some_and(|detail| {
+            detail.generation == self.generation
+                && same_scale(detail.scale, scale)
+                && detail.region.contains_rect(visible.intersect(wanted))
+        });
+        if !fresh {
+            let kind = Kind::Detail {
+                second: self.second,
+            };
+            let region = [wanted.min.x, wanted.min.y, wanted.max.x, wanted.max.y];
+            self.request(ctx, page, kind, scale, Some(region), budget);
+        }
+        let detail = self.details.get(&key)?;
+        Some((
+            detail.texture.id(),
+            detail.texture.size_vec2(),
+            detail.region,
+        ))
     }
 
     /// True when the texture of `page` shows the current document revision.
@@ -581,6 +663,7 @@ impl DocTab {
                 page,
                 kind: Kind::Lifted,
                 scale,
+                region: None,
             },
         );
     }
@@ -611,7 +694,7 @@ impl DocTab {
             .get(&page)
             .is_some_and(|tex| tex.generation == self.generation && same_scale(tex.scale, pixels));
         if !fresh {
-            self.request(ctx, page, Kind::Thumb, pixels, budget);
+            self.request(ctx, page, Kind::Thumb, pixels, None, budget);
         }
         self.thumbs.get(&page).map(|tex| &tex.texture)
     }
@@ -619,9 +702,18 @@ impl DocTab {
     /// Free full-size textures far from what is on screen.
     pub fn retain_pages(&mut self, keep: std::ops::RangeInclusive<usize>) {
         self.pages.retain(|page, _| keep.contains(page));
+        self.details.retain(|(page, _), _| keep.contains(page));
     }
 
-    fn request(&mut self, ctx: &Context, page: usize, kind: Kind, scale: f32, budget: &mut Budget) {
+    fn request(
+        &mut self,
+        ctx: &Context,
+        page: usize,
+        kind: Kind,
+        scale: f32,
+        region: Option<[f32; 4]>,
+        budget: &mut Budget,
+    ) {
         if self.in_flight.contains(&(page, kind))
             || self.in_flight.len() >= MAX_IN_FLIGHT
             || !budget.take()
@@ -640,6 +732,7 @@ impl DocTab {
                 page,
                 kind,
                 scale,
+                region,
             },
         );
     }
@@ -702,6 +795,23 @@ impl DocTab {
         }
         let page = rendered.page;
         self.in_flight.remove(&(page, rendered.kind));
+        if let Kind::Detail { second } = rendered.kind {
+            // A part that cannot be drawn leaves the page as it shows.
+            if let (Ok(bitmap), Some([left, top, right, bottom])) =
+                (&rendered.result, rendered.region)
+            {
+                let name = format!("detail-{}-{page}-{second}", self.id);
+                let corners = (egui::pos2(left, top), egui::pos2(right, bottom));
+                let detail = Detail {
+                    texture: upload(ctx, name, bitmap),
+                    scale: rendered.scale,
+                    generation: rendered.generation,
+                    region: egui::Rect::from_min_max(corners.0, corners.1),
+                };
+                self.details.insert((page, second), detail);
+            }
+            return;
+        }
         let bitmap = match rendered.result {
             Ok(bitmap) => bitmap,
             Err(err) => {
@@ -712,7 +822,7 @@ impl DocTab {
         let (prefix, cache) = match rendered.kind {
             Kind::Page => ("page", &mut self.pages),
             Kind::Thumb => ("thumb", &mut self.thumbs),
-            Kind::Lifted => return,
+            Kind::Lifted | Kind::Detail { .. } => return,
         };
         let texture = upload(ctx, format!("{prefix}-{}-{page}", self.id), &bitmap);
         cache.insert(
@@ -740,4 +850,32 @@ fn upload(ctx: &Context, name: String, bitmap: &Bitmap) -> TextureHandle {
         ColorImage::filled([1, 1], egui::Color32::WHITE)
     };
     ctx.load_texture(name, image, TextureOptions::LINEAR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn searched_words_are_marked_only_while_the_search_shows_them() {
+        let mut search = SearchState {
+            query: " fluo ".to_owned(),
+            searched: "fluo".to_owned(),
+            open: true,
+            ..SearchState::default()
+        };
+        assert_eq!(search.marked(), Some("fluo"));
+        // Other words in the field: the marks of the old ones go.
+        search.query = "flu".to_owned();
+        assert_eq!(search.marked(), None);
+        // The panel closed: no marks, and they come back with it.
+        search.query = "fluo".to_owned();
+        search.open = false;
+        assert_eq!(search.marked(), None);
+        search.open = true;
+        assert_eq!(search.marked(), Some("fluo"));
+        search.searched.clear();
+        search.query.clear();
+        assert_eq!(search.marked(), None);
+    }
 }

@@ -193,3 +193,26 @@ fn encrypted_requires_password() {
     let bmp = opened.render(0, 1.0).unwrap();
     assert!(pixel(&bmp, 35, 65)[0] < 30);
 }
+
+#[test]
+fn a_part_of_a_page_is_what_the_whole_shows_there() {
+    let doc = open();
+    let whole = doc.render(0, 4.0).expect("whole page");
+    // The lower left of the square, displayed at (10,40)-(60,90): half in, half out.
+    let part = doc
+        .render_region(0, 4.0, [5.0, 60.0, 45.0, 95.0])
+        .expect("part of the page");
+    assert_eq!((part.width, part.height), (160, 140));
+    for (x, y) in [(2, 2), (30, 2), (30, 100), (150, 100), (150, 130), (80, 60)] {
+        assert_eq!(
+            pixel(&part, x, y),
+            pixel(&whole, x + 20, y + 240),
+            "at {x},{y}"
+        );
+    }
+    // A part that leaves the page is cut at its edge.
+    let corner = doc
+        .render_region(0, 1.0, [80.0, 80.0, 500.0, 500.0])
+        .expect("corner");
+    assert_eq!((corner.width, corner.height), (20, 20));
+}

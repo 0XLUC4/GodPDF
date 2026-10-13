@@ -74,7 +74,7 @@ pub enum Action {
 /// "All tools" list; rows past this count hide behind "View more".
 const FOLDED: usize = 11;
 
-const ALL_TOOLS: [(Action, &str, &str); 17] = [
+const ALL_TOOLS: [(Action, &str, &str); 19] = [
     (Action::Run(Cmd::SaveAs), icon::EXPORT, "Export a PDF"),
     (Action::Run(Cmd::Merge), icon::STACK, "Combine files"),
     (
@@ -112,6 +112,12 @@ const ALL_TOOLS: [(Action, &str, &str); 17] = [
     (Action::Run(Cmd::Extract), icon::EXPORT, "Extract pages"),
     (Action::Run(Cmd::Split), icon::SCISSORS, "Split a PDF"),
     (Action::Run(Cmd::DeletePages), icon::TRASH, "Delete pages"),
+    (
+        Action::Run(Cmd::NumberPages),
+        icon::LIST_NUMBERS,
+        "Number pages",
+    ),
+    (Action::Run(Cmd::Watermark), icon::STAMP, "Add a watermark"),
     (Action::Run(Cmd::Properties), icon::INFO, "Properties"),
     (
         Action::Run(Cmd::ExtractText),

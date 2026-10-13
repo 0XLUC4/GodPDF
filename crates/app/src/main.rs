@@ -8,6 +8,7 @@ mod comments;
 mod dialogs;
 mod doc;
 mod geometry;
+mod import;
 mod jobs;
 mod lineedit;
 mod organize;

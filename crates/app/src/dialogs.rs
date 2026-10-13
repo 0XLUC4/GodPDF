@@ -3,7 +3,8 @@
 //! Dialogs only edit their own fields and report an [`Outcome`]; the app performs the work.
 
 use egui::{
-    Button, Context, Id, Key, Modal, RichText, ScrollArea, TextEdit, TextureHandle, Ui, vec2,
+    Button, Context, FontId, Id, Key, Modal, Response, RichText, ScrollArea, Sense, TextEdit,
+    TextureHandle, Ui, pos2, vec2,
 };
 
 use crate::commands::Cmd;
@@ -59,6 +60,20 @@ pub enum Dialog {
         tab: u64,
         page: String,
         count: usize,
+        error: Option<String>,
+    },
+    /// Numbers to write on the pages of `range`.
+    NumberPages {
+        tab: u64,
+        numbers: godpdf_core::PageNumbers,
+        range: String,
+        error: Option<String>,
+    },
+    /// A line of text to draw across the pages of `range`.
+    Watermark {
+        tab: u64,
+        mark: godpdf_core::Watermark,
+        range: String,
         error: Option<String>,
     },
     About,
@@ -330,6 +345,129 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
                 }
             })
         }
+        Dialog::NumberPages {
+            numbers,
+            range,
+            error,
+            ..
+        } => {
+            title(ui, &with_icon(icon::LIST_NUMBERS, "Number pages"));
+            egui::Grid::new("numbers-grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Position");
+                    egui::ComboBox::from_id_salt("numbers-place")
+                        .selected_text(numbers.place.label())
+                        .show_ui(ui, |ui| {
+                            for place in godpdf_core::Place::ALL {
+                                ui.selectable_value(&mut numbers.place, place, place.label());
+                            }
+                        });
+                    ui.end_row();
+                    ui.label("Format");
+                    egui::ComboBox::from_id_salt("numbers-format")
+                        .selected_text(number_sample(&numbers.template))
+                        .show_ui(ui, |ui| {
+                            for template in NUMBER_FORMATS {
+                                let chosen = numbers.template == template;
+                                if ui
+                                    .selectable_label(chosen, number_sample(template))
+                                    .clicked()
+                                {
+                                    numbers.template = template.to_owned();
+                                }
+                            }
+                        });
+                    ui.end_row();
+                    ui.label("First number");
+                    ui.add(egui::DragValue::new(&mut numbers.first).range(0..=99_999));
+                    ui.end_row();
+                    ui.label("Size");
+                    ui.add(
+                        egui::DragValue::new(&mut numbers.font_size)
+                            .range(6.0..=72.0)
+                            .suffix(" pt"),
+                    );
+                    ui.end_row();
+                    ui.label("Colour");
+                    color_button(ui, &mut numbers.color);
+                    ui.end_row();
+                    ui.label("Pages");
+                    range_field(ui, range);
+                    ui.end_row();
+                });
+            error_line(ui, error.as_deref(), &palette);
+            buttons(ui, "Number pages", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
+                if primary {
+                    Outcome::Primary
+                } else {
+                    Outcome::Cancel
+                }
+            })
+        }
+        Dialog::Watermark {
+            mark, range, error, ..
+        } => {
+            title(ui, &with_icon(icon::STAMP, "Add watermark"));
+            egui::Grid::new("watermark-grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Text");
+                    let edit = ui.add(
+                        TextEdit::singleline(&mut mark.text)
+                            .margin(crate::widgets::FIELD_MARGIN)
+                            .hint_text("e.g. DRAFT")
+                            .desired_width(280.0),
+                    );
+                    if mark.text.is_empty() {
+                        edit.request_focus();
+                    }
+                    ui.end_row();
+                    ui.label("Size");
+                    ui.add(
+                        egui::DragValue::new(&mut mark.font_size)
+                            .range(8.0..=300.0)
+                            .suffix(" pt"),
+                    );
+                    ui.end_row();
+                    ui.label("Opacity");
+                    ui.add(
+                        egui::Slider::new(&mut mark.opacity, 0.05..=1.0)
+                            .custom_formatter(|value, _| format!("{:.0} %", value * 100.0)),
+                    );
+                    ui.end_row();
+                    ui.label("Angle");
+                    ui.add(egui::Slider::new(&mut mark.angle, -90.0..=90.0).suffix("°"));
+                    ui.end_row();
+                    ui.label("Colour");
+                    color_button(ui, &mut mark.color);
+                    ui.end_row();
+                    ui.label("From the centre");
+                    ui.horizontal(|ui| {
+                        let offset = |value| {
+                            egui::DragValue::new(value)
+                                .range(-2000.0..=2000.0)
+                                .suffix(" pt")
+                        };
+                        ui.add(offset(&mut mark.offset.0).prefix("right "));
+                        ui.add(offset(&mut mark.offset.1).prefix("up "));
+                    });
+                    ui.end_row();
+                    ui.label("Pages");
+                    range_field(ui, range);
+                    ui.end_row();
+                });
+            error_line(ui, error.as_deref(), &palette);
+            buttons(ui, "Add watermark", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
+                if primary {
+                    Outcome::Primary
+                } else {
+                    Outcome::Cancel
+                }
+            })
+        }
         Dialog::About => {
             ui.vertical_centered(|ui| {
                 if let Some(logo) = env.logo {
@@ -533,8 +671,11 @@ fn markdown(ui: &mut Ui, text: &str, palette: &Palette) {
 }
 
 fn merge(ui: &mut Ui, files: &mut Vec<PickedFile>, palette: &Palette) -> Outcome {
-    title(ui, &with_icon(icon::STACK, "Merge PDFs"));
-    ui.label(RichText::new("Files are combined top to bottom.").color(palette.text_dim));
+    title(ui, &with_icon(icon::STACK, "Combine files"));
+    ui.label(
+        RichText::new("PDFs, images and text files are combined top to bottom.")
+            .color(palette.text_dim),
+    );
     ui.add_space(6.0);
     let mut action: Option<(usize, i32)> = None;
     ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
@@ -592,6 +733,37 @@ fn merge(ui: &mut Ui, files: &mut Vec<PickedFile>, palette: &Palette) -> Outcome
     outcome
 }
 
+/// How page numbers can be written: `{n}` is the page, `{total}` the last one.
+const NUMBER_FORMATS: [&str; 5] = [
+    "{n}",
+    "Page {n}",
+    "{n} / {total}",
+    "Page {n} of {total}",
+    "- {n} -",
+];
+
+/// A number format as it reads on the first of twelve pages.
+fn number_sample(template: &str) -> String {
+    template.replace("{n}", "1").replace("{total}", "12")
+}
+
+fn color_button(ui: &mut Ui, color: &mut godpdf_core::Color) {
+    let mut rgb = [color.r, color.g, color.b];
+    if ui.color_edit_button_rgb(&mut rgb).changed() {
+        let [r, g, b] = rgb;
+        *color = godpdf_core::Color { r, g, b };
+    }
+}
+
+fn range_field(ui: &mut Ui, range: &mut String) {
+    ui.add(
+        TextEdit::singleline(range)
+            .margin(crate::widgets::FIELD_MARGIN)
+            .hint_text("e.g. 1-3, 5, 8-")
+            .desired_width(280.0),
+    );
+}
+
 fn title(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(19.0).strong());
     ui.add_space(8.0);
@@ -639,9 +811,10 @@ pub enum PaletteOutcome {
     Run(Cmd),
 }
 
-pub fn command_palette(ctx: &Context, state: &mut PaletteState) -> PaletteOutcome {
+pub fn command_palette(ctx: &Context, state: &mut PaletteState, has_doc: bool) -> PaletteOutcome {
     let query = state.query.to_lowercase();
-    let matches: Vec<Cmd> = Cmd::ALL
+    let words: Vec<&str> = query.split_whitespace().collect();
+    let mut matches: Vec<Cmd> = Cmd::ALL
         .into_iter()
         .filter(|cmd| *cmd != Cmd::Palette)
         .filter(|cmd| {
@@ -652,14 +825,20 @@ pub fn command_palette(ctx: &Context, state: &mut PaletteState) -> PaletteOutcom
                 cmd.description()
             )
             .to_lowercase();
-            query.split_whitespace().all(|word| haystack.contains(word))
+            words.iter().all(|word| haystack.contains(word))
         })
         .collect();
+    // Those the words name come before those the words only describe.
+    matches.sort_by_key(|cmd| {
+        let label = cmd.label().to_lowercase();
+        !words.iter().all(|word| label.contains(word))
+    });
     let (down, up, enter) = ctx.input_mut(|input| {
         (
             input.consume_key(egui::Modifiers::NONE, Key::ArrowDown),
             input.consume_key(egui::Modifiers::NONE, Key::ArrowUp),
-            input.key_pressed(Key::Enter),
+            // Taken, so the dialog the command opens does not see it as its own Enter.
+            input.consume_key(egui::Modifiers::NONE, Key::Enter),
         )
     });
     if down {
@@ -680,36 +859,32 @@ pub fn command_palette(ctx: &Context, state: &mut PaletteState) -> PaletteOutcom
         Modal::default_area(Id::new("palette")).anchor(egui::Align2::CENTER_TOP, vec2(0.0, 90.0));
     let response = Modal::new(Id::new("palette")).area(area).show(ctx, |ui| {
         let palette = Palette::of(ui);
-        ui.set_width(520.0);
-        let edit = ui.add(
-            TextEdit::singleline(&mut state.query)
-                .margin(crate::widgets::FIELD_MARGIN)
-                .hint_text("Type a command…")
-                .desired_width(f32::INFINITY)
-                .font(egui::TextStyle::Heading),
-        );
-        edit.request_focus();
-        if edit.changed() {
-            state.selected = 0;
-        }
+        ui.set_width(620.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(icon::MAGNIFYING_GLASS)
+                    .size(20.0)
+                    .color(palette.text_dim),
+            );
+            let edit = ui.add(
+                TextEdit::singleline(&mut state.query)
+                    .margin(crate::widgets::FIELD_MARGIN)
+                    .hint_text("Find tools and commands")
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Heading),
+            );
+            edit.request_focus();
+            if edit.changed() {
+                state.selected = 0;
+            }
+        });
         ui.add_space(6.0);
-        ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+        ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             for (index, cmd) in matches.iter().enumerate() {
                 let selected = index == state.selected;
-                let shortcut = cmd
-                    .shortcut()
-                    .map(|sc| ui.ctx().format_shortcut(&sc))
-                    .unwrap_or_default();
-                let text = format!(
-                    "{}   {}  ·  {}",
-                    cmd.icon(),
-                    cmd.label(),
-                    cmd.group().title()
-                );
-                let response = ui.add_sized(
-                    [ui.available_width(), 28.0],
-                    Button::selectable(selected, text).shortcut_text(shortcut),
-                );
+                let ready = has_doc || !cmd.needs_doc();
+                let response = palette_row(ui, *cmd, selected, ready, &palette);
                 if selected && (down || up) {
                     response.scroll_to_me(None);
                 }
@@ -721,12 +896,71 @@ pub fn command_palette(ctx: &Context, state: &mut PaletteState) -> PaletteOutcom
                 ui.label(RichText::new("No matching command").color(palette.text_dim));
             }
         });
+        if let Some(cmd) = matches.get(state.selected) {
+            ui.separator();
+            let hint = if !has_doc && cmd.asks_for_doc() {
+                "Enter asks for a PDF, then runs this on it"
+            } else if !has_doc && cmd.needs_doc() {
+                "Open a PDF first"
+            } else if cmd.description().is_empty() {
+                "Enter runs it"
+            } else {
+                cmd.description()
+            };
+            ui.label(RichText::new(hint).size(13.0).color(palette.text_dim));
+        }
     });
     if matches!(outcome, PaletteOutcome::Keep) && response.should_close() {
         PaletteOutcome::Close
     } else {
         outcome
     }
+}
+
+/// A command of the palette: its icon in the colour of its family, its name, and on the
+/// right its shortcut and family. Greyed while it waits for a document to be open.
+fn palette_row(ui: &mut Ui, cmd: Cmd, selected: bool, ready: bool, palette: &Palette) -> Response {
+    let size = vec2(ui.available_width(), 36.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, egui::CornerRadius::same(8), palette.selected);
+    } else if response.hovered() {
+        painter.rect_filled(rect, egui::CornerRadius::same(8), palette.hover);
+    }
+    let (ink, tint) = if ready {
+        (palette.text, cmd.tint())
+    } else {
+        (palette.text_dim, palette.text_dim)
+    };
+    let mid = rect.center().y;
+    painter.text(
+        pos2(rect.min.x + 22.0, mid),
+        egui::Align2::CENTER_CENTER,
+        cmd.icon(),
+        FontId::proportional(19.0),
+        tint,
+    );
+    painter.text(
+        pos2(rect.min.x + 46.0, mid),
+        egui::Align2::LEFT_CENTER,
+        cmd.label(),
+        FontId::proportional(15.0),
+        ink,
+    );
+    let family = cmd.group().title();
+    let side = match cmd.shortcut() {
+        Some(shortcut) => format!("{}      {family}", ui.ctx().format_shortcut(&shortcut)),
+        None => family.to_owned(),
+    };
+    painter.text(
+        pos2(rect.max.x - 14.0, mid),
+        egui::Align2::RIGHT_CENTER,
+        side,
+        FontId::proportional(13.0),
+        palette.text_dim,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 // ---------------------------------------------------------------- extracted text

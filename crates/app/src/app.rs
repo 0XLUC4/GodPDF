@@ -24,10 +24,12 @@ use crate::theme::{self, Palette};
 use crate::toasts::Toasts;
 use crate::tools::{CommentStyle, Mode};
 use crate::widgets::{icon, with_icon};
-use crate::{branding, comments, geometry, organize, ranges, sidebar, updates, viewer};
+use crate::{branding, comments, geometry, import, organize, ranges, sidebar, updates, viewer};
 
 const MAX_RECENT: usize = 8;
 const ZOOM_STEP: f32 = 1.2;
+/// Seconds between two looks at the files of the open documents.
+const DISK_WATCH: f64 = 2.0;
 
 pub struct GodApp {
     tabs: Vec<DocTab>,
@@ -81,6 +83,10 @@ pub struct GodApp {
     edit_text: bool,
     updates: updates::Checker,
     restart: Option<PathBuf>,
+    /// Files of the tabs closed, the last one last: what "Reopen closed tab" opens.
+    closed: Vec<PathBuf>,
+    /// When the files of the open documents were last looked at (egui time).
+    disk_checked: f64,
 }
 
 impl GodApp {
@@ -140,6 +146,8 @@ impl GodApp {
             edit_text: false,
             updates: updates::Checker::default(),
             restart: None,
+            closed: Vec::new(),
+            disk_checked: 0.0,
         };
         updates::remove_old_program();
         app.updates.check(&cc.egui_ctx);
@@ -159,6 +167,7 @@ impl eframe::App for GodApp {
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         self.process_update(&ctx);
+        self.watch_files(&ctx);
         self.handle_close_request(&ctx);
         self.sync_text_box();
         if !ctx.input(|input| input.pointer.any_down()) {
@@ -266,6 +275,7 @@ impl GodApp {
             item(ui, Cmd::ExportPages, clicked);
             ui.separator();
             item(ui, Cmd::Close, clicked);
+            item(ui, Cmd::ReopenTab, clicked);
             if !cfg!(target_arch = "wasm32") {
                 item(ui, Cmd::Quit, clicked);
             }
@@ -580,7 +590,7 @@ impl GodApp {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "Drop PDFs to open them",
+                "Drop PDFs or images to open them",
                 egui::FontId::proportional(26.0),
                 Color32::WHITE,
             );
@@ -592,8 +602,9 @@ impl GodApp {
             self.text_view = None;
         }
 
+        let has_doc = !self.tabs.is_empty();
         if let Some(state) = &mut self.palette {
-            match dialogs::command_palette(ctx, state) {
+            match dialogs::command_palette(ctx, state, has_doc) {
                 PaletteOutcome::Keep => {}
                 PaletteOutcome::Close => self.palette = None,
                 PaletteOutcome::Run(cmd) => {
@@ -634,6 +645,11 @@ impl GodApp {
 impl GodApp {
     fn process_inbox(&mut self) {
         for (purpose, files) in self.inbox.drain() {
+            // Opened files become PDFs when their turn comes; the others are needed now.
+            let files = match purpose {
+                Purpose::Open => files,
+                _ => self.converted(files),
+            };
             match purpose {
                 Purpose::Open => self.open_queue.extend(files),
                 Purpose::MergeAdd => match &mut self.dialog {
@@ -674,6 +690,13 @@ impl GodApp {
             let Some(file) = self.open_queue.pop_front() else {
                 break;
             };
+            let (file, made) = match import::to_pdf(file) {
+                Ok(file) => file,
+                Err(err) => {
+                    self.toasts.error(err);
+                    continue;
+                }
+            };
             if core::is_encrypted(&file.bytes) {
                 // Owner-password-only files need no password to open.
                 match guarded(|| core::decrypt(&file.bytes, "")) {
@@ -687,7 +710,7 @@ impl GodApp {
                     }
                 }
             } else {
-                self.add_tab(file, false);
+                self.add_tab(file, made);
             }
         }
     }
@@ -755,6 +778,11 @@ impl GodApp {
             }
         }
         for cmd in fired {
+            // A key pressed with nothing open says so; it never opens the file dialog.
+            if cmd.needs_doc() && self.tabs.is_empty() {
+                self.toasts.info("Open a PDF first");
+                continue;
+            }
             self.run(ctx, cmd);
         }
     }
@@ -810,7 +838,13 @@ impl GodApp {
 impl GodApp {
     fn run(&mut self, ctx: &Context, cmd: Cmd) {
         if cmd.needs_doc() && self.tabs.is_empty() {
-            self.toasts.info("Open a PDF first");
+            if cmd.asks_for_doc() {
+                // The tool is for a document: ask for one, then run it on it.
+                self.pending_cmd = Some(cmd);
+                self.pick(ctx, false, Purpose::Open);
+            } else {
+                self.toasts.info("Open a PDF first");
+            }
             return;
         }
         // Any document command finishes the text being typed first; view commands keep it.
@@ -848,6 +882,10 @@ impl GodApp {
             }
             Cmd::Print => self.print(),
             Cmd::Close => self.request_close(self.active),
+            Cmd::ReopenTab => match self.closed.pop() {
+                Some(path) => self.open_path(&path),
+                None => self.toasts.info("No closed tab to open again"),
+            },
             Cmd::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             Cmd::Undo | Cmd::Redo => self.undo_redo(cmd == Cmd::Undo),
             Cmd::ToggleTheme => self.set_dark(ctx, !self.dark),
@@ -949,6 +987,28 @@ impl GodApp {
                     starts: String::new(),
                     error: None,
                 });
+            }
+            Cmd::NumberPages => {
+                let tab = &self.tabs[self.active];
+                self.dialog = Some(Dialog::NumberPages {
+                    tab: tab.id,
+                    numbers: core::PageNumbers::default(),
+                    range: stamp_range(tab),
+                    error: None,
+                });
+            }
+            Cmd::Watermark => {
+                let tab = &self.tabs[self.active];
+                self.dialog = Some(Dialog::Watermark {
+                    tab: tab.id,
+                    mark: core::Watermark::default(),
+                    range: stamp_range(tab),
+                    error: None,
+                });
+            }
+            Cmd::RemoveLinks => {
+                let result = self.tabs[self.active].apply(cmd.label(), core::remove_links);
+                self.report(result, Some("Links removed"));
             }
             Cmd::Encrypt => {
                 let id = self.tabs[self.active].id;
@@ -1243,6 +1303,76 @@ impl GodApp {
         if let Err(err) = platform::pick_pdfs(multiple, purpose, &self.inbox, ctx) {
             self.toasts.error(err);
         }
+        // The dialog of the system answers at once: nothing picked, so the tool that waited
+        // for a document is forgotten.
+        let called_off = cfg!(not(target_arch = "wasm32")) && self.inbox.is_empty();
+        if called_off && matches!(purpose, Purpose::Open) {
+            self.pending_cmd = None;
+        }
+    }
+
+    /// `files` as PDFs: pictures and text are made into one. What cannot be is said and left out.
+    fn converted(&mut self, files: Vec<PickedFile>) -> Vec<PickedFile> {
+        let mut pdfs = Vec::with_capacity(files.len());
+        for file in files {
+            match import::to_pdf(file) {
+                Ok((file, _)) => pdfs.push(file),
+                Err(err) => self.toasts.error(err),
+            }
+        }
+        pdfs
+    }
+
+    /// A file changed by another program is read again, unless it was changed here too.
+    fn watch_files(&mut self, ctx: &Context) {
+        if !self.tabs.iter().any(|tab| tab.session.path.is_some()) {
+            return;
+        }
+        // Nothing moves in a window left alone: it wakes itself for the next look.
+        let now = ctx.input(|input| input.time);
+        let wait = DISK_WATCH - (now - self.disk_checked);
+        if wait > 0.0 {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            return;
+        }
+        self.disk_checked = now;
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(DISK_WATCH));
+        for tab in &mut self.tabs {
+            let Some(path) = tab.session.path.clone() else {
+                continue;
+            };
+            let Some(modified) = platform::modified(&path) else {
+                continue;
+            };
+            if tab
+                .disk_time
+                .replace(modified)
+                .is_none_or(|known| known == modified)
+            {
+                continue;
+            }
+            let name = tab.title().to_owned();
+            if tab.is_dirty() {
+                self.toasts.info(format!(
+                    "“{name}” was changed by another program; what you changed here is kept"
+                ));
+                continue;
+            }
+            match platform::read_file(&path) {
+                Ok(file) if !core::is_encrypted(&file.bytes) => {
+                    let mut session = Session::new(file.name, file.bytes);
+                    session.path = file.path;
+                    tab.session = session;
+                    tab.reload();
+                    self.toasts.info(format!(
+                        "“{name}” was changed by another program: read again"
+                    ));
+                }
+                _ => self.toasts.info(format!(
+                    "“{name}” was changed by another program; open it again to see it"
+                )),
+            }
+        }
     }
 
     fn open_path(&mut self, path: &std::path::Path) {
@@ -1283,6 +1413,7 @@ impl GodApp {
         session.path = file.path.clone();
         let mut tab = DocTab::new(self.next_id, session);
         tab.derived = derived;
+        tab.disk_time = file.path.as_deref().and_then(platform::modified);
         self.next_id += 1;
         if let Some(err) = &tab.render_error {
             self.toasts
@@ -1361,6 +1492,10 @@ impl GodApp {
                 .info("Opened without password: it will be saved unencrypted"),
             Cmd::Properties => self.open_properties(),
             Cmd::ExtractText => self.extract_text(),
+            Cmd::NumberPages | Cmd::Watermark | Cmd::RemoveLinks | Cmd::EditText => {
+                let ctx = self.ctx.clone();
+                self.run(&ctx, cmd);
+            }
             _ => {}
         }
     }
@@ -1434,6 +1569,7 @@ impl GodApp {
                     tab.session.name = name.to_string_lossy().into_owned();
                 }
                 tab.session.path = path.clone().or(tab.session.path.take());
+                tab.disk_time = tab.session.path.as_deref().and_then(platform::modified);
                 tab.session.mark_saved();
                 tab.saved_encryption = tab.encrypt_on_save.clone();
                 tab.derived = false;
@@ -1468,13 +1604,44 @@ impl GodApp {
         if index >= self.tabs.len() {
             return;
         }
-        self.tabs.remove(index);
+        if let Some(path) = self.tabs.remove(index).session.path {
+            self.closed.retain(|closed| closed != &path);
+            self.closed.push(path);
+        }
         if self.active > index || self.active >= self.tabs.len() {
             self.active = self.active.saturating_sub(1);
         }
         if self.tabs.is_empty() {
             self.tool = Tool::Select;
             self.text_view = None;
+        }
+    }
+
+    /// Close every other document that has nothing to save.
+    fn close_others(&mut self, keep: usize) {
+        self.commit_text_box();
+        let Some(id) = self.tabs.get(keep).map(|tab| tab.id) else {
+            return;
+        };
+        let mut unsaved = 0;
+        let mut index = 0;
+        while index < self.tabs.len() {
+            let tab = &self.tabs[index];
+            if tab.id == id {
+                index += 1;
+            } else if tab.is_dirty() {
+                unsaved += 1;
+                index += 1;
+            } else {
+                self.close_tab(index);
+            }
+        }
+        self.active = self.tab_index(id).unwrap_or(0);
+        self.home = false;
+        if unsaved > 0 {
+            self.toasts.info(format!(
+                "{unsaved} document(s) with unsaved changes stay open"
+            ));
         }
     }
 
@@ -1963,6 +2130,26 @@ fn core_color(color: Color32) -> core::Color {
     }
 }
 
+/// The pages a stamp is offered for: those selected in the grid, or all of them.
+fn stamp_range(tab: &DocTab) -> String {
+    let pages: Vec<usize> = if tab.selection.len() > 1 {
+        tab.selection.iter().copied().collect()
+    } else {
+        (0..tab.page_count()).collect()
+    };
+    ranges::format(&pages)
+}
+
+/// An error of the core as a sentence for a dialog: without what kind of error it is.
+fn plain(error: String) -> String {
+    let text = error.trim_start_matches("invalid argument: ");
+    let mut letters = text.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => error,
+    }
+}
+
 fn stem(name: &str) -> &str {
     name.strip_suffix(".pdf")
         .or_else(|| name.strip_suffix(".PDF"))
@@ -2203,6 +2390,55 @@ impl GodApp {
                             page,
                             count,
                             error: Some(format!("Type a number from 1 to {count}")),
+                        });
+                    }
+                }
+            }
+            Dialog::NumberPages {
+                tab,
+                numbers,
+                range,
+                ..
+            } => {
+                let Some(index) = self.tab_index(tab) else {
+                    return;
+                };
+                let doc = &mut self.tabs[index];
+                let result = ranges::parse(&range, doc.page_count()).and_then(|pages| {
+                    doc.apply("Number pages", |pdf| {
+                        core::number_pages(pdf, &pages, &numbers)
+                    })
+                });
+                match result.map_err(plain) {
+                    Ok(()) => self.toasts.success("Pages numbered"),
+                    Err(err) => {
+                        self.dialog = Some(Dialog::NumberPages {
+                            tab,
+                            numbers,
+                            range,
+                            error: Some(err),
+                        });
+                    }
+                }
+            }
+            Dialog::Watermark {
+                tab, mark, range, ..
+            } => {
+                let Some(index) = self.tab_index(tab) else {
+                    return;
+                };
+                let doc = &mut self.tabs[index];
+                let result = ranges::parse(&range, doc.page_count()).and_then(|pages| {
+                    doc.apply("Add watermark", |pdf| core::watermark(pdf, &pages, &mark))
+                });
+                match result.map_err(plain) {
+                    Ok(()) => self.toasts.success("Watermark added"),
+                    Err(err) => {
+                        self.dialog = Some(Dialog::Watermark {
+                            tab,
+                            mark,
+                            range,
+                            error: Some(err),
                         });
                     }
                 }

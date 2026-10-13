@@ -19,11 +19,17 @@ New versions come through the Updates button: it downloads one and restarts on i
 - View: tabs, continuous scroll, zoom, thumbnails, bookmarks, search, two documents side by side, dark/light theme
 - Large pages: plans in A3 to A0 stay sharp at any zoom
 - Organize: drag-and-drop reorder, rotate one page or all, delete, insert blank or from file, extract, split
-- Combine: merge any number of PDFs
+- Combine: merge any number of PDFs, images (JPEG, PNG) and text files
+- Open a picture or a text file as a PDF
+- Stamp: page numbers (position, format, first number) and watermarks (size, opacity, angle, offset from the centre), upright on turned pages
 - Comment: highlight in fluo colors, sticky note, free text (Helvetica, Times or Courier; bold, italic, underline, subscript, superscript), rectangle, ink; comments can be moved, resized and erased
 - Edit the text of a page, line by line
+- Remove every link of a document
 - Protect: open encrypted PDFs, add or remove a password
-- Print, document properties, text extraction, undo/redo history, command palette (`Ctrl+K`)
+- Tabs: right-click to close the others, reopen the last closed (`Ctrl+Shift+T`), show the file in its folder
+- A file changed by another program is read again
+- Print, document properties, text extraction, undo/redo history
+- Command palette (`Ctrl+K`): every tool by name; chosen with nothing open, a tool asks for a file and runs on it
 
 ## Build
 

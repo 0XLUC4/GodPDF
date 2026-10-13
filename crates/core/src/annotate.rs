@@ -731,16 +731,16 @@ fn rect_ops(rect: Rect) -> String {
     )
 }
 
-fn rgb(color: Color) -> String {
+pub(crate) fn rgb(color: Color) -> String {
     format!("{} {} {}", num(color.r), num(color.g), num(color.b))
 }
 
-fn num(value: f32) -> String {
+pub(crate) fn num(value: f32) -> String {
     format!("{value:.3}")
 }
 
 /// Hex string body in WinAnsi; unmappable characters become '?'.
-fn win_ansi_hex(text: &str) -> String {
+pub(crate) fn win_ansi_hex(text: &str) -> String {
     text.chars()
         .map(|c| format!("{:02X}", crate::helvetica::win_ansi(c)))
         .collect()
@@ -888,7 +888,7 @@ fn page_id(doc: &Document, page: usize) -> Result<ObjectId> {
 }
 
 /// The /Annots items of `page_id` (empty when absent or malformed).
-fn annots_entries(doc: &Document, page_id: ObjectId) -> Result<Vec<Object>> {
+pub(crate) fn annots_entries(doc: &Document, page_id: ObjectId) -> Result<Vec<Object>> {
     let page = doc.get_dictionary(page_id)?;
     Ok(page
         .get(b"Annots")
@@ -900,7 +900,11 @@ fn annots_entries(doc: &Document, page_id: ObjectId) -> Result<Vec<Object>> {
 }
 
 /// Write back /Annots, into the indirect array when there is one.
-fn set_annots(doc: &mut Document, page_id: ObjectId, entries: Vec<Object>) -> Result<()> {
+pub(crate) fn set_annots(
+    doc: &mut Document,
+    page_id: ObjectId,
+    entries: Vec<Object>,
+) -> Result<()> {
     let existing = doc.get_dictionary(page_id)?.get(b"Annots").ok().cloned();
     match existing {
         Some(Object::Reference(array_id))

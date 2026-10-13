@@ -26,6 +26,8 @@ fn free_text(text: &str, rect: Rect) -> Annotation {
         font_size: 13.5,
         color: BLUE,
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     }
 }
 
@@ -76,6 +78,8 @@ fn free_text_wraps_inside_its_box_and_grows_downwards() {
         font_size: 12.0,
         color: BLUE,
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let placed = &annotations(&pdf, 0).unwrap()[0];
@@ -295,6 +299,8 @@ fn free_text_rect_keeps_its_anchor_through_a_round_trip() {
             b: 0.0,
         },
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let placed = &annotations(&pdf, 0).unwrap()[0];

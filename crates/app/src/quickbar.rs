@@ -5,8 +5,10 @@ use egui::{
     Align2, Color32, CornerRadius, CursorIcon, Frame, Id, Key, Margin, Modifiers, Order, Pos2,
     Rect, RichText, Sense, Shadow, Stroke, StrokeKind, Ui, vec2,
 };
+use godpdf_core::{CharStyle, Font};
 
 use crate::commands::{Cmd, CommentTool};
+use crate::textbox::Format;
 use crate::theme::Palette;
 use crate::tools::CommentStyle;
 use crate::widgets::{self, icon};
@@ -168,6 +170,7 @@ impl Default for Styles {
             color,
             width: 2.0,
             font_size: 14.0,
+            font: godpdf_core::Font::Helvetica,
         };
         Self {
             text: style(Color32::BLACK),
@@ -204,9 +207,9 @@ pub enum StyleTarget {
     /// New comments of this tool.
     Tool(Tool),
     /// The selected annotation: a copy of its style; edits are returned as `restyle`.
-    Selected(StyleKind, CommentStyle),
+    Selected(StyleKind, CommentStyle, Option<CharStyle>),
     /// The text box being typed (edits the text style live).
-    TextBox,
+    TextBox(CharStyle),
 }
 
 #[derive(Default)]
@@ -215,6 +218,7 @@ pub struct Output {
     pub cmd: Option<Cmd>,
     /// New style for the selected annotation.
     pub restyle: Option<CommentStyle>,
+    pub format: Option<Format>,
 }
 
 /// Distance of the bar from the canvas' top-left corner.
@@ -321,6 +325,7 @@ fn style_card(
     palette: &Palette,
     out: &mut Output,
 ) {
+    let mut formats = None;
     let (kind, hint, mut selected_copy) = match target {
         StyleTarget::Tool(tool) => {
             let kind = match tool {
@@ -335,15 +340,21 @@ fn style_card(
             };
             (kind, Some(tool), None)
         }
-        StyleTarget::Selected(kind, style) => (kind, None, Some(style)),
-        StyleTarget::TextBox => (StyleKind::Text, None, None),
+        StyleTarget::Selected(kind, style, active) => {
+            formats = active;
+            (kind, None, Some(style))
+        }
+        StyleTarget::TextBox(active) => {
+            formats = Some(active);
+            (StyleKind::Text, None, None)
+        }
     };
     let style: &mut CommentStyle = match (&mut selected_copy, hint) {
         (Some(copy), _) => copy,
         (None, Some(tool)) => styles.get_mut(tool.comment()),
         (None, None) => &mut styles.text,
     };
-    let before = (style.color, style.width, style.font_size);
+    let before = (style.color, style.width, style.font_size, style.font);
     card(palette).show(ui, |ui| {
         ui.set_width(widgets::ICON_BUTTON.x);
         ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
@@ -358,17 +369,78 @@ fn style_card(
             }
             divider(ui, palette);
             match kind {
-                StyleKind::Text => stepper(ui, &mut style.font_size, 6.0..=72.0, 1.0, "Font size"),
+                StyleKind::Text => {
+                    stepper(ui, &mut style.font_size, 6.0..=72.0, 1.0, "Font size");
+                    divider(ui, palette);
+                    font_menu(ui, &mut style.font);
+                    if let Some(active) = formats {
+                        divider(ui, palette);
+                        for format in Format::ALL {
+                            if format_toggle(ui, format, format.is_on(active), palette).clicked() {
+                                out.format = Some(format);
+                            }
+                        }
+                    }
+                }
                 StyleKind::Stroke => stepper(ui, &mut style.width, 0.5..=12.0, 0.5, "Line width"),
                 StyleKind::Fill => {}
             }
         });
     });
     if let Some(copy) = selected_copy
-        && before != (copy.color, copy.width, copy.font_size)
+        && before != (copy.color, copy.width, copy.font_size, copy.font)
     {
         out.restyle = Some(copy);
     }
+}
+
+fn font_menu(ui: &mut Ui, font: &mut Font) {
+    let face =
+        |font: Font| egui::FontFamily::Name(format!("pdf-{}", font.resource(false, false)).into());
+    let label = RichText::new("Aa").family(face(*font)).size(15.0);
+    ui.menu_button(label, |ui| {
+        for candidate in Font::ALL {
+            let text = RichText::new(candidate.name())
+                .family(face(candidate))
+                .size(15.0);
+            if ui.selectable_label(*font == candidate, text).clicked() {
+                *font = candidate;
+                ui.close();
+            }
+        }
+    })
+    .response
+    .on_hover_text(format!("Font: {}", font.name()));
+}
+
+fn format_toggle(ui: &mut Ui, format: Format, active: bool, palette: &Palette) -> egui::Response {
+    let (glyph, tooltip) = match format {
+        Format::Bold => (icon::TEXT_B, "Bold (Ctrl+B)"),
+        Format::Italic => (icon::TEXT_ITALIC, "Italic (Ctrl+I)"),
+        Format::Underline => (icon::TEXT_UNDERLINE, "Underline (Ctrl+U)"),
+        Format::Sub => (icon::TEXT_SUBSCRIPT, "Subscript"),
+        Format::Super => (icon::TEXT_SUPERSCRIPT, "Superscript"),
+    };
+    let (rect, response) = ui.allocate_exact_size(widgets::ICON_BUTTON, Sense::click());
+    let fill = if active {
+        palette.selected
+    } else if response.hovered() {
+        palette.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(6), fill);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        egui::FontId::proportional(16.0),
+        palette.text,
+    );
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
 }
 
 fn hint_card(ui: &mut Ui, text: &str, palette: &Palette) {

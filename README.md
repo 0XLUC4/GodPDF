@@ -20,7 +20,7 @@ New versions come through the Updates button: it downloads one and restarts on i
 - Large pages: plans in A3 to A0 stay sharp at any zoom
 - Organize: drag-and-drop reorder, rotate one page or all, delete, insert blank or from file, extract, split
 - Combine: merge any number of PDFs
-- Comment: highlight in fluo colors, sticky note, free text, rectangle, ink; comments can be moved, resized and erased
+- Comment: highlight in fluo colors, sticky note, free text (Helvetica, Times or Courier; bold, italic, underline, subscript, superscript), rectangle, ink; comments can be moved, resized and erased
 - Edit the text of a page, line by line
 - Protect: open encrypted PDFs, add or remove a password
 - Print, document properties, text extraction, undo/redo history, command palette (`Ctrl+K`)

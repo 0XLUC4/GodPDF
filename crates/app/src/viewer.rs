@@ -96,6 +96,10 @@ pub fn show(
 
     let mut area = ScrollArea::both()
         .id_salt(("viewer", tab.id, tab.second))
+        .scroll_source(egui::scroll_area::ScrollSource {
+            mouse_wheel: false,
+            ..Default::default()
+        })
         .auto_shrink(false);
     if let Some(page) = tab.scroll_to_page.take() {
         if let Some(top) = tops.get(page) {
@@ -114,6 +118,12 @@ pub fn show(
             Rect::from_min_size(origin, vec2(width, total_height)),
             Sense::hover(),
         );
+        if ui.rect_contains_pointer(ui.clip_rect()) {
+            let delta = wheel_delta(ui, viewport.height());
+            if delta != egui::Vec2::ZERO {
+                ui.scroll_with_delta(delta);
+            }
+        }
         if tool == Tool::Hand {
             let pan = ui
                 .interact(
@@ -199,10 +209,8 @@ pub fn show(
             if let Some(text_box) = text_box.as_deref_mut()
                 && text_box.page == page
             {
-                let style = &styles.text;
                 out.text_event =
-                    textbox::show(ui, text_box, rect, zoom, style.font_size, style.color)
-                        .or(out.text_event);
+                    textbox::show(ui, text_box, rect, zoom, &styles.text).or(out.text_event);
             }
         }
         out.visible = visible;
@@ -212,6 +220,38 @@ pub fn show(
         ui.ctx().request_repaint();
     }
     out
+}
+
+fn wheel_delta(ui: &Ui, page_height: f32) -> egui::Vec2 {
+    let line = ui
+        .ctx()
+        .options(|options| options.input_options.line_scroll_speed);
+    ui.input(|input| {
+        input
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::MouseWheel {
+                    unit,
+                    delta,
+                    modifiers,
+                    ..
+                } if !modifiers.command && !modifiers.ctrl => {
+                    let delta = match unit {
+                        egui::MouseWheelUnit::Point => *delta,
+                        egui::MouseWheelUnit::Line => *delta * line,
+                        egui::MouseWheelUnit::Page => *delta * page_height,
+                    };
+                    Some(if modifiers.shift {
+                        vec2(delta.x + delta.y, 0.0)
+                    } else {
+                        delta
+                    })
+                }
+                _ => None,
+            })
+            .fold(egui::Vec2::ZERO, |total, delta| total + delta)
+    })
 }
 
 fn scale_for(zoom: f32, ppp: f32) -> f32 {
@@ -382,20 +422,47 @@ fn interact(
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        tab.gesture = Some(Gesture {
-            page,
-            points: vec![to_page(pos)],
-        });
+        let origin = ui
+            .input(|input| input.pointer.press_origin())
+            .filter(|origin| rect.contains(*origin))
+            .unwrap_or(pos);
+        let mut points = vec![to_page(origin)];
+        if tool == CommentTool::Ink && origin != pos {
+            points.push(to_page(pos));
+        }
+        tab.gesture = Some(Gesture { page, points });
     }
     let gesture = tab
         .gesture
         .as_mut()
         .filter(|gesture| gesture.page == page)?;
-    if response.dragged()
+    if response.dragged() && tool == CommentTool::Ink {
+        let moves: Vec<Pos2> = ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::PointerMoved(pos) => Some(*pos),
+                    _ => None,
+                })
+                .collect()
+        });
+        let moves = if moves.is_empty() {
+            response.interact_pointer_pos().into_iter().collect()
+        } else {
+            moves
+        };
+        for pos in moves {
+            let point = to_page(pos);
+            if gesture.points.last() != Some(&point) {
+                gesture.points.push(point);
+            }
+        }
+    } else if response.dragged()
         && let Some(pos) = response.interact_pointer_pos()
     {
         let point = to_page(pos);
-        if tool == CommentTool::Ink || gesture.points.len() < 2 {
+        if gesture.points.len() < 2 {
             gesture.points.push(point);
         } else if let Some(last) = gesture.points.last_mut() {
             *last = point;

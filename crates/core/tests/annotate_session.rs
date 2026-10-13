@@ -43,6 +43,8 @@ fn all_kinds() -> Vec<Annotation> {
             font_size: 12.0,
             color: RED,
             rotation: 0,
+            font: godpdf_core::Font::Helvetica,
+            styles: Vec::new(),
         },
         Annotation::Square {
             rect: RECT,
@@ -126,6 +128,8 @@ fn annotation_rejects_bad_input() {
         font_size: 0.0,
         color: RED,
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     assert!(matches!(
         add_annotation(&pdf, 0, &bad_font),

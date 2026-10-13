@@ -6,6 +6,7 @@
 
 mod annotate;
 mod error;
+mod fonts;
 mod helvetica;
 mod info;
 mod organize;
@@ -18,9 +19,10 @@ mod text;
 pub use annotate::{
     Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING,
     PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
-    free_text_width, remove_annotation, replace_annotation, wrap_free_text,
+    free_text_width, remove_annotation, replace_annotation, wrap_free_text, wrap_styled,
 };
 pub use error::{Error, Result};
+pub use fonts::{CharStyle, Font, Script, style_at};
 pub use helvetica::line_width as helvetica_line_width;
 pub use info::{
     Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometry, read_metadata,

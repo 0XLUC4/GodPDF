@@ -95,7 +95,8 @@ impl GodApp {
                 let response = widgets::icon_button(ui, icon::ARROW_CIRCLE_UP, &tip);
                 if newest.is_some() {
                     let dot = response.rect.right_top() + vec2(-6.0, 6.0);
-                    ui.painter().circle_filled(dot, 4.0, palette.accent);
+                    ui.painter()
+                        .circle_filled(dot, 4.0, crate::dialogs::DOWNLOAD_BLUE);
                 }
                 if response.clicked() {
                     clicked.push(Cmd::Updates);

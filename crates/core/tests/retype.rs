@@ -39,6 +39,10 @@ fn fixture() -> Vec<u8> {
         shown("Turned"),
         op("ET", vec![]),
     ];
+    page_with(operations)
+}
+
+fn page_with(operations: Vec<Operation>) -> Vec<u8> {
     let mut doc = Document::with_version("1.7");
     let pages = doc.new_object_id();
     let font = doc.add_object(dictionary! {
@@ -172,4 +176,66 @@ fn what_cannot_be_edited_is_left_alone() {
     );
     let missing = replace_text(&pdf, 3, line(72.0, 700.0), "x");
     assert!(matches!(missing, Err(Error::PageOutOfRange { .. })));
+}
+
+#[test]
+fn what_follows_on_the_line_stays_in_place() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let gap = Object::Array(vec![Object::Real(-20000.0)]);
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        op("Tf", vec![Object::Name("F1".into()), Object::Real(12.0)]),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Name"),
+        op("TJ", vec![gap]),
+        shown("Value"),
+        op("ET", vec![]),
+    ]);
+    let out = replace_text(&pdf, 0, line(72.0, 400.0), "New").unwrap();
+    let text = extract_text(&out, 0).unwrap();
+    assert!(text.contains("Value") && !text.contains("Name"), "{text}");
+    let drawn = drawn(&out);
+    let at = drawn
+        .iter()
+        .position(|(_, said)| said == &["Value"])
+        .unwrap();
+    let name_width = (722.0 + 556.0 + 833.0 + 556.0) / 1000.0 * 12.0;
+    assert_eq!(drawn[at - 2].0, "TJ");
+    let doc = Document::load_mem(&out).unwrap();
+    let page = doc.page_iter().next().unwrap();
+    let content = Content::decode(&doc.get_page_content(page)).unwrap();
+    let ops: Vec<&Operation> = content.operations.iter().collect();
+    let value = ops
+        .iter()
+        .position(|op| op.operands.first().and_then(|o| o.as_str().ok()) == Some(b"Value"))
+        .unwrap();
+    let replacement = ops[value - 2].operands[0].as_array().unwrap()[0]
+        .as_float()
+        .unwrap();
+    assert!(
+        (replacement + name_width / 12.0 * 1000.0).abs() < 0.5,
+        "{replacement}"
+    );
+}
+
+#[test]
+fn a_colour_from_a_named_space_is_kept() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        op("cs", vec![Object::Name("CS0".into())]),
+        op("scn", numbers(&[0.1, 0.4, 0.8])),
+        op("Tf", vec![Object::Name("F1".into()), Object::Real(12.0)]),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Blue"),
+        op("ET", vec![]),
+    ]);
+    let out = replace_text(&pdf, 0, line(72.0, 400.0), "Still blue").unwrap();
+    let drawn = drawn(&out);
+    let at = drawn
+        .iter()
+        .position(|(_, said)| said == &["Still blue"])
+        .unwrap();
+    assert_eq!(drawn[at - 5], ("cs".into(), vec!["CS0".to_owned()]));
+    assert_eq!(drawn[at - 4].0, "scn");
 }

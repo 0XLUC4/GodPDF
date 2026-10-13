@@ -7,7 +7,10 @@
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat, dictionary};
 
+use std::collections::HashMap;
+
 use crate::annotate::Rect;
+use crate::fonts::Font;
 use crate::helvetica::win_ansi;
 use crate::pdf::{check_page, deref, dict_entry, inherited, load, page_ids, save};
 use crate::{Error, Result};
@@ -38,10 +41,13 @@ fn then(first: Matrix, second: Matrix) -> Matrix {
 #[derive(Clone)]
 struct State {
     ctm: Matrix,
-    /// The operation that set the colour text is filled with, when it is a plain one.
-    fill: Option<Operation>,
+    fill: Vec<Operation>,
+    font: Vec<u8>,
     font_size: f32,
     leading: f32,
+    char_spacing: f32,
+    word_spacing: f32,
+    scaling: f32,
 }
 
 /// The text taken out of a page.
@@ -50,19 +56,27 @@ struct Removed {
     origin: (f32, f32),
     /// Its height on the page, in points.
     size: f32,
-    fill: Option<Operation>,
+    fill: Vec<Operation>,
 }
 
 /// Take out of `operations` every piece of text that starts in `area`. Returns what it was
 /// like, or `None` when the page draws no text there.
-fn take_out(operations: &mut Vec<Operation>, area: Rect) -> Result<Option<Removed>> {
+fn take_out(
+    operations: &mut Vec<Operation>,
+    area: Rect,
+    fonts: &HashMap<Vec<u8>, Widths>,
+) -> Result<Option<Removed>> {
     let mut kept = Vec::with_capacity(operations.len());
     let mut saved: Vec<State> = Vec::new();
     let mut state = State {
         ctm: IDENTITY,
-        fill: None,
+        fill: Vec::new(),
+        font: Vec::new(),
         font_size: 0.0,
         leading: 0.0,
+        char_spacing: 0.0,
+        word_spacing: 0.0,
+        scaling: 1.0,
     };
     // The text matrix, and the one of the start of the line.
     let (mut text, mut line) = (IDENTITY, IDENTITY);
@@ -77,6 +91,7 @@ fn take_out(operations: &mut Vec<Operation>, area: Rect) -> Result<Option<Remove
         let next_line =
             |line: Matrix, leading: f32| then([1.0, 0.0, 0.0, 1.0, 0.0, -leading], line);
         let mut shows = false;
+        let mut shown: Vec<&Object> = Vec::new();
         match operation.operator.as_str() {
             "q" => saved.push(state.clone()),
             "Q" => state = saved.pop().unwrap_or(state),
@@ -85,8 +100,19 @@ fn take_out(operations: &mut Vec<Operation>, area: Rect) -> Result<Option<Remove
                 state.ctm = then(matrix, state.ctm);
             }
             "BT" => (text, line) = (IDENTITY, IDENTITY),
-            "Tf" => state.font_size = number(1),
+            "Tf" => {
+                state.font = operation
+                    .operands
+                    .first()
+                    .and_then(|name| name.as_name().ok())
+                    .map(<[u8]>::to_vec)
+                    .unwrap_or_default();
+                state.font_size = number(1);
+            }
             "TL" => state.leading = number(0),
+            "Tc" => state.char_spacing = number(0),
+            "Tw" => state.word_spacing = number(0),
+            "Tz" => state.scaling = number(0) / 100.0,
             "Td" | "TD" => {
                 if operation.operator == "TD" {
                     state.leading = -number(1);
@@ -103,17 +129,53 @@ fn take_out(operations: &mut Vec<Operation>, area: Rect) -> Result<Option<Remove
                 text = line;
             }
             "'" | "\"" => {
+                if operation.operator == "\"" {
+                    state.word_spacing = number(0);
+                    state.char_spacing = number(1);
+                }
                 line = next_line(line, state.leading);
                 text = line;
                 shows = true;
+                shown.extend(operation.operands.last());
             }
-            "Tj" | "TJ" => shows = true,
-            "g" | "rg" | "k" => state.fill = Some(operation.clone()),
-            // A colour of another kind (a pattern, a named space): not one to write with.
-            "cs" | "sc" | "scn" => state.fill = None,
+            "Tj" => {
+                shows = true;
+                shown.extend(operation.operands.first());
+            }
+            "TJ" => {
+                shows = true;
+                if let Some(Ok(items)) = operation.operands.first().map(Object::as_array) {
+                    shown.extend(items);
+                }
+            }
+            "g" | "rg" | "k" | "cs" => state.fill = vec![operation.clone()],
+            "sc" | "scn" => {
+                state.fill.retain(|set| set.operator == "cs");
+                state.fill.push(operation.clone());
+            }
             _ => {}
         }
+        let advance = shows.then(|| {
+            let widths = fonts.get(&state.font);
+            shown
+                .iter()
+                .map(|item| match item {
+                    Object::String(bytes, _) => widths.map_or(0.0, |widths| {
+                        widths.displacement(
+                            bytes,
+                            state.font_size,
+                            state.char_spacing,
+                            state.word_spacing,
+                        )
+                    }),
+                    other => -other.as_float().unwrap_or(0.0) / 1000.0 * state.font_size,
+                })
+                .sum::<f32>()
+        });
         let drawn = then(text, state.ctm);
+        if let Some(advance) = advance {
+            text = then([1.0, 0.0, 0.0, 1.0, advance * state.scaling, 0.0], text);
+        }
         let (x, y) = (drawn[4], drawn[5]);
         let inside = (area.x0 - SLACK..=area.x1 + SLACK).contains(&x)
             && (area.y0 - SLACK..=area.y1 + SLACK).contains(&y);
@@ -129,8 +191,16 @@ fn take_out(operations: &mut Vec<Operation>, area: Rect) -> Result<Option<Remove
             return Err(Error::InvalidArgument(why.into()));
         }
         // These two also start a line: the line is still started.
+        if operation.operator == "\"" {
+            kept.push(Operation::new("Tw", vec![Object::Real(number(0))]));
+            kept.push(Operation::new("Tc", vec![Object::Real(number(1))]));
+        }
         if operation.operator != "Tj" && operation.operator != "TJ" {
             kept.push(Operation::new("T*", Vec::new()));
+        }
+        if let Some(advance) = advance.filter(|advance| *advance != 0.0 && state.font_size != 0.0) {
+            let gap = Object::Real(-advance / state.font_size * 1000.0);
+            kept.push(Operation::new("TJ", vec![Object::Array(vec![gap])]));
         }
         if removed.as_ref().is_none_or(|first| x < first.origin.0) {
             removed = Some(Removed {
@@ -179,7 +249,8 @@ pub fn replace_text(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<V
     check_page(page, pages.len())?;
     let page = pages[page];
     let mut content = Content::decode(&doc.get_page_content(page))?;
-    let Some(removed) = take_out(&mut content.operations, area)? else {
+    let fonts = page_fonts(&doc, page);
+    let Some(removed) = take_out(&mut content.operations, area, &fonts)? else {
         let why = "this text is not written on the page itself: it cannot be edited";
         return Err(Error::InvalidArgument(why.into()));
     };
@@ -192,14 +263,17 @@ pub fn replace_text(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<V
     let text = text.replace(['\r', '\n'], " ");
     if !text.trim().is_empty() && removed.size > 0.0 {
         add_font(&mut doc, page)?;
-        let black = Operation::new("g", vec![Object::Integer(0)]);
+        let mut fill = removed.fill;
+        if fill.is_empty() {
+            fill.push(Operation::new("g", vec![Object::Integer(0)]));
+        }
         let font = vec![Object::Name(FONT.into()), Object::Real(removed.size)];
         let (x, y) = removed.origin;
         let place = [1.0, 0.0, 0.0, 1.0, x, y].map(Object::Real).to_vec();
         let written = text.chars().map(win_ansi).collect();
+        operations.push(plain("q"));
+        operations.extend(fill);
         operations.extend([
-            plain("q"),
-            removed.fill.unwrap_or(black),
             plain("BT"),
             Operation::new("Tf", font),
             Operation::new("Tm", place),
@@ -214,4 +288,178 @@ pub fn replace_text(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<V
     doc.get_dictionary_mut(page)?
         .set("Contents", Object::Reference(stream));
     save(&mut doc)
+}
+
+enum Widths {
+    Simple {
+        first: i64,
+        widths: Vec<f32>,
+        missing: f32,
+        standard: Option<(Font, bool, bool)>,
+    },
+    Composite {
+        ranges: Vec<(u32, u32, f32)>,
+        default: f32,
+    },
+}
+
+impl Widths {
+    fn read(doc: &Document, font: &Dictionary) -> Self {
+        let numbers = |object: Option<&Object>| -> Vec<f32> {
+            object
+                .and_then(|object| deref(doc, object))
+                .and_then(|object| object.as_array().ok())
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| {
+                            deref(doc, item)
+                                .and_then(|item| item.as_float().ok())
+                                .unwrap_or(0.0)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let number = |dict: &Dictionary, key: &[u8]| {
+            dict.get(key)
+                .ok()
+                .and_then(|value| deref(doc, value))
+                .and_then(|value| value.as_float().ok())
+        };
+        let subtype = font
+            .get(b"Subtype")
+            .ok()
+            .and_then(|name| name.as_name().ok());
+        if subtype == Some(b"Type0".as_slice()) {
+            let descendant = font
+                .get(b"DescendantFonts")
+                .ok()
+                .and_then(|list| deref(doc, list))
+                .and_then(|list| list.as_array().ok())
+                .and_then(|list| list.first())
+                .and_then(|first| deref(doc, first))
+                .and_then(|first| first.as_dict().ok());
+            let Some(descendant) = descendant else {
+                return Self::Composite {
+                    ranges: Vec::new(),
+                    default: 1000.0,
+                };
+            };
+            let list = descendant
+                .get(b"W")
+                .ok()
+                .and_then(|list| deref(doc, list))
+                .and_then(|list| list.as_array().ok())
+                .cloned()
+                .unwrap_or_default();
+            let mut ranges = Vec::new();
+            let mut at = 0;
+            while at + 1 < list.len() {
+                let start = deref(doc, &list[at])
+                    .and_then(|value| value.as_float().ok())
+                    .unwrap_or(0.0) as u32;
+                match deref(doc, &list[at + 1]) {
+                    Some(Object::Array(_)) => {
+                        let widths = numbers(Some(&list[at + 1]));
+                        for (offset, width) in widths.into_iter().enumerate() {
+                            let code = start + offset as u32;
+                            ranges.push((code, code, width));
+                        }
+                        at += 2;
+                    }
+                    Some(end) => {
+                        let end = end.as_float().unwrap_or(0.0) as u32;
+                        let width = list
+                            .get(at + 2)
+                            .and_then(|value| deref(doc, value))
+                            .and_then(|value| value.as_float().ok())
+                            .unwrap_or(0.0);
+                        ranges.push((start, end, width));
+                        at += 3;
+                    }
+                    None => break,
+                }
+            }
+            return Self::Composite {
+                ranges,
+                default: number(descendant, b"DW").unwrap_or(1000.0),
+            };
+        }
+        let missing = dict_entry(doc, font, b"FontDescriptor")
+            .and_then(|descriptor| number(descriptor, b"MissingWidth"))
+            .unwrap_or(0.0);
+        let standard = font
+            .get(b"BaseFont")
+            .ok()
+            .and_then(|name| name.as_name().ok())
+            .and_then(|name| Font::standard(&String::from_utf8_lossy(name)));
+        Self::Simple {
+            first: number(font, b"FirstChar").map_or(0, |first| first as i64),
+            widths: numbers(font.get(b"Widths").ok()),
+            missing,
+            standard,
+        }
+    }
+
+    fn displacement(&self, bytes: &[u8], size: f32, char_spacing: f32, word_spacing: f32) -> f32 {
+        let glyph = |units: f32, space: bool| {
+            units / 1000.0 * size + char_spacing + if space { word_spacing } else { 0.0 }
+        };
+        match self {
+            Self::Simple {
+                first,
+                widths,
+                missing,
+                standard,
+            } => bytes
+                .iter()
+                .map(|&code| {
+                    let listed = usize::try_from(i64::from(code) - first)
+                        .ok()
+                        .and_then(|index| widths.get(index))
+                        .copied();
+                    let units = match (listed, standard) {
+                        (Some(width), _) => width,
+                        (None, Some((font, bold, italic))) => {
+                            f32::from(font.code_units(code, *bold, *italic))
+                        }
+                        (None, None) => *missing,
+                    };
+                    glyph(units, code == b' ')
+                })
+                .sum(),
+            Self::Composite { ranges, default } => bytes
+                .chunks(2)
+                .map(|pair| {
+                    let code = pair
+                        .iter()
+                        .fold(0u32, |code, &byte| code << 8 | u32::from(byte));
+                    let units = ranges
+                        .iter()
+                        .find(|(start, end, _)| (*start..=*end).contains(&code))
+                        .map_or(*default, |(_, _, width)| *width);
+                    glyph(units, pair == [b' '])
+                })
+                .sum(),
+        }
+    }
+}
+
+fn page_fonts(doc: &Document, page: ObjectId) -> HashMap<Vec<u8>, Widths> {
+    let resources = inherited(doc, page, b"Resources");
+    let resources = resources
+        .as_ref()
+        .and_then(|found| deref(doc, found))
+        .and_then(|found| found.as_dict().ok());
+    let Some(fonts) = resources.and_then(|resources| dict_entry(doc, resources, b"Font")) else {
+        return HashMap::new();
+    };
+    fonts
+        .iter()
+        .filter_map(|(name, font)| {
+            let font = deref(doc, font)?.as_dict().ok()?;
+            Some((name.clone(), Widths::read(doc, font)))
+        })
+        .collect()
 }

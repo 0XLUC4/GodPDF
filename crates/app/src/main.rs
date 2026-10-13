@@ -12,6 +12,8 @@ mod jobs;
 mod lineedit;
 mod organize;
 mod platform;
+#[cfg(windows)]
+mod print;
 mod quickbar;
 mod ranges;
 mod selection;

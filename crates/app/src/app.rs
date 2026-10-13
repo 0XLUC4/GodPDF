@@ -68,6 +68,8 @@ pub struct GodApp {
     /// Free-text box being typed on a page.
     text_box: Option<TextBox>,
     line_edit: Option<crate::lineedit::LineEdit>,
+    /// A document is being printed: a second one waits for it.
+    printing: bool,
     /// Command to run once the next document is open (welcome tool cards).
     pending_cmd: Option<Cmd>,
     focus_search: bool,
@@ -129,6 +131,7 @@ impl GodApp {
             erase_stroke: false,
             text_box: None,
             line_edit: None,
+            printing: false,
             pending_cmd: None,
             focus_search: false,
             quit_confirmed: false,
@@ -528,8 +531,8 @@ impl GodApp {
                 if let Some((page, bands)) = out.highlight {
                     self.highlight_text(page, &bands);
                 }
-                if let Some((page, line, text)) = out.edit_line {
-                    self.start_line_edit(page, line, text);
+                if let Some((page, line, letters)) = out.edit_line {
+                    self.start_line_edit(page, line, &letters);
                 }
                 match out.line_event {
                     Some(crate::lineedit::Event::Commit) => self.commit_line_edit(),
@@ -1028,7 +1031,7 @@ impl GodApp {
 
     /// Change the canvas tool; a text box being typed is committed first.
     /// A line of the page was clicked in edit-text mode: ask for its new words.
-    fn start_line_edit(&mut self, page: usize, line: egui::Rect, text: String) {
+    fn start_line_edit(&mut self, page: usize, line: egui::Rect, letters: &[(char, egui::Pos2)]) {
         self.commit_line_edit();
         let tab = &self.tabs[self.active];
         let Some(&size) = tab.page_sizes.get(page) else {
@@ -1044,8 +1047,18 @@ impl GodApp {
         let area = geometry::to_pdf_rect(&geom, size, line.min, line.max);
         match core::line_look(tab.session.bytes(), page, area) {
             Ok(look) => {
+                // Each letter is as the page draws it where it is.
+                let letters = letters.iter().map(|&(letter, at)| {
+                    let (x, _) = geometry::to_pdf(&geom, size, at);
+                    (letter, look.style_at(x), look.ink_at(x))
+                });
                 self.line_edit = Some(crate::lineedit::LineEdit::new(
-                    tab.id, page, line, area, text, look,
+                    tab.id,
+                    page,
+                    line,
+                    area,
+                    letters.collect(),
+                    &look,
                 ));
             }
             Err(err) => self.toasts.error(format!("Cannot edit this text: {err}")),
@@ -1064,7 +1077,8 @@ impl GodApp {
             return;
         };
         let result = self.tabs[index].apply("Edit text", |pdf| {
-            core::replace_text(pdf, edit.page, edit.area, &edit.text)
+            let (styles, inks) = (edit.styles(), edit.inks());
+            core::replace_styled(pdf, edit.page, edit.area, &edit.text, styles, inks)
         });
         if let Err(err) = result {
             self.toasts.error(format!("Cannot edit this text: {err}"));
@@ -1384,10 +1398,13 @@ impl GodApp {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
-        match platform::print_pdf(&tab.session.name, tab.session.bytes()) {
-            Ok(done) => self.toasts.success(done),
-            Err(err) => self.toasts.error(err),
+        let (name, bytes) = (tab.session.name.clone(), tab.session.bytes().to_vec());
+        if std::mem::replace(&mut self.printing, true) {
+            self.toasts.error("Still printing: wait for it to be over");
+            return;
         }
+        let print = move || Done::Printed(platform::print_pdf(&name, bytes));
+        self.jobs.spawn(&self.ctx, print);
     }
 
     fn save(&mut self, index: usize, save_as: bool) -> bool {
@@ -1586,7 +1603,16 @@ impl GodApp {
                     generation,
                     result,
                 } => self.comments.store(tab, generation, result),
+                Done::Printed(result) => {
+                    self.printing = false;
+                    match result {
+                        Ok(Some(done)) => self.toasts.success(done),
+                        Ok(None) => {}
+                        Err(err) => self.toasts.error(err),
+                    }
+                }
                 Done::Failed(err) => {
+                    self.printing = false;
                     self.comments.drop_loading();
                     for tab in &mut self.tabs {
                         tab.search.busy = false;

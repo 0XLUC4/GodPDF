@@ -37,6 +37,8 @@ pub enum Done {
         generation: u64,
         result: Result<Vec<crate::comments::Entry>, String>,
     },
+    /// The document was printed, or not: what to tell the user.
+    Printed(Result<Option<&'static str>, String>),
     /// The job panicked or could not start.
     Failed(String),
 }

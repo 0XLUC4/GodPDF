@@ -120,23 +120,32 @@ pub fn bands(chars: &[TextChar], range: RangeInclusive<usize>) -> Vec<Rect> {
 
 /// The text of `range`, with line breaks and the spaces the PDF only implies by position.
 pub fn text(chars: &[TextChar], range: RangeInclusive<usize>) -> String {
+    let spelled = spelled(chars, range).into_iter();
+    spelled.map(|(letter, _)| letter).collect()
+}
+
+/// The text of `range` as [`text`] gives it, letter by letter, each with the middle of the
+/// glyph it comes from. What the PDF only implies is where the glyph before it ends.
+pub fn spelled(chars: &[TextChar], range: RangeInclusive<usize>) -> Vec<(char, Pos2)> {
     let Some(selected) = chars.get(range) else {
-        return String::new();
+        return Vec::new();
     };
-    let mut out = String::new();
+    let mut out: Vec<(char, Pos2)> = Vec::new();
     let mut prev: Option<&TextChar> = None;
     for ch in selected {
         if let Some(prev) = prev {
+            let end = pos2(prev.x1, (prev.y0 + prev.y1) / 2.0);
             if !same_line(prev, ch) {
-                out.push('\n');
+                out.push(('\n', end));
             } else if ch.x0 - prev.x1 > 0.25 * (ch.y1 - ch.y0)
-                && !out.ends_with(char::is_whitespace)
+                && !out.last().is_some_and(|(last, _)| last.is_whitespace())
                 && !ch.text.starts_with(char::is_whitespace)
             {
-                out.push(' ');
+                out.push((' ', end));
             }
         }
-        out.push_str(&ch.text);
+        let middle = cell(ch).center();
+        out.extend(ch.text.chars().map(|letter| (letter, middle)));
         prev = Some(ch);
     }
     out
@@ -194,6 +203,9 @@ mod tests {
         assert_eq!((line_of(&chars, 0), line_of(&chars, 2)), (0..=3, 0..=3));
         assert_eq!((line_of(&chars, 4), line_of(&chars, 5)), (4..=5, 4..=5));
         assert_eq!(text(&chars, line_of(&chars, 3)), "ab cd");
+        // Each letter is where its glyph is; the implied space, where "b" ends.
+        let middles: Vec<f32> = spelled(&chars, 0..=3).iter().map(|(_, at)| at.x).collect();
+        assert_eq!(middles, [13.0, 19.0, 22.0, 31.0, 37.0]);
     }
 
     #[test]

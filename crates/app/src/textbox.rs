@@ -377,7 +377,7 @@ fn editor_font(font: Font, style: CharStyle, font_size: f32, zoom: f32) -> FontI
     )
 }
 
-struct Look {
+pub struct Look {
     font: Font,
     font_size: f32,
     zoom: f32,
@@ -386,7 +386,13 @@ struct Look {
 }
 
 impl Look {
-    fn new(painter: &egui::Painter, font: Font, font_size: f32, zoom: f32, color: Color32) -> Self {
+    pub fn new(
+        painter: &egui::Painter,
+        font: Font,
+        font_size: f32,
+        zoom: f32,
+        color: Color32,
+    ) -> Self {
         let line_height = font_size * FREE_TEXT_LINE_HEIGHT * zoom;
         let ascent = |style: CharStyle| {
             let mut job = LayoutJob::default();
@@ -421,7 +427,7 @@ impl Look {
     }
 }
 
-fn text_format(look: &Look, style: CharStyle) -> TextFormat {
+pub fn text_format(look: &Look, style: CharStyle) -> TextFormat {
     let valign = if style.script == Script::Super {
         egui::Align::TOP
     } else {

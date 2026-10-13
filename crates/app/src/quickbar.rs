@@ -429,7 +429,12 @@ fn font_menu(ui: &mut Ui, font: &mut Font) {
     .on_hover_text(format!("Font: {}", font.name()));
 }
 
-fn format_toggle(ui: &mut Ui, format: Format, active: bool, palette: &Palette) -> egui::Response {
+pub fn format_toggle(
+    ui: &mut Ui,
+    format: Format,
+    active: bool,
+    palette: &Palette,
+) -> egui::Response {
     let (glyph, tooltip) = match format {
         Format::Bold => (icon::TEXT_B, "Bold (Ctrl+B)"),
         Format::Italic => (icon::TEXT_ITALIC, "Italic (Ctrl+I)"),

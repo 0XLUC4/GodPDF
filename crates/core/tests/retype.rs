@@ -1,4 +1,6 @@
-use godpdf_core::{Error, Rect, extract_text, line_look, replace_text};
+use godpdf_core::{
+    CharStyle, Error, Rect, Script, extract_text, line_look, replace_styled, replace_text,
+};
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, Stream, dictionary};
 
@@ -249,4 +251,245 @@ fn the_look_of_a_line_is_its_size_and_colour() {
     let look = line_look(&fixture(), 0, line(72.0, 700.0)).unwrap();
     assert_eq!(look.color, None);
     assert!(line_look(&fixture(), 0, line(300.0, 300.0)).is_err());
+}
+
+#[test]
+fn a_bold_slanted_line_stays_bold_and_slanted() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        op("Tf", vec![Object::Name("F1".into()), Object::Real(12.0)]),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Title"),
+        op("ET", vec![]),
+    ]);
+    // The font of the page is a subset of one that is not standard.
+    let mut doc = Document::load_mem(&pdf).unwrap();
+    for object in doc.objects.values_mut() {
+        if let Ok(font) = object.as_dict_mut()
+            && font.has(b"BaseFont")
+        {
+            font.set("BaseFont", Object::Name("ABCDEF+Calibri-BoldItalic".into()));
+        }
+    }
+    let mut pdf = Vec::new();
+    doc.save_to(&mut pdf).unwrap();
+
+    let look = line_look(&pdf, 0, line(72.0, 400.0)).unwrap();
+    let style = look.style_at(75.0);
+    assert!(style.bold && style.italic && !style.underline);
+    let out = replace_text(&pdf, 0, line(72.0, 400.0), "Heading").unwrap();
+    let drawn = drawn(&out);
+    let at = drawn
+        .iter()
+        .position(|(_, said)| said == &["Heading"])
+        .unwrap();
+    assert_eq!(drawn[at - 2].1[0], "GodPDFHeBO");
+    let doc = Document::load_mem(&out).unwrap();
+    let bases = doc.objects.values().filter_map(|object| {
+        let name = object
+            .as_dict()
+            .ok()?
+            .get(b"BaseFont")
+            .ok()?
+            .as_name()
+            .ok()?;
+        Some(String::from_utf8_lossy(name).into_owned())
+    });
+    assert!(
+        bases
+            .into_iter()
+            .any(|name| name == "Helvetica-BoldOblique")
+    );
+}
+
+/// One line: "Plain " in F1, "bold" in F2 (bold) with a line drawn under it, then a small
+/// raised "2". Above it a rule as wide as the page, which is not an underline.
+fn mixed() -> Vec<u8> {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let font =
+        |name: &str, size: f32| op("Tf", vec![Object::Name(name.into()), Object::Real(size)]);
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        font("F1", 12.0),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Plain "),
+        font("F2", 12.0),
+        op("Tm", numbers(&[1.0, 0.0, 0.0, 1.0, 110.0, 400.0])),
+        shown("bold"),
+        font("F1", 7.0),
+        op("Tm", numbers(&[1.0, 0.0, 0.0, 1.0, 135.0, 405.0])),
+        shown("2"),
+        op("ET", vec![]),
+        op("re", numbers(&[110.0, 398.2, 24.0, 0.7])),
+        op("f", vec![]),
+        op("w", numbers(&[0.5])),
+        op("m", numbers(&[0.0, 396.0])),
+        op("l", numbers(&[612.0, 396.0])),
+        op("S", vec![]),
+    ]);
+    let mut doc = Document::load_mem(&pdf).unwrap();
+    let bold = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica-Bold",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    for object in doc.objects.values_mut() {
+        if let Ok(resources) = object
+            .as_dict_mut()
+            .and_then(|page| page.get_mut(b"Resources"))
+            && let Ok(fonts) = resources.as_dict_mut().and_then(|all| all.get_mut(b"Font"))
+        {
+            fonts.as_dict_mut().unwrap().set("F2", bold);
+        }
+    }
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn each_word_of_a_line_has_its_own_look() {
+    let look = line_look(&mixed(), 0, line(72.0, 400.0)).unwrap();
+    assert!((look.size - 12.0).abs() < 0.01);
+    assert_eq!(look.style_at(80.0), CharStyle::default());
+    let bold = look.style_at(120.0);
+    assert!(bold.bold && bold.underline && bold.script == Script::Normal);
+    let raised = look.style_at(137.0);
+    assert!(!raised.bold && !raised.underline && raised.script == Script::Super);
+}
+
+#[test]
+fn a_line_is_written_back_word_by_word() {
+    let plain = CharStyle::default();
+    let bold = CharStyle {
+        bold: true,
+        underline: true,
+        ..plain
+    };
+    let styles = [plain, plain, bold, bold];
+    let out = replace_styled(&mixed(), 0, line(72.0, 400.0), "A BC", &styles, &[]).unwrap();
+    let drawn = drawn(&out);
+    let says = |words: &str| drawn.iter().position(|(_, said)| said == &[words]).unwrap();
+    let (first, second) = (says("A "), says("BC"));
+    assert_eq!(drawn[first - 2].1, ["GodPDFHelv", "12"]);
+    assert_eq!(drawn[second - 1].1, ["GodPDFHeBo", "12"]);
+    // The old underline is gone, the rule of the page is not, and "BC" has a new one.
+    let rects: Vec<&Vec<String>> = drawn
+        .iter()
+        .filter(|(operator, _)| operator == "re")
+        .map(|(_, numbers)| numbers)
+        .collect();
+    assert_eq!(rects.len(), 1, "{rects:?}");
+    let start: f32 = rects[0][0].parse().unwrap();
+    let a_and_space = (667.0 + 278.0) / 1000.0 * 12.0;
+    assert!((start - (72.0 + a_and_space)).abs() < 0.01, "{start}");
+    assert!(
+        drawn
+            .iter()
+            .any(|(operator, said)| operator == "l" && said[0] == "612")
+    );
+    let text = extract_text(&out, 0).unwrap();
+    assert!(!text.contains("Plain") && !text.contains("bold"), "{text}");
+}
+
+#[test]
+fn plain_new_words_are_like_the_first_of_the_old() {
+    let out = replace_text(&mixed(), 0, line(72.0, 400.0), "New").unwrap();
+    let drawn = drawn(&out);
+    let at = drawn.iter().position(|(_, said)| said == &["New"]).unwrap();
+    assert_eq!(drawn[at - 2].1, ["GodPDFHelv", "12"]);
+    assert!(drawn.iter().all(|(operator, _)| operator != "re"));
+}
+
+#[test]
+fn each_word_keeps_its_colour() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        op("Tf", vec![Object::Name("F1".into()), Object::Real(12.0)]),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Black "),
+        op("rg", numbers(&[1.0, 0.0, 0.0])),
+        op("Tm", numbers(&[1.0, 0.0, 0.0, 1.0, 110.0, 400.0])),
+        shown("red"),
+        op("ET", vec![]),
+    ]);
+    let look = line_look(&pdf, 0, line(72.0, 400.0)).unwrap();
+    let red = look.inks[1].unwrap();
+    assert_eq!((look.inks.len(), look.inks[0]), (2, None));
+    assert_eq!((red.r, red.g, red.b), (1.0, 0.0, 0.0));
+    assert_eq!((look.ink_at(80.0), look.ink_at(115.0)), (0, 1));
+
+    let underlined = CharStyle {
+        underline: true,
+        ..CharStyle::default()
+    };
+    let (styles, inks) = ([underlined; 4], [1, 1, 0, 0]);
+    let out = replace_styled(&pdf, 0, line(72.0, 400.0), "ReBl", &styles, &inks).unwrap();
+    let drawn = drawn(&out);
+    let operators: Vec<&str> = drawn
+        .iter()
+        .map(|(operator, _)| operator.as_str())
+        .collect();
+    let from = operators
+        .iter()
+        .rposition(|operator| *operator == "q")
+        .unwrap();
+    // Red words, black words, then a line under each in its colour.
+    let wanted = [
+        "q", "rg", "BT", "Tf", "Tm", "Tj", "g", "Tf", "Tj", "ET", "rg", "re", "f", "g", "re", "f",
+        "Q",
+    ];
+    assert_eq!(operators[from..], wanted);
+}
+
+#[test]
+fn letters_raised_by_the_page_are_raised() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let font = |size: f32| op("Tf", vec![Object::Name("F1".into()), Object::Real(size)]);
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        font(12.0),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("mc"),
+        font(7.0),
+        op("Ts", numbers(&[5.0])),
+        shown("2"),
+        op("ET", vec![]),
+    ]);
+    let look = line_look(&pdf, 0, line(72.0, 400.0)).unwrap();
+    assert_eq!(look.style_at(75.0).script, Script::Normal);
+    assert_eq!(look.style_at(90.0).script, Script::Super);
+}
+
+#[test]
+fn a_line_changed_twice_has_the_look_of_the_last_change() {
+    let numbers = |values: &[f32]| values.iter().map(|value| Object::Real(*value)).collect();
+    let pdf = page_with(vec![
+        op("BT", vec![]),
+        op("Tf", vec![Object::Name("F1".into()), Object::Real(12.0)]),
+        op("Td", numbers(&[72.0, 400.0])),
+        shown("Black "),
+        op("rg", numbers(&[1.0, 0.0, 0.0])),
+        op("Tm", numbers(&[1.0, 0.0, 0.0, 1.0, 110.0, 400.0])),
+        shown("red"),
+        op("ET", vec![]),
+    ]);
+    // Red first this time, then black: "Re" ends at 87.3.
+    let inks = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+    let out = replace_styled(&pdf, 0, line(72.0, 400.0), "Re black.", &[], &inks).unwrap();
+    let look = line_look(&out, 0, line(72.0, 400.0)).unwrap();
+    // Nothing is left of where the old words were, nor of their colours.
+    assert_eq!(look.inks.len(), 2, "{look:?}");
+    let color = |x: f32| look.inks[look.ink_at(x)].map(|color| (color.r, color.g, color.b));
+    assert_eq!(color(80.0), Some((1.0, 0.0, 0.0)));
+    assert_eq!(color(100.0), Some((0.0, 0.0, 0.0)));
+    assert_eq!(color(115.0), Some((0.0, 0.0, 0.0)));
+    // And a third change still finds one line there.
+    let again = replace_styled(&out, 0, line(72.0, 400.0), "Once more", &[], &[]).unwrap();
+    let text = extract_text(&again, 0).unwrap();
+    assert!(
+        text.contains("Once more") && !text.contains("black"),
+        "{text}"
+    );
 }

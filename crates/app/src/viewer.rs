@@ -16,12 +16,17 @@ use crate::tools::CommentStyle;
 
 pub const PAD: f32 = 28.0;
 pub const GAP: f32 = 18.0;
+/// Points scrolled by one notch of the wheel.
+const WHEEL_LINE: f32 = 100.0;
 
 /// A finished comment gesture, in displayed page points (origin top-left).
 pub struct Finished {
     pub page: usize,
     pub points: Vec<Pos2>,
 }
+
+/// A line of a page: the page, its box (displayed points), its letters and where each is.
+pub type ClickedLine = (usize, Rect, Vec<(char, Pos2)>);
 
 #[derive(Default)]
 pub struct Output {
@@ -38,8 +43,9 @@ pub struct Output {
     pub erase: Option<(usize, String)>,
     /// First and last page on screen: the others can give their textures back.
     pub visible: Option<(usize, usize)>,
-    /// Edit-text mode: a line was clicked. Its page, its box (displayed points), its words.
-    pub edit_line: Option<(usize, Rect, String)>,
+    /// Edit-text mode: a line was clicked. Its page, its box (displayed points), its letters
+    /// and where each is.
+    pub edit_line: Option<ClickedLine>,
     pub line_event: Option<lineedit::Event>,
 }
 
@@ -111,6 +117,8 @@ pub fn show(
             mouse_wheel: false,
             ..Default::default()
         })
+        // An animated area forgets the turns of the wheel that come while it still moves.
+        .animated(false)
         .auto_shrink(false);
     if let Some(page) = tab.scroll_to_page.take() {
         if let Some(top) = tops.get(page) {
@@ -239,9 +247,6 @@ pub fn show(
 }
 
 fn wheel_delta(ui: &Ui, page_height: f32) -> egui::Vec2 {
-    let line = ui
-        .ctx()
-        .options(|options| options.input_options.line_scroll_speed);
     ui.input(|input| {
         input
             .events
@@ -255,7 +260,7 @@ fn wheel_delta(ui: &Ui, page_height: f32) -> egui::Vec2 {
                 } if !modifiers.command && !modifiers.ctrl => {
                     let delta = match unit {
                         egui::MouseWheelUnit::Point => *delta,
-                        egui::MouseWheelUnit::Line => *delta * line,
+                        egui::MouseWheelUnit::Line => *delta * WHEEL_LINE,
                         egui::MouseWheelUnit::Page => *delta * page_height,
                     };
                     Some(if modifiers.shift {
@@ -357,7 +362,7 @@ fn text_line(
     page: usize,
     rect: Rect,
     palette: &Palette,
-) -> Option<(usize, Rect, String)> {
+) -> Option<ClickedLine> {
     let id = Id::new(("page-edit-text", tab.id, page));
     let response = ui.interact(rect, id, Sense::click());
     let chars = tab.text_chars(page);
@@ -373,7 +378,7 @@ fn text_line(
     ui.ctx().set_cursor_icon(CursorIcon::Text);
     response
         .clicked()
-        .then(|| (page, band, crate::textsel::text(&chars, line)))
+        .then(|| (page, band, crate::textsel::spelled(&chars, line)))
 }
 
 /// Mark every place the searched words are written on `page`, while the search shows them.

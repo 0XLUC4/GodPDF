@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use egui::{Button, CornerRadius, RichText, ScrollArea, Stroke, Ui, vec2};
+use egui::{Button, CornerRadius, RichText, ScrollArea, Stroke, TextureHandle, Ui, vec2};
 
 use crate::commands::Cmd;
 use crate::theme::Palette;
@@ -16,11 +16,11 @@ pub struct Output {
     pub new_pdf: bool,
 }
 
-pub fn show(ui: &mut Ui, recent: &[PathBuf]) -> Output {
+pub fn show(ui: &mut Ui, logo: Option<&TextureHandle>, recent: &[PathBuf]) -> Output {
     let palette = Palette::of(ui);
     let mut out = Output::default();
-    // The buttons and the list sit in the middle of the view: how tall they are is known
-    // from the frame before.
+    // The logo, the buttons and the list sit in the middle of the view: how tall they are is
+    // known from the frame before.
     let id = ui.id().with("welcome-height");
     let view = ui.available_height();
     let known: f32 = ui.data(|data| data.get_temp(id)).unwrap_or(0.0);
@@ -29,6 +29,18 @@ pub fn show(ui: &mut Ui, recent: &[PathBuf]) -> Output {
             ui.set_max_width(980.0);
             ui.add_space(((view - known) / 2.0).max(16.0));
             let top = ui.cursor().min.y;
+            if let Some(logo) = logo {
+                ui.add(
+                    egui::Image::new(logo)
+                        .fit_to_exact_size(vec2(112.0, 112.0))
+                        .corner_radius(CornerRadius::same(24)),
+                );
+            }
+            ui.add_space(10.0);
+            ui.label(RichText::new(crate::APP_NAME).size(40.0).strong());
+            let tagline = "Every PDF tool. Local. Pure Rust.";
+            ui.label(RichText::new(tagline).size(17.0).color(palette.text_dim));
+            ui.add_space(24.0);
             ui.horizontal(|ui| {
                 // Center the three primary buttons.
                 let width = 3.0 * 170.0 + 2.0 * ui.spacing().item_spacing.x;

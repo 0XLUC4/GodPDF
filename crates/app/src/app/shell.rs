@@ -477,7 +477,7 @@ impl GodApp {
     // ------------------------------------------------------------ welcome
 
     pub(super) fn welcome_central(&mut self, ui: &mut Ui, clicked: &mut Vec<Cmd>) {
-        let out = welcome::show(ui, &self.recent);
+        let out = welcome::show(ui, self.logo.as_ref(), &self.recent);
         if let Some(path) = out.open_recent {
             self.open_path(&path);
         }

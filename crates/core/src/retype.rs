@@ -463,3 +463,53 @@ fn page_fonts(doc: &Document, page: ObjectId) -> HashMap<Vec<u8>, Widths> {
         })
         .collect()
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineLook {
+    pub size: f32,
+    pub color: Option<crate::Color>,
+}
+
+pub fn line_look(pdf: &[u8], page: usize, area: Rect) -> Result<LineLook> {
+    let doc = load(pdf)?;
+    let pages = page_ids(&doc);
+    check_page(page, pages.len())?;
+    let page = pages[page];
+    let mut operations = Content::decode(&doc.get_page_content(page))?.operations;
+    let fonts = page_fonts(&doc, page);
+    let Some(removed) = take_out(&mut operations, area, &fonts)? else {
+        let why = "this text is not written on the page itself: it cannot be edited";
+        return Err(Error::InvalidArgument(why.into()));
+    };
+    Ok(LineLook {
+        size: removed.size,
+        color: removed.fill.last().and_then(color_of),
+    })
+}
+
+fn color_of(fill: &Operation) -> Option<crate::Color> {
+    let values: Vec<f32> = fill
+        .operands
+        .iter()
+        .map_while(|operand| operand.as_float().ok())
+        .collect();
+    let clamp = |value: f32| value.clamp(0.0, 1.0);
+    match (fill.operator.as_str(), values.as_slice()) {
+        ("g" | "sc" | "scn", &[gray]) => Some(crate::Color {
+            r: clamp(gray),
+            g: clamp(gray),
+            b: clamp(gray),
+        }),
+        ("rg" | "sc" | "scn", &[r, g, b]) => Some(crate::Color {
+            r: clamp(r),
+            g: clamp(g),
+            b: clamp(b),
+        }),
+        ("k" | "sc" | "scn", &[c, m, y, k]) => Some(crate::Color {
+            r: clamp((1.0 - c) * (1.0 - k)),
+            g: clamp((1.0 - m) * (1.0 - k)),
+            b: clamp((1.0 - y) * (1.0 - k)),
+        }),
+        _ => None,
+    }
+}

@@ -9,6 +9,7 @@ mod dialogs;
 mod doc;
 mod geometry;
 mod jobs;
+mod lineedit;
 mod organize;
 mod platform;
 mod quickbar;

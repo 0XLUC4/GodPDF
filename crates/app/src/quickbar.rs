@@ -242,31 +242,33 @@ pub fn show(
         .fixed_pos(canvas.min + vec2(INSET, INSET))
         .constrain_to(canvas)
         .show(ui.ctx(), |ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 6.0);
-            card(&palette).show(ui, |ui| {
-                ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-                ui.vertical(|ui| {
-                    for candidate in Tool::ALL {
-                        if tool_toggle(ui, candidate, candidate == tool, &palette).clicked() {
-                            out.tool = Some(candidate);
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            ui.horizontal_top(|ui| {
+                card(&palette).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+                    ui.vertical(|ui| {
+                        for candidate in Tool::ALL {
+                            if tool_toggle(ui, candidate, candidate == tool, &palette).clicked() {
+                                out.tool = Some(candidate);
+                            }
                         }
-                    }
-                    divider(ui, &palette);
-                    let undo = ui.add_enabled_ui(can_undo, |ui| {
-                        widgets::icon_button(ui, icon::ARROW_U_UP_LEFT, "Undo (Ctrl+Z)")
+                        divider(ui, &palette);
+                        let undo = ui.add_enabled_ui(can_undo, |ui| {
+                            widgets::icon_button(ui, icon::ARROW_U_UP_LEFT, "Undo (Ctrl+Z)")
+                        });
+                        if undo.inner.clicked() {
+                            out.cmd = Some(Cmd::Undo);
+                        }
+                        let redo = ui.add_enabled_ui(can_redo, |ui| {
+                            widgets::icon_button(ui, icon::ARROW_U_UP_RIGHT, "Redo (Ctrl+Y)")
+                        });
+                        if redo.inner.clicked() {
+                            out.cmd = Some(Cmd::Redo);
+                        }
                     });
-                    if undo.inner.clicked() {
-                        out.cmd = Some(Cmd::Undo);
-                    }
-                    let redo = ui.add_enabled_ui(can_redo, |ui| {
-                        widgets::icon_button(ui, icon::ARROW_U_UP_RIGHT, "Redo (Ctrl+Y)")
-                    });
-                    if redo.inner.clicked() {
-                        out.cmd = Some(Cmd::Redo);
-                    }
                 });
+                style_card(ui, target, styles, &palette, &mut out);
             });
-            style_card(ui, target, styles, &palette, &mut out);
         });
     out
 }
@@ -356,34 +358,40 @@ fn style_card(
     };
     let before = (style.color, style.width, style.font_size, style.font);
     card(palette).show(ui, |ui| {
-        ui.set_width(widgets::ICON_BUTTON.x);
-        ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
-        ui.vertical_centered(|ui| {
-            for (color, name) in SWATCHES {
-                if swatch(ui, color, style.color == color, palette)
-                    .on_hover_text(name)
-                    .clicked()
-                {
-                    style.color = color;
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        ui.horizontal_top(|ui| {
+            column(ui, |ui| {
+                for (color, name) in SWATCHES {
+                    if swatch(ui, color, style.color == color, palette)
+                        .on_hover_text(name)
+                        .clicked()
+                    {
+                        style.color = color;
+                    }
                 }
-            }
-            divider(ui, palette);
-            match kind {
-                StyleKind::Text => {
-                    stepper(ui, &mut style.font_size, 6.0..=72.0, 1.0, "Font size");
-                    divider(ui, palette);
-                    font_menu(ui, &mut style.font);
-                    if let Some(active) = formats {
+            });
+            if kind != StyleKind::Fill {
+                column(ui, |ui| match kind {
+                    StyleKind::Text => {
+                        stepper(ui, &mut style.font_size, 6.0..=72.0, 1.0, "Font size");
                         divider(ui, palette);
-                        for format in Format::ALL {
-                            if format_toggle(ui, format, format.is_on(active), palette).clicked() {
-                                out.format = Some(format);
+                        font_menu(ui, &mut style.font);
+                        if let Some(active) = formats {
+                            divider(ui, palette);
+                            for format in Format::ALL {
+                                if format_toggle(ui, format, format.is_on(active), palette)
+                                    .clicked()
+                                {
+                                    out.format = Some(format);
+                                }
                             }
                         }
                     }
-                }
-                StyleKind::Stroke => stepper(ui, &mut style.width, 0.5..=12.0, 0.5, "Line width"),
-                StyleKind::Fill => {}
+                    StyleKind::Stroke => {
+                        stepper(ui, &mut style.width, 0.5..=12.0, 0.5, "Line width")
+                    }
+                    StyleKind::Fill => {}
+                });
             }
         });
     });
@@ -392,6 +400,14 @@ fn style_card(
     {
         out.restyle = Some(copy);
     }
+}
+
+fn column(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.vertical(|ui| {
+        ui.set_width(widgets::ICON_BUTTON.x);
+        ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
+        ui.vertical_centered(add);
+    });
 }
 
 fn font_menu(ui: &mut Ui, font: &mut Font) {

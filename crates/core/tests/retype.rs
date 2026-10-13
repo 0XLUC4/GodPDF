@@ -1,4 +1,4 @@
-use godpdf_core::{Error, Rect, extract_text, replace_text};
+use godpdf_core::{Error, Rect, extract_text, line_look, replace_text};
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, Stream, dictionary};
 
@@ -238,4 +238,15 @@ fn a_colour_from_a_named_space_is_kept() {
         .unwrap();
     assert_eq!(drawn[at - 5], ("cs".into(), vec!["CS0".to_owned()]));
     assert_eq!(drawn[at - 4].0, "scn");
+}
+
+#[test]
+fn the_look_of_a_line_is_its_size_and_colour() {
+    let look = line_look(&fixture(), 0, line(72.0, 680.0)).unwrap();
+    assert!((look.size - 12.0).abs() < 0.01);
+    let red = look.color.unwrap();
+    assert_eq!((red.r, red.g, red.b), (1.0, 0.0, 0.0));
+    let look = line_look(&fixture(), 0, line(72.0, 700.0)).unwrap();
+    assert_eq!(look.color, None);
+    assert!(line_look(&fixture(), 0, line(300.0, 300.0)).is_err());
 }

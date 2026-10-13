@@ -67,6 +67,7 @@ pub struct GodApp {
     erase_stroke: bool,
     /// Free-text box being typed on a page.
     text_box: Option<TextBox>,
+    line_edit: Option<crate::lineedit::LineEdit>,
     /// Command to run once the next document is open (welcome tool cards).
     pending_cmd: Option<Cmd>,
     focus_search: bool,
@@ -127,6 +128,7 @@ impl GodApp {
             styles: quickbar::Styles::default(),
             erase_stroke: false,
             text_box: None,
+            line_edit: None,
             pending_cmd: None,
             focus_search: false,
             quit_confirmed: false,
@@ -391,7 +393,19 @@ impl GodApp {
             tab.scroll_to_page = Some(page - 1);
         }
         let mut budget = Budget(1);
-        let out = viewer::show(ui, tab, Tool::Hand, None, &self.styles, &mut budget, false);
+        let editors = viewer::Editors {
+            text_box: None,
+            line: None,
+        };
+        let out = viewer::show(
+            ui,
+            tab,
+            Tool::Hand,
+            editors,
+            &self.styles,
+            &mut budget,
+            false,
+        );
         if same {
             tab.swap_place();
         } else if let Some((first, last)) = out.visible {
@@ -426,7 +440,9 @@ impl GodApp {
                 let editing = text_box.is_some();
                 let edit_text = self.edit_text;
                 let (tool, styles) = (self.tool, &self.styles);
-                let out = viewer::show(ui, tab, tool, text_box, styles, &mut budget, edit_text);
+                let line = self.line_edit.as_mut().filter(|line| line.tab == tab.id);
+                let editors = viewer::Editors { text_box, line };
+                let out = viewer::show(ui, tab, tool, editors, styles, &mut budget, edit_text);
                 // Pages far from every viewer of this document give their textures back.
                 let seen = [out.visible, beside].into_iter().flatten();
                 if let Some((first, last)) = seen.reduce(|a, b| (a.0.min(b.0), a.1.max(b.1))) {
@@ -513,7 +529,12 @@ impl GodApp {
                     self.highlight_text(page, &bands);
                 }
                 if let Some((page, line, text)) = out.edit_line {
-                    self.ask_new_text(page, line, text);
+                    self.start_line_edit(page, line, text);
+                }
+                match out.line_event {
+                    Some(crate::lineedit::Event::Commit) => self.commit_line_edit(),
+                    Some(crate::lineedit::Event::Cancel) => self.line_edit = None,
+                    None => {}
                 }
                 if let Some((page, id)) = out.erase {
                     self.erase(page, &id);
@@ -721,6 +742,7 @@ impl GodApp {
                 )
             });
             if escape && self.edit_text {
+                self.commit_line_edit();
                 self.edit_text = false;
             } else if escape && self.tool != Tool::Select {
                 self.set_tool(Tool::Select);
@@ -948,6 +970,7 @@ impl GodApp {
                 self.focus_search = true;
             }
             Cmd::EditText => {
+                self.commit_line_edit();
                 self.edit_text = !self.edit_text;
                 if self.edit_text {
                     self.commit_text_box();
@@ -1005,27 +1028,52 @@ impl GodApp {
 
     /// Change the canvas tool; a text box being typed is committed first.
     /// A line of the page was clicked in edit-text mode: ask for its new words.
-    fn ask_new_text(&mut self, page: usize, line: egui::Rect, text: String) {
+    fn start_line_edit(&mut self, page: usize, line: egui::Rect, text: String) {
+        self.commit_line_edit();
         let tab = &self.tabs[self.active];
         let Some(&size) = tab.page_sizes.get(page) else {
             return;
         };
-        match geometry::page_geometry(tab.session.bytes(), page) {
-            Ok(geom) => {
-                self.dialog = Some(Dialog::EditText {
-                    tab: tab.id,
-                    page,
-                    area: geometry::to_pdf_rect(&geom, size, line.min, line.max),
-                    text,
-                    error: None,
-                });
+        let geom = match geometry::page_geometry(tab.session.bytes(), page) {
+            Ok(geom) => geom,
+            Err(err) => {
+                self.toasts.error(format!("Cannot edit this text: {err}"));
+                return;
+            }
+        };
+        let area = geometry::to_pdf_rect(&geom, size, line.min, line.max);
+        match core::line_look(tab.session.bytes(), page, area) {
+            Ok(look) => {
+                self.line_edit = Some(crate::lineedit::LineEdit::new(
+                    tab.id, page, line, area, text, look,
+                ));
             }
             Err(err) => self.toasts.error(format!("Cannot edit this text: {err}")),
         }
     }
 
+    fn commit_line_edit(&mut self) {
+        let Some(edit) = self
+            .line_edit
+            .take()
+            .filter(crate::lineedit::LineEdit::changed)
+        else {
+            return;
+        };
+        let Some(index) = self.tab_index(edit.tab) else {
+            return;
+        };
+        let result = self.tabs[index].apply("Edit text", |pdf| {
+            core::replace_text(pdf, edit.page, edit.area, &edit.text)
+        });
+        if let Err(err) = result {
+            self.toasts.error(format!("Cannot edit this text: {err}"));
+        }
+    }
+
     fn set_tool(&mut self, tool: Tool) {
         // Picking a tool ends the editing of the page's words.
+        self.commit_line_edit();
         self.edit_text = false;
         if self.tool != tool {
             self.commit_text_box();
@@ -1705,6 +1753,16 @@ impl GodApp {
 
     /// Commit the text box when its tab is no longer shown in the reader.
     fn sync_text_box(&mut self) {
+        let line_shown = self.line_edit.as_ref().is_none_or(|line| {
+            self.edit_text
+                && self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|tab| tab.id == line.tab && tab.mode == ViewMode::Read)
+        });
+        if !line_shown {
+            self.commit_line_edit();
+        }
         let Some(text_box) = &self.text_box else {
             return;
         };
@@ -2097,30 +2155,6 @@ impl GodApp {
                     return;
                 }
                 self.add_annotation(index, page, Annotation::Note { rect, text });
-            }
-            Dialog::EditText {
-                tab,
-                page,
-                area,
-                text,
-                ..
-            } => {
-                let Some(index) = self.tab_index(tab).filter(|_| primary) else {
-                    return;
-                };
-                let result = self.tabs[index].apply("Edit text", |pdf| {
-                    core::replace_text(pdf, page, area, &text)
-                });
-                // Not changed: the box stays open and says why.
-                if let Err(err) = result {
-                    self.dialog = Some(Dialog::EditText {
-                        tab,
-                        page,
-                        area,
-                        text,
-                        error: Some(err),
-                    });
-                }
             }
             Dialog::GoToPage {
                 tab, page, count, ..

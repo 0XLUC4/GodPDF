@@ -32,7 +32,7 @@ pub use organize::{
     blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, merge,
     reorder_pages, rotate_pages, split_at, split_every,
 };
-pub use retype::replace_text;
+pub use retype::{LineLook, line_look, replace_text};
 pub use security::{decrypt, encrypt, is_encrypted};
 pub use session::Session;
 pub use text::{SearchHit, extract_all_text, extract_text, search};

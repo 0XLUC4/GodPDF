@@ -382,6 +382,43 @@ struct Look {
     font_size: f32,
     zoom: f32,
     color: Color32,
+    sub_line_height: f32,
+}
+
+impl Look {
+    fn new(painter: &egui::Painter, font: Font, font_size: f32, zoom: f32, color: Color32) -> Self {
+        let line_height = font_size * FREE_TEXT_LINE_HEIGHT * zoom;
+        let ascent = |style: CharStyle| {
+            let mut job = LayoutJob::default();
+            job.append(
+                "H",
+                0.0,
+                TextFormat {
+                    font_id: editor_font(font, style, font_size, zoom),
+                    line_height: Some(line_height),
+                    ..Default::default()
+                },
+            );
+            let galley = painter.layout_job(job);
+            galley
+                .rows
+                .first()
+                .and_then(|row| row.glyphs.first())
+                .map_or(style.size(font_size) * zoom * 0.9, |glyph| glyph.pos.y)
+        };
+        let sub = CharStyle {
+            script: Script::Sub,
+            ..CharStyle::default()
+        };
+        let drop = ascent(CharStyle::default()) - sub.rise(font_size) * zoom - ascent(sub);
+        Self {
+            font,
+            font_size,
+            zoom,
+            color,
+            sub_line_height: (line_height - drop).max(1.0),
+        }
+    }
 }
 
 fn text_format(look: &Look, style: CharStyle) -> TextFormat {
@@ -397,7 +434,11 @@ fn text_format(look: &Look, style: CharStyle) -> TextFormat {
     };
     TextFormat {
         font_id: editor_font(look.font, style, look.font_size, look.zoom),
-        line_height: Some(look.font_size * FREE_TEXT_LINE_HEIGHT * look.zoom),
+        line_height: Some(if style.script == Script::Sub {
+            look.sub_line_height
+        } else {
+            look.font_size * FREE_TEXT_LINE_HEIGHT * look.zoom
+        }),
         color: look.color,
         underline,
         valign,
@@ -463,12 +504,7 @@ pub fn paint(painter: &egui::Painter, frame: Rect, turn: i32, shape: &Shape, zoo
         270 => frame.left_bottom(),
         _ => frame.left_top(),
     };
-    let look = Look {
-        font: shape.font,
-        font_size: shape.font_size,
-        zoom,
-        color: shape.color,
-    };
+    let look = Look::new(painter, shape.font, shape.font_size, zoom, shape.color);
     let chars: Vec<char> = shape.text.chars().collect();
     let lines = godpdf_core::wrap_styled(
         shape.text,
@@ -502,12 +538,7 @@ pub fn show(
 ) -> Option<Event> {
     let id = text_box.id();
     let font_size = style.font_size;
-    let look = Look {
-        font: style.font,
-        font_size,
-        zoom,
-        color: style.color,
-    };
+    let look = Look::new(ui.painter(), style.font, font_size, zoom, style.color);
     let line_height = font_size * FREE_TEXT_LINE_HEIGHT * zoom;
     let focused = ui.memory(|memory| memory.has_focus(id));
     let (finish, escape, formats) = ui.input_mut(|input| {

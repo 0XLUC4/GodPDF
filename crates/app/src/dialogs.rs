@@ -54,14 +54,6 @@ pub enum Dialog {
         rect: godpdf_core::Rect,
         text: String,
     },
-    /// New words for a line of the page: `area` is the line, in page space.
-    EditText {
-        tab: u64,
-        page: usize,
-        area: godpdf_core::Rect,
-        text: String,
-        error: Option<String>,
-    },
     /// Page number typed by the user, of the `count` pages of the tab.
     GoToPage {
         tab: u64,
@@ -311,26 +303,6 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
                 edit.request_focus();
             }
             buttons(ui, "Add", Some("Cancel"), false).map_or(Outcome::Keep, |primary| {
-                if primary {
-                    Outcome::Primary
-                } else {
-                    Outcome::Cancel
-                }
-            })
-        }
-        Dialog::EditText { text, error, .. } => {
-            title(ui, &with_icon(icon::TEXT_AA, "Edit text"));
-            let edit = ui.add(
-                TextEdit::singleline(text)
-                    .margin(crate::widgets::FIELD_MARGIN)
-                    .desired_width(f32::INFINITY),
-            );
-            edit.request_focus();
-            let note = "The new words are written in Helvetica, at the size and in the colour \
-                        of the old ones. Leave it empty to remove the line.";
-            ui.label(RichText::new(note).color(palette.text_dim).size(12.0));
-            error_line(ui, error.as_deref(), &palette);
-            buttons(ui, "Replace", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
                 if primary {
                     Outcome::Primary
                 } else {

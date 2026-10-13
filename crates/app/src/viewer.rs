@@ -7,6 +7,7 @@ use egui::{
 
 use crate::commands::CommentTool;
 use crate::doc::{Budget, DocTab, Gesture};
+use crate::lineedit::{self, LineEdit};
 use crate::quickbar::{Styles, Tool};
 use crate::selection;
 use crate::textbox::{self, TextBox};
@@ -39,6 +40,12 @@ pub struct Output {
     pub visible: Option<(usize, usize)>,
     /// Edit-text mode: a line was clicked. Its page, its box (displayed points), its words.
     pub edit_line: Option<(usize, Rect, String)>,
+    pub line_event: Option<lineedit::Event>,
+}
+
+pub struct Editors<'a> {
+    pub text_box: Option<&'a mut TextBox>,
+    pub line: Option<&'a mut LineEdit>,
 }
 
 /// Zoom that fits the widest page in the viewer width.
@@ -58,12 +65,16 @@ pub fn show(
     ui: &mut Ui,
     tab: &mut DocTab,
     tool: Tool,
-    mut text_box: Option<&mut TextBox>,
+    editors: Editors<'_>,
     styles: &Styles,
     budget: &mut Budget,
     edit_text: bool,
 ) -> Output {
     let palette = Palette::of(ui);
+    let Editors {
+        mut text_box,
+        line: mut line_edit,
+    } = editors;
     tab.viewport = ui.available_size();
     if tab.fit_pending && tab.page_count() > 0 {
         tab.fit_pending = false;
@@ -153,7 +164,7 @@ pub fn show(
                     paint_page(ui, tab, page, rect, scale_for(zoom, ppp), budget, &palette);
                 paint_search_hits(ui, tab, page, rect);
                 // While a text box is open, clicks only edit or commit it.
-                let editing = text_box.is_some();
+                let editing = text_box.is_some() || line_edit.is_some();
                 match tool {
                     // Changing the words of the page comes before any tool.
                     _ if edit_text => {
@@ -206,6 +217,11 @@ pub fn show(
                 }
             }
             // The box is shown even off-screen so its text field keeps keyboard focus.
+            if let Some(line) = line_edit.as_deref_mut()
+                && line.page == page
+            {
+                out.line_event = lineedit::show(ui, line, rect, zoom).or(out.line_event);
+            }
             if let Some(text_box) = text_box.as_deref_mut()
                 && text_box.page == page
             {

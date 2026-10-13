@@ -273,6 +273,9 @@ pub struct DocTab {
     pub derived: bool,
     /// Fit width once the viewer size is known.
     pub fit_pending: bool,
+    /// When its file was last written, as of the last open or save: a later time means
+    /// another program changed it.
+    pub disk_time: Option<std::time::SystemTime>,
     /// Where the second viewer of this document is, when it shows twice side by side.
     other_place: Place,
     /// The place in use is the second viewer's (see [`Self::swap_place`]).
@@ -329,6 +332,7 @@ impl DocTab {
             gesture: None,
             derived: false,
             fit_pending: true,
+            disk_time: None,
             other_place: Place::default(),
             second: false,
         };

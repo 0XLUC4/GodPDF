@@ -5,6 +5,7 @@
 //! origin bottom-left, unrotated page space.
 
 mod annotate;
+mod create;
 mod error;
 mod fonts;
 mod helvetica;
@@ -14,6 +15,7 @@ mod pdf;
 mod retype;
 mod security;
 mod session;
+mod stamp;
 mod text;
 
 pub use annotate::{
@@ -21,6 +23,7 @@ pub use annotate::{
     PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
     free_text_width, remove_annotation, replace_annotation, wrap_free_text, wrap_styled,
 };
+pub use create::{jpeg_document, rgb_document, text_document};
 pub use error::{Error, Result};
 pub use fonts::{CharStyle, Font, Script, style_at};
 pub use helvetica::line_width as helvetica_line_width;
@@ -35,4 +38,5 @@ pub use organize::{
 pub use retype::{LineLook, line_look, replace_styled, replace_text};
 pub use security::{decrypt, encrypt, is_encrypted};
 pub use session::Session;
+pub use stamp::{PageNumbers, Place, Watermark, number_pages, remove_links, watermark};
 pub use text::{SearchHit, extract_all_text, extract_text, search};

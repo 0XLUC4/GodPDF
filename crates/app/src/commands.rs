@@ -13,6 +13,7 @@ pub enum Cmd {
     SaveAs,
     Print,
     Close,
+    ReopenTab,
     ExportPages,
     Quit,
     Undo,
@@ -36,6 +37,7 @@ pub enum Cmd {
     InsertFile,
     Extract,
     Split,
+    NumberPages,
     Highlight,
     Note,
     FreeText,
@@ -46,6 +48,8 @@ pub enum Cmd {
     Properties,
     ExtractText,
     EditText,
+    Watermark,
+    RemoveLinks,
     Find,
     Palette,
     About,
@@ -137,13 +141,14 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 43] = [
+    pub const ALL: [Cmd; 47] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
         Cmd::SaveAs,
         Cmd::Print,
         Cmd::Close,
+        Cmd::ReopenTab,
         Cmd::ExportPages,
         Cmd::Quit,
         Cmd::Undo,
@@ -167,6 +172,7 @@ impl Cmd {
         Cmd::InsertFile,
         Cmd::Extract,
         Cmd::Split,
+        Cmd::NumberPages,
         Cmd::Highlight,
         Cmd::Note,
         Cmd::FreeText,
@@ -177,6 +183,8 @@ impl Cmd {
         Cmd::Properties,
         Cmd::ExtractText,
         Cmd::EditText,
+        Cmd::Watermark,
+        Cmd::RemoveLinks,
         Cmd::Find,
         Cmd::Palette,
         Cmd::About,
@@ -191,6 +199,7 @@ impl Cmd {
             Self::SaveAs => "Save As…",
             Self::Print => "Print…",
             Self::Close => "Close tab",
+            Self::ReopenTab => "Reopen closed tab",
             Self::ExportPages => "Export pages…",
             Self::Quit => "Quit",
             Self::Undo => "Undo",
@@ -214,6 +223,7 @@ impl Cmd {
             Self::InsertFile => "Insert from file…",
             Self::Extract => "Extract pages…",
             Self::Split => "Split…",
+            Self::NumberPages => "Number pages…",
             Self::Highlight => "Highlight",
             Self::Note => "Sticky note",
             Self::FreeText => "Free text",
@@ -224,6 +234,8 @@ impl Cmd {
             Self::Properties => "Properties…",
             Self::ExtractText => "Extract text",
             Self::EditText => "Edit PDF text",
+            Self::Watermark => "Add watermark…",
+            Self::RemoveLinks => "Remove all links",
             Self::Find => "Search text",
             Self::Palette => "Command palette",
             Self::About => "About GodPDF",
@@ -239,6 +251,7 @@ impl Cmd {
             Self::SaveAs => icon::FLOPPY_DISK_BACK,
             Self::Print => icon::PRINTER,
             Self::Close => icon::X,
+            Self::ReopenTab => icon::CLOCK_COUNTER_CLOCKWISE,
             Self::Quit => icon::SIGN_OUT,
             Self::ExportPages | Self::Extract => icon::EXPORT,
             Self::Undo => icon::ARROW_U_UP_LEFT,
@@ -261,6 +274,7 @@ impl Cmd {
             Self::InsertBlank => icon::FILE_PLUS,
             Self::InsertFile => icon::FILE_ARROW_DOWN,
             Self::Split => icon::SCISSORS,
+            Self::NumberPages => icon::LIST_NUMBERS,
             Self::Highlight => icon::HIGHLIGHTER,
             Self::Note => icon::NOTE,
             Self::FreeText => icon::TEXT_T,
@@ -271,6 +285,8 @@ impl Cmd {
             Self::Properties => icon::INFO,
             Self::ExtractText => icon::TEXT_ALIGN_LEFT,
             Self::EditText => icon::TEXT_AA,
+            Self::Watermark => icon::STAMP,
+            Self::RemoveLinks => icon::LINK_BREAK,
             Self::Find => icon::MAGNIFYING_GLASS,
             Self::Palette => icon::COMMAND,
             Self::About => icon::QUESTION,
@@ -298,6 +314,8 @@ impl Cmd {
             Self::InsertFile => "Insert file",
             Self::Extract => "Extract",
             Self::Split => "Split",
+            Self::NumberPages => "Number pages",
+            Self::Watermark => "Watermark",
             Self::Merge => "Merge",
             Self::Encrypt => "Set password",
             Self::ExtractText => "Text",
@@ -319,7 +337,11 @@ impl Cmd {
             Self::InsertFile => "Insert another PDF's pages",
             Self::Extract => "Copy pages into a new PDF",
             Self::Split => "Cut a PDF into several files",
-            Self::Merge => "Combine several PDFs into one",
+            Self::Merge => "Combine PDFs, images and text files into one",
+            Self::NumberPages => "Write its number on every page",
+            Self::Watermark => "Draw a line of text across the pages",
+            Self::RemoveLinks => "Take every link out, keep what they were on",
+            Self::ReopenTab => "Open again the document closed last",
             Self::Highlight => "Mark important passages",
             Self::Note => "Pin a sticky note",
             Self::FreeText => "Type text onto the page",
@@ -343,6 +365,7 @@ impl Cmd {
             | Self::SaveAs
             | Self::Print
             | Self::Close
+            | Self::ReopenTab
             | Self::ExportPages
             | Self::Quit => Group::File,
             Self::Undo | Self::Redo | Self::Palette => Group::Edit,
@@ -364,13 +387,19 @@ impl Cmd {
             | Self::InsertBlank
             | Self::InsertFile
             | Self::Extract
-            | Self::Split => Group::Organize,
+            | Self::Split
+            | Self::NumberPages => Group::Organize,
             Self::Merge => Group::Combine,
             Self::Highlight | Self::Note | Self::FreeText | Self::Rectangle | Self::Ink => {
                 Group::Comment
             }
             Self::Encrypt | Self::RemovePassword => Group::Protect,
-            Self::Properties | Self::ExtractText | Self::EditText | Self::Find => Group::Document,
+            Self::Properties
+            | Self::ExtractText
+            | Self::EditText
+            | Self::Watermark
+            | Self::RemoveLinks
+            | Self::Find => Group::Document,
             Self::About | Self::Updates => Group::Help,
         }
     }
@@ -393,12 +422,18 @@ impl Cmd {
             Self::Open
                 | Self::Merge
                 | Self::Quit
+                | Self::ReopenTab
                 | Self::ToggleTheme
                 | Self::Palette
                 | Self::About
                 | Self::Updates
                 | Self::ToggleThumbnails
         )
+    }
+
+    /// A tool: chosen with no document open, it asks for one and runs on it.
+    pub fn asks_for_doc(self) -> bool {
+        self.needs_doc() && Group::TOOLS.contains(&self.group())
     }
 
     pub fn shortcut(self) -> Option<KeyboardShortcut> {
@@ -408,6 +443,7 @@ impl Cmd {
             Self::SaveAs => (CMD_SHIFT, Key::S),
             Self::Print => (CMD, Key::P),
             Self::Close => (CMD, Key::W),
+            Self::ReopenTab => (CMD_SHIFT, Key::T),
             Self::Undo => (CMD, Key::Z),
             Self::Redo => (CMD, Key::Y),
             Self::ZoomIn => (CMD, Key::Plus),

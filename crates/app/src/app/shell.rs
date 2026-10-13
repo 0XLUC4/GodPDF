@@ -23,6 +23,12 @@ const HEADER_HEIGHT: f32 = 46.0;
 /// Longest document name shown in a tab before "…".
 const TAB_TEXT_MAX: f32 = 180.0;
 
+/// What the menu of a document tab asks for, done once the tabs are drawn.
+enum TabAction {
+    CloseOthers(usize),
+    Reveal(std::path::PathBuf),
+}
+
 /// Thin message under the header; dismissed per document.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Banner {
@@ -42,6 +48,7 @@ impl GodApp {
         let palette = Palette::of(ui);
         let mut select = None;
         let mut close = None;
+        let mut action = None;
         let row = vec2(ui.available_width(), TAB_HEIGHT);
         ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -59,14 +66,41 @@ impl GodApp {
             let text_max = (per_tab - chrome).clamp(40.0, TAB_TEXT_MAX);
             for (index, tab) in self.tabs.iter().enumerate() {
                 let active = self.doc_view() && index == self.active;
-                let (select_it, close_it) =
+                let (response, close_it) =
                     doc_tab(ui, &palette, tab.title(), tab.is_dirty(), active, text_max);
-                if select_it {
+                if response.clicked() {
                     select = Some(index);
                 }
-                if close_it {
+                if close_it || response.middle_clicked() {
                     close = Some(index);
                 }
+                response.context_menu(|ui| {
+                    if ui.button(with_icon(icon::X, "Close")).clicked() {
+                        close = Some(index);
+                    }
+                    let others = Button::new(with_icon(icon::X_CIRCLE, "Close the others"));
+                    if ui.add_enabled(self.tabs.len() > 1, others).clicked() {
+                        action = Some(TabAction::CloseOthers(index));
+                    }
+                    let reopen =
+                        Button::new(with_icon(Cmd::ReopenTab.icon(), Cmd::ReopenTab.label()));
+                    if ui.add_enabled(!self.closed.is_empty(), reopen).clicked() {
+                        clicked.push(Cmd::ReopenTab);
+                    }
+                    let path = tab.session.path.as_ref();
+                    if let Some(path) = path.filter(|_| !cfg!(target_arch = "wasm32")) {
+                        ui.separator();
+                        if ui
+                            .button(with_icon(icon::FOLDER_OPEN, "Show in folder"))
+                            .clicked()
+                        {
+                            action = Some(TabAction::Reveal(path.clone()));
+                        }
+                        if ui.button(with_icon(icon::COPY, "Copy path")).clicked() {
+                            ui.ctx().copy_text(path.display().to_string());
+                        }
+                    }
+                });
             }
             ui.add_space(6.0);
             let open = Button::new(RichText::new(with_icon(icon::PLUS, "Open")).size(14.0))
@@ -109,6 +143,15 @@ impl GodApp {
         }
         if let Some(index) = close {
             self.request_close(index);
+        }
+        match action {
+            Some(TabAction::CloseOthers(index)) => self.close_others(index),
+            Some(TabAction::Reveal(path)) => {
+                if let Err(err) = crate::platform::reveal(&path) {
+                    self.toasts.error(err);
+                }
+            }
+            None => {}
         }
     }
 
@@ -549,7 +592,7 @@ fn centered_glyph(ui: &Ui, rect: Rect, glyph: &str, color: Color32) {
     );
 }
 
-/// One document tab; returns (selected, close requested).
+/// One document tab; returns it and whether its cross was clicked.
 fn doc_tab(
     ui: &mut Ui,
     palette: &Palette,
@@ -557,7 +600,7 @@ fn doc_tab(
     dirty: bool,
     active: bool,
     text_max: f32,
-) -> (bool, bool) {
+) -> (Response, bool) {
     let text_color = if active {
         palette.text
     } else {
@@ -610,10 +653,7 @@ fn doc_tab(
     } else {
         response.on_hover_text(title)
     };
-    (
-        response.clicked(),
-        close.clicked() || response.middle_clicked(),
-    )
+    (response, close.clicked())
 }
 
 /// Text tab of the header with an underline when active.

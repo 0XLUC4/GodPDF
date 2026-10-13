@@ -37,6 +37,10 @@ impl Inbox {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.lock().is_ok_and(|queue| queue.is_empty())
+    }
+
     pub fn drain(&self) -> Vec<Batch> {
         self.0
             .lock()
@@ -44,6 +48,9 @@ impl Inbox {
             .unwrap_or_default()
     }
 }
+
+/// What can be opened: PDFs, and what becomes one (see [`crate::import`]).
+const OPENABLE: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "txt"];
 
 /// Result of a save request.
 pub enum Saved {
@@ -77,7 +84,7 @@ pub use web::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{Inbox, PickedFile, Purpose, Saved, part_name, pdf_name};
+    use super::{Inbox, OPENABLE, PickedFile, Purpose, Saved, part_name, pdf_name};
     use std::ffi::OsString;
     use std::io::Write as _;
     use std::path::{Path, PathBuf};
@@ -106,10 +113,13 @@ mod native {
         inbox: &Inbox,
         _ctx: &egui::Context,
     ) -> Result<(), String> {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("PDFs, images and text", &OPENABLE)
+            .add_filter("PDF document", &["pdf"]);
         let paths = if multiple {
-            dialog().pick_files().unwrap_or_default()
+            dialog.pick_files().unwrap_or_default()
         } else {
-            dialog().pick_file().into_iter().collect()
+            dialog.pick_file().into_iter().collect()
         };
         let files = paths
             .iter()
@@ -117,6 +127,34 @@ mod native {
             .collect::<Result<Vec<_>, _>>()?;
         inbox.push(purpose, files);
         Ok(())
+    }
+
+    /// When the file at `path` was last written.
+    pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
+        std::fs::metadata(path).ok()?.modified().ok()
+    }
+
+    /// Show the file in the file manager of the system.
+    pub fn reveal(path: &Path) -> Result<(), String> {
+        #[cfg(windows)]
+        let started = {
+            use std::os::windows::process::CommandExt as _;
+            std::process::Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", path.display()))
+                .spawn()
+        };
+        #[cfg(target_os = "macos")]
+        let started = std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let started = std::process::Command::new("xdg-open")
+            .arg(path.parent().unwrap_or(path))
+            .spawn();
+        started
+            .map(|_| ())
+            .map_err(|err| format!("Cannot show {}: {err}", path.display()))
     }
 
     /// Write to `path` when given, otherwise ask where.
@@ -201,7 +239,7 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use super::{Inbox, PickedFile, Purpose, Saved, part_name, pdf_name};
+    use super::{Inbox, OPENABLE, PickedFile, Purpose, Saved, part_name, pdf_name};
     use std::path::Path;
     use wasm_bindgen::JsCast as _;
 
@@ -218,7 +256,7 @@ mod web {
         let inbox = inbox.clone();
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let dialog = rfd::AsyncFileDialog::new().add_filter("PDF document", &["pdf"]);
+            let dialog = rfd::AsyncFileDialog::new().add_filter("PDFs, images and text", &OPENABLE);
             let handles = if multiple {
                 dialog.pick_files().await.unwrap_or_default()
             } else {
@@ -236,6 +274,14 @@ mod web {
             ctx.request_repaint();
         });
         Ok(())
+    }
+
+    pub fn modified(_path: &Path) -> Option<std::time::SystemTime> {
+        None
+    }
+
+    pub fn reveal(path: &Path) -> Result<(), String> {
+        Err(format!("Cannot show {} in the browser", path.display()))
     }
 
     fn download(name: &str, bytes: &[u8]) -> Result<(), String> {

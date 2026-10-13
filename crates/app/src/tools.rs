@@ -11,6 +11,7 @@ pub struct CommentStyle {
     pub color: egui::Color32,
     pub width: f32,
     pub font_size: f32,
+    pub font: godpdf_core::Font,
 }
 
 impl Default for CommentStyle {
@@ -19,6 +20,7 @@ impl Default for CommentStyle {
             color: egui::Color32::from_rgb(0xFF, 0xF2, 0x00),
             width: 2.0,
             font_size: 14.0,
+            font: godpdf_core::Font::Helvetica,
         }
     }
 }

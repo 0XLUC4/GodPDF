@@ -51,6 +51,8 @@ fn free_text_rect_round_trips_through_annotations() {
         font_size: 14.0,
         color: BLACK,
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let listed = annotations(&pdf, 0).unwrap();
@@ -107,6 +109,8 @@ fn moved_annotation_keeps_its_id() {
         font_size: 12.0,
         color: BLACK,
         rotation: 0,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &text).unwrap();
     let id = annotations(&pdf, 0).unwrap()[0].id.clone();
@@ -132,6 +136,8 @@ fn turned_free_text_keeps_its_rotation_and_runs_along_y() {
         font_size: 12.0,
         color: BLACK,
         rotation: 90,
+        font: godpdf_core::Font::Helvetica,
+        styles: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &annotation).unwrap();
     let listed = annotations(&pdf, 0).unwrap();

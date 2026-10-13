@@ -12,9 +12,13 @@ use egui::{
     Color32, CursorIcon, FontFamily, FontId, Frame, Galley, Id, Key, Margin, Modifiers, Pos2, Rect,
     Sense, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, Vec2, vec2,
 };
-use godpdf_core::{Annotation, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING};
+use godpdf_core::{
+    Annotation, CharStyle, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Font,
+    Script, style_at,
+};
 
 use crate::geometry::{self, PageGeom};
+use crate::tools::CommentStyle;
 
 /// Width of the draggable border ring in screen pixels.
 const RING: f32 = 5.0;
@@ -24,39 +28,45 @@ const BORDER: Color32 = Color32::from_gray(0x22);
 const DEFAULT_WIDTH: f32 = 220.0;
 /// Narrowest box, in font sizes.
 const MIN_WIDTH_EMS: f32 = 2.0;
-/// egui font family with Helvetica metrics (see [`install_font`]).
-const FONT_FAMILY: &str = "pdf-sans";
 
-/// Register the editor font: a system font metric-compatible with the PDF's Helvetica (Arial,
-/// Liberation Sans), so typed text has the width and weight of the committed annotation.
-/// Falls back to the UI font when none is installed.
 pub fn install_font(fonts: &mut egui::FontDefinitions) {
-    let mut family = fonts
+    let proportional = fonts
         .families
         .get(&FontFamily::Proportional)
         .cloned()
         .unwrap_or_default();
-    if let Some(bytes) = system_font() {
-        fonts.font_data.insert(
-            FONT_FAMILY.to_owned(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-        family.insert(0, FONT_FAMILY.to_owned());
+    for font in Font::ALL {
+        for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+            let name = family_name(font, bold, italic);
+            if let Some(bytes) = system_font(font, bold, italic) {
+                fonts
+                    .font_data
+                    .insert(name.clone(), egui::FontData::from_owned(bytes).into());
+            }
+        }
     }
-    fonts
-        .families
-        .insert(FontFamily::Name(FONT_FAMILY.into()), family);
-    let mut bold = fonts
-        .families
-        .get(&FontFamily::Proportional)
-        .cloned()
-        .unwrap_or_default();
-    if let Some(bytes) = system_bold_font() {
-        fonts.font_data.insert(
-            BOLD_FAMILY.to_owned(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-        bold.insert(0, BOLD_FAMILY.to_owned());
+    for font in Font::ALL {
+        for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut family: Vec<String> = [
+                family_name(font, bold, italic),
+                family_name(font, bold, false),
+                family_name(font, false, false),
+            ]
+            .into_iter()
+            .filter(|name| fonts.font_data.contains_key(name))
+            .collect();
+            family.dedup();
+            family.extend(proportional.iter().cloned());
+            fonts.families.insert(
+                FontFamily::Name(family_name(font, bold, italic).into()),
+                family,
+            );
+        }
+    }
+    let mut bold = proportional;
+    let helvetica_bold = family_name(Font::Helvetica, true, false);
+    if fonts.font_data.contains_key(&helvetica_bold) {
+        bold.insert(0, helvetica_bold);
     }
     fonts
         .families
@@ -65,68 +75,87 @@ pub fn install_font(fonts: &mut egui::FontDefinitions) {
 
 pub const BOLD_FAMILY: &str = "ui-bold";
 
+fn family_name(font: Font, bold: bool, italic: bool) -> String {
+    format!("pdf-{}", font.resource(bold, italic))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-fn first_font(windows: &str, unix: &[&str]) -> Option<Vec<u8>> {
-    let windows = std::env::var_os("WINDIR")
-        .map(|dir| std::path::PathBuf::from(dir).join("Fonts").join(windows));
+fn system_font(font: Font, bold: bool, italic: bool) -> Option<Vec<u8>> {
+    let variant = match (bold, italic) {
+        (false, false) => 0,
+        (true, false) => 1,
+        (false, true) => 2,
+        (true, true) => 3,
+    };
+    let (windows, mac, unix) = match font {
+        Font::Helvetica => (
+            ["arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"],
+            ["Arial", "Arial Bold", "Arial Italic", "Arial Bold Italic"],
+            "LiberationSans",
+        ),
+        Font::Times => (
+            ["times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"],
+            [
+                "Times New Roman",
+                "Times New Roman Bold",
+                "Times New Roman Italic",
+                "Times New Roman Bold Italic",
+            ],
+            "LiberationSerif",
+        ),
+        Font::Courier => (
+            ["cour.ttf", "courbd.ttf", "couri.ttf", "courbi.ttf"],
+            [
+                "Courier New",
+                "Courier New Bold",
+                "Courier New Italic",
+                "Courier New Bold Italic",
+            ],
+            "LiberationMono",
+        ),
+    };
+    let suffix = ["Regular", "Bold", "Italic", "BoldItalic"][variant];
+    let unix_file = format!("{unix}-{suffix}.ttf");
+    let mac_file = format!("{}.ttf", mac[variant]);
+    let windows = std::env::var_os("WINDIR").map(|dir| {
+        std::path::PathBuf::from(dir)
+            .join("Fonts")
+            .join(windows[variant])
+    });
+    let others = [
+        format!("/System/Library/Fonts/Supplemental/{mac_file}"),
+        format!("/Library/Fonts/{mac_file}"),
+        format!("/usr/share/fonts/truetype/liberation/{unix_file}"),
+        format!(
+            "/usr/share/fonts/liberation-{}/{unix_file}",
+            unix.trim_start_matches("Liberation").to_lowercase()
+        ),
+        format!("/usr/share/fonts/TTF/{unix_file}"),
+    ];
     windows
         .into_iter()
-        .chain(unix.iter().map(std::path::PathBuf::from))
+        .chain(others.iter().map(std::path::PathBuf::from))
         .find_map(|path| std::fs::read(path).ok())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn system_font() -> Option<Vec<u8>> {
-    first_font(
-        "arial.ttf",
-        &[
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
-        ],
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn system_bold_font() -> Option<Vec<u8>> {
-    first_font(
-        "arialbd.ttf",
-        &[
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/Library/Fonts/Arial Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
-        ],
-    )
-}
-
 #[cfg(target_arch = "wasm32")]
-fn system_font() -> Option<Vec<u8>> {
-    None
-}
-
-#[cfg(target_arch = "wasm32")]
-fn system_bold_font() -> Option<Vec<u8>> {
+fn system_font(_font: Font, _bold: bool, _italic: bool) -> Option<Vec<u8>> {
     None
 }
 
 pub struct TextBox {
     pub tab: u64,
     pub page: usize,
-    /// Top-left corner in displayed page points.
     anchor: Pos2,
-    /// Box width in points, padding included. Text wraps inside it.
     width: f32,
     geom: PageGeom,
-    /// Displayed (post-rotation) page size in points.
     displayed: Vec2,
     pub text: String,
-    /// `text` as wrapped on screen, one entry per visual line (set when shown).
+    pub styles: Vec<CharStyle>,
+    styled_text: String,
+    typing: CharStyle,
+    selection: std::ops::Range<usize>,
     lines: Vec<String>,
-    /// Annotation being edited (already removed from the document); restored on cancel.
     pub original: Option<Annotation>,
     focus_pending: bool,
 }
@@ -137,20 +166,102 @@ pub enum Event {
     Cancel,
 }
 
-/// Where a box goes: its page and geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Bold,
+    Italic,
+    Underline,
+    Sub,
+    Super,
+}
+
+impl Format {
+    pub const ALL: [Format; 5] = [
+        Format::Bold,
+        Format::Italic,
+        Format::Underline,
+        Format::Sub,
+        Format::Super,
+    ];
+
+    pub fn is_on(self, style: CharStyle) -> bool {
+        match self {
+            Self::Bold => style.bold,
+            Self::Italic => style.italic,
+            Self::Underline => style.underline,
+            Self::Sub => style.script == Script::Sub,
+            Self::Super => style.script == Script::Super,
+        }
+    }
+
+    pub fn set(self, style: &mut CharStyle, on: bool) {
+        match self {
+            Self::Bold => style.bold = on,
+            Self::Italic => style.italic = on,
+            Self::Underline => style.underline = on,
+            Self::Sub | Self::Super if !on => {
+                if self.is_on(*style) {
+                    style.script = Script::Normal;
+                }
+            }
+            Self::Sub => style.script = Script::Sub,
+            Self::Super => style.script = Script::Super,
+        }
+    }
+}
+
+pub fn toggle_all(
+    styles: &mut Vec<CharStyle>,
+    len: usize,
+    range: std::ops::Range<usize>,
+    format: Format,
+) {
+    styles.resize(len, CharStyle::default());
+    let range = range.start.min(len)..range.end.min(len);
+    let on = !styles[range.clone()]
+        .iter()
+        .all(|style| format.is_on(*style));
+    for style in &mut styles[range] {
+        format.set(style, on);
+    }
+    if styles.iter().all(|style| *style == CharStyle::default()) {
+        styles.clear();
+    }
+}
+
+pub fn common_style(styles: &[CharStyle], range: std::ops::Range<usize>) -> CharStyle {
+    let mut common = CharStyle::default();
+    if range.is_empty() {
+        return common;
+    }
+    for format in Format::ALL {
+        let on = range
+            .clone()
+            .all(|index| format.is_on(style_at(styles, index)));
+        if on {
+            format.set(&mut common, true);
+        }
+    }
+    common
+}
+
 pub struct Placement {
     pub page: usize,
-    /// Top-left corner in displayed page points.
     pub anchor: Pos2,
-    /// Box width in points; `None` picks the default.
     pub width: Option<f32>,
     pub geom: PageGeom,
-    /// Displayed (post-rotation) page size in points.
     pub displayed: Vec2,
 }
 
 impl TextBox {
-    pub fn new(tab: u64, place: Placement, text: String, original: Option<Annotation>) -> Self {
+    pub fn new(
+        tab: u64,
+        place: Placement,
+        text: String,
+        styles: Vec<CharStyle>,
+        original: Option<Annotation>,
+    ) -> Self {
+        let end = text.chars().count();
         Self {
             tab,
             page: place.page,
@@ -158,14 +269,19 @@ impl TextBox {
             width: place.width.unwrap_or(DEFAULT_WIDTH),
             geom: place.geom,
             displayed: place.displayed,
+            styled_text: text.clone(),
+            typing: end
+                .checked_sub(1)
+                .map_or_else(CharStyle::default, |last| style_at(&styles, last)),
             text,
+            styles,
+            selection: end..end,
             lines: Vec::new(),
             original,
             focus_pending: true,
         }
     }
 
-    /// The annotation /Rect: the box as shown.
     pub fn pdf_rect(&self, font_size: f32) -> godpdf_core::Rect {
         let shown = self.displayed_rect(font_size);
         geometry::to_pdf_rect(&self.geom, self.displayed, shown.min, shown.max)
@@ -175,12 +291,44 @@ impl TextBox {
         self.geom.rotation
     }
 
+    pub fn committed_styles(&self, len: usize) -> Vec<CharStyle> {
+        let styles: Vec<CharStyle> = (0..len)
+            .map(|index| style_at(&self.styles, index))
+            .collect();
+        if styles.iter().all(|style| *style == CharStyle::default()) {
+            return Vec::new();
+        }
+        styles
+    }
+
+    pub fn active(&self) -> CharStyle {
+        if self.selection.is_empty() {
+            self.typing
+        } else {
+            common_style(&self.styles, self.selection.clone())
+        }
+    }
+
+    pub fn toggle(&mut self, format: Format) {
+        if self.selection.is_empty() {
+            let on = !format.is_on(self.typing);
+            format.set(&mut self.typing, on);
+        } else {
+            let len = self.text.chars().count();
+            toggle_all(&mut self.styles, len, self.selection.clone(), format);
+        }
+        self.focus_pending = true;
+    }
+
+    pub fn refocus(&mut self) {
+        self.focus_pending = true;
+    }
+
     fn height(&self, font_size: f32) -> f32 {
         let lines = self.lines.len().max(1) as f32;
         lines * font_size * FREE_TEXT_LINE_HEIGHT + 2.0 * FREE_TEXT_PADDING
     }
 
-    /// Keep the whole box on the page: narrow it, then slide it back inside.
     fn fit(&mut self, font_size: f32) {
         let page = self.displayed;
         let min_width = (MIN_WIDTH_EMS * font_size).min(page.x);
@@ -190,7 +338,6 @@ impl TextBox {
         self.anchor.y = self.anchor.y.clamp(0.0, highest_top);
     }
 
-    /// Box in displayed page points.
     fn displayed_rect(&self, font_size: f32) -> Rect {
         Rect::from_min_size(self.anchor, vec2(self.width, self.height(font_size)))
     }
@@ -200,78 +347,110 @@ impl TextBox {
     }
 }
 
-/// egui layout of `text` with the PDF line height, wrapped at `wrap_width`.
-fn layout(
-    painter: &egui::Painter,
-    text: &str,
-    font: &FontId,
-    line_height: f32,
-    color: Color32,
-    wrap_width: f32,
-) -> Arc<Galley> {
-    let mut job = LayoutJob::single_section(
-        text.to_owned(),
-        TextFormat {
-            font_id: font.clone(),
-            line_height: Some(line_height),
-            color,
-            ..Default::default()
-        },
-    );
-    job.wrap.max_width = wrap_width;
-    painter.layout_job(job)
+fn reconcile(styles: &mut Vec<CharStyle>, known: &mut String, typing: CharStyle, text: &str) {
+    if known == text {
+        return;
+    }
+    let old: Vec<char> = known.chars().collect();
+    let new: Vec<char> = text.chars().collect();
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut next: Vec<CharStyle> = (0..prefix).map(|index| style_at(styles, index)).collect();
+    next.extend(std::iter::repeat_n(typing, new.len() - prefix - suffix));
+    next.extend((old.len() - suffix..old.len()).map(|index| style_at(styles, index)));
+    if next.iter().all(|style| *style == CharStyle::default()) {
+        next.clear();
+    }
+    *styles = next;
+    *known = text.to_owned();
 }
 
-fn editor_font(font_size: f32, zoom: f32) -> FontId {
+fn editor_font(font: Font, style: CharStyle, font_size: f32, zoom: f32) -> FontId {
     FontId::new(
-        (font_size * zoom).max(1.0),
-        FontFamily::Name(FONT_FAMILY.into()),
+        (style.size(font_size) * zoom).max(1.0),
+        FontFamily::Name(family_name(font, style.bold, style.italic).into()),
     )
 }
 
-/// Where the text starts in a box whose top-left corner is `frame_min` (screen), so that its
-/// first baseline is where the PDF appearance puts it.
-fn text_origin(
-    painter: &egui::Painter,
-    frame_min: Pos2,
-    font: &FontId,
+struct Look {
+    font: Font,
     font_size: f32,
     zoom: f32,
-) -> Pos2 {
-    let line_height = font_size * FREE_TEXT_LINE_HEIGHT * zoom;
-    let probe = layout(
-        painter,
-        "Hg",
-        font,
-        line_height,
-        Color32::BLACK,
+    color: Color32,
+}
+
+fn text_format(look: &Look, style: CharStyle) -> TextFormat {
+    let valign = if style.script == Script::Super {
+        egui::Align::TOP
+    } else {
+        egui::Align::BOTTOM
+    };
+    let underline = if style.underline {
+        Stroke::new((look.font_size * 0.06 * look.zoom).max(1.0), look.color)
+    } else {
+        Stroke::NONE
+    };
+    TextFormat {
+        font_id: editor_font(look.font, style, look.font_size, look.zoom),
+        line_height: Some(look.font_size * FREE_TEXT_LINE_HEIGHT * look.zoom),
+        color: look.color,
+        underline,
+        valign,
+        ..Default::default()
+    }
+}
+
+fn styled_job(
+    chars: impl Iterator<Item = (char, CharStyle)>,
+    look: &Look,
+    wrap_width: f32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let mut run = String::new();
+    let mut run_style = CharStyle::default();
+    for (c, style) in chars {
+        if !run.is_empty() && style != run_style {
+            job.append(&std::mem::take(&mut run), 0.0, text_format(look, run_style));
+        }
+        run_style = style;
+        run.push(c);
+    }
+    job.append(&run, 0.0, text_format(look, run_style));
+    job.wrap.max_width = wrap_width;
+    job
+}
+
+fn text_origin(painter: &egui::Painter, frame_min: Pos2, look: &Look) -> Pos2 {
+    let probe = styled_job(
+        "Hg".chars().map(|c| (c, CharStyle::default())),
+        look,
         f32::INFINITY,
     );
+    let probe = painter.layout_job(probe);
+    let font_size = look.font_size * look.zoom;
     let egui_baseline = probe
         .rows
         .first()
         .and_then(|row| row.glyphs.first())
-        .map_or(font.size * 0.8, |glyph| glyph.pos.y);
-    let pad = FREE_TEXT_PADDING * zoom;
-    frame_min
-        + vec2(
-            pad,
-            pad + FREE_TEXT_ASCENT * font_size * zoom - egui_baseline,
-        )
+        .map_or(font_size * 0.8, |glyph| glyph.pos.y);
+    let pad = FREE_TEXT_PADDING * look.zoom;
+    frame_min + vec2(pad, pad + FREE_TEXT_ASCENT * font_size - egui_baseline)
 }
 
-/// Paint `text` as the free-text annotation with the box `frame` (screen) will show it:
-/// same wrapping, font and baselines. `turn` is how far the text is turned clockwise on
-/// screen (0, 90, 180 or 270). Used while such a box is resized.
-pub fn paint(
-    painter: &egui::Painter,
-    frame: Rect,
-    turn: i32,
-    text: &str,
-    font_size: f32,
-    zoom: f32,
-    color: Color32,
-) {
+pub struct Shape<'a> {
+    pub text: &'a str,
+    pub styles: &'a [CharStyle],
+    pub font: Font,
+    pub font_size: f32,
+    pub color: Color32,
+}
+
+pub fn paint(painter: &egui::Painter, frame: Rect, turn: i32, shape: &Shape, zoom: f32) {
     let turn = turn.rem_euclid(360);
     let upright_width = if turn % 180 == 0 {
         frame.width()
@@ -284,41 +463,69 @@ pub fn paint(
         270 => frame.left_bottom(),
         _ => frame.left_top(),
     };
-    let font = editor_font(font_size, zoom);
-    let lines = godpdf_core::wrap_free_text(text, font_size, upright_width / zoom);
-    let galley = layout(
-        painter,
-        &lines.join("\n"),
-        &font,
-        font_size * FREE_TEXT_LINE_HEIGHT * zoom,
-        color,
-        f32::INFINITY,
+    let look = Look {
+        font: shape.font,
+        font_size: shape.font_size,
+        zoom,
+        color: shape.color,
+    };
+    let chars: Vec<char> = shape.text.chars().collect();
+    let lines = godpdf_core::wrap_styled(
+        shape.text,
+        shape.styles,
+        shape.font,
+        shape.font_size,
+        upright_width / zoom,
     );
-    let offset = text_origin(painter, Pos2::ZERO, &font, font_size, zoom).to_vec2();
+    let mut sequence = Vec::new();
+    for (index, line) in lines.into_iter().enumerate() {
+        if index > 0 {
+            sequence.push(('\n', CharStyle::default()));
+        }
+        sequence.extend(line.map(|at| (chars[at], style_at(shape.styles, at))));
+    }
+    let galley = painter.layout_job(styled_job(sequence.into_iter(), &look, f32::INFINITY));
+    let offset = text_origin(painter, Pos2::ZERO, &look).to_vec2();
     let angle = (turn as f32).to_radians();
     let rotation = egui::emath::Rot2::from_angle(angle);
-    let shape =
-        egui::epaint::TextShape::new(corner + rotation * offset, galley, color).with_angle(angle);
-    painter.add(shape);
+    let text = egui::epaint::TextShape::new(corner + rotation * offset, galley, shape.color)
+        .with_angle(angle);
+    painter.add(text);
 }
 
-/// Draw and edit the box over its page (`page_rect` on screen). Returns how it ended, if it did.
 pub fn show(
     ui: &mut Ui,
     text_box: &mut TextBox,
     page_rect: Rect,
     zoom: f32,
-    font_size: f32,
-    color: Color32,
+    style: &CommentStyle,
 ) -> Option<Event> {
     let id = text_box.id();
-    let font = editor_font(font_size, zoom);
+    let font_size = style.font_size;
+    let look = Look {
+        font: style.font,
+        font_size,
+        zoom,
+        color: style.color,
+    };
     let line_height = font_size * FREE_TEXT_LINE_HEIGHT * zoom;
     let focused = ui.memory(|memory| memory.has_focus(id));
-    let (finish, escape) = ui.input_mut(|input| {
+    let (finish, escape, formats) = ui.input_mut(|input| {
         let finish = focused && input.consume_key(Modifiers::COMMAND, Key::Enter);
-        (finish, input.key_pressed(Key::Escape))
+        let formats: Vec<Format> = [
+            (Key::B, Format::Bold),
+            (Key::I, Format::Italic),
+            (Key::U, Format::Underline),
+        ]
+        .into_iter()
+        .filter(|(key, _)| focused && input.consume_key(Modifiers::COMMAND, *key))
+        .map(|(_, format)| format)
+        .collect();
+        (finish, input.key_pressed(Key::Escape), formats)
     });
+    for format in formats {
+        text_box.toggle(format);
+    }
 
     text_box.fit(font_size);
     let shown = text_box.displayed_rect(font_size);
@@ -329,7 +536,7 @@ pub fn show(
     let pad = FREE_TEXT_PADDING * zoom;
     let wrap_width = (frame_rect.width() - 2.0 * pad).max(1.0);
 
-    let text_origin = text_origin(ui.painter(), frame_rect.min, &font, font_size, zoom);
+    let text_origin = text_origin(ui.painter(), frame_rect.min, &look);
     let text_rect = Rect::from_min_size(
         text_origin,
         vec2(
@@ -338,7 +545,6 @@ pub fn show(
         ),
     );
 
-    // Border ring first so the text field and the resize edge (added after) win over it.
     let ring = ui
         .interact(frame_rect.expand(RING), id.with("ring"), Sense::drag())
         .on_hover_cursor(CursorIcon::Move);
@@ -358,7 +564,6 @@ pub fn show(
         Stroke::new(1.0, BORDER),
         StrokeKind::Outside,
     );
-    // Thick right border with a grip: the box can be widened from here.
     painter.vline(
         frame_rect.right() + 1.0,
         frame_rect.y_range(),
@@ -376,37 +581,66 @@ pub fn show(
         StrokeKind::Inside,
     );
 
+    let before = text_box.text.clone();
     let mut wrapped: Option<Arc<Galley>> = None;
-    {
+    let focus_pending = std::mem::take(&mut text_box.focus_pending);
+    let cursor = {
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(text_rect)
                 .id_salt(id.with("edit")),
         );
-        let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
-            let galley = layout(
-                ui.painter(),
-                text.as_str(),
-                &font,
-                line_height,
-                color,
-                wrap_width,
-            );
+        let TextBox {
+            text,
+            styles,
+            styled_text,
+            typing,
+            ..
+        } = text_box;
+        let typing = *typing;
+        let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, _wrap: f32| {
+            reconcile(styles, styled_text, typing, buffer.as_str());
+            let chars = buffer
+                .as_str()
+                .chars()
+                .enumerate()
+                .map(|(index, c)| (c, style_at(styles, index)));
+            let galley = ui
+                .painter()
+                .layout_job(styled_job(chars, &look, wrap_width));
             wrapped = Some(Arc::clone(&galley));
             galley
         };
-        let edit = TextEdit::multiline(&mut text_box.text)
+        let output = TextEdit::multiline(text)
             .id(id)
             .frame(Frame::NONE)
             .margin(Margin::ZERO)
             .desired_width(wrap_width)
             .desired_rows(1)
-            .layouter(&mut layouter);
-        let response = child.add(edit);
-        if std::mem::take(&mut text_box.focus_pending) || ring.drag_stopped() || edge.drag_stopped()
-        {
-            response.request_focus();
+            .layouter(&mut layouter)
+            .show(&mut child);
+        if focus_pending || ring.drag_stopped() || edge.drag_stopped() {
+            output.response.request_focus();
         }
+        output.cursor_range.map(|range| {
+            let range = range.as_sorted_char_range();
+            range.start.0..range.end.0
+        })
+    };
+    let text = text_box.text.clone();
+    reconcile(
+        &mut text_box.styles,
+        &mut text_box.styled_text,
+        text_box.typing,
+        &text,
+    );
+    if let Some(cursor) = cursor {
+        let moved = cursor != text_box.selection;
+        if moved && before == text_box.text && cursor.is_empty() {
+            let at = cursor.start.saturating_sub(1);
+            text_box.typing = style_at(&text_box.styles, at);
+        }
+        text_box.selection = cursor;
     }
     if let Some(galley) = wrapped {
         text_box.lines = galley
@@ -469,7 +703,7 @@ mod tests {
             },
             displayed: vec2(612.0, 792.0),
         };
-        TextBox::new(1, place, "Hello".into(), None)
+        TextBox::new(1, place, "Hello".into(), Vec::new(), None)
     }
 
     fn pdf_anchor(tb: &TextBox) -> (f32, f32) {
@@ -529,12 +763,37 @@ mod tests {
             },
             displayed: vec2(792.0, 612.0),
         };
-        let mut tb = TextBox::new(1, place, "Hello".into(), None);
+        let mut tb = TextBox::new(1, place, "Hello".into(), Vec::new(), None);
         tb.lines = vec!["Hello".into()];
         tb.fit(12.0);
         let rect = tb.pdf_rect(12.0);
         assert_eq!(tb.rotation(), 90);
         assert!((rect.y1 - rect.y0 - 150.0).abs() < 0.001);
         assert_eq!((rect.x0, rect.y0), (50.0, 100.0));
+    }
+
+    #[test]
+    fn typed_characters_take_the_typing_style() {
+        let bold = CharStyle {
+            bold: true,
+            ..CharStyle::default()
+        };
+        let mut styles = Vec::new();
+        let mut known = String::from("ac");
+        reconcile(&mut styles, &mut known, bold, "abc");
+        assert_eq!(styles, [CharStyle::default(), bold, CharStyle::default()]);
+        reconcile(&mut styles, &mut known, CharStyle::default(), "ac");
+        assert!(styles.is_empty());
+    }
+
+    #[test]
+    fn toggling_a_selection_flips_it_and_sub_replaces_super() {
+        let mut styles = Vec::new();
+        toggle_all(&mut styles, 4, 1..3, Format::Super);
+        assert_eq!(common_style(&styles, 1..3).script, Script::Super);
+        toggle_all(&mut styles, 4, 1..3, Format::Sub);
+        assert_eq!(common_style(&styles, 1..3).script, Script::Sub);
+        toggle_all(&mut styles, 4, 1..3, Format::Sub);
+        assert!(styles.is_empty());
     }
 }

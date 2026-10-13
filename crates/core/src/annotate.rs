@@ -2,6 +2,7 @@ use lopdf::{
     Dictionary, Document, Object, ObjectId, Stream, decode_text_string, dictionary, text_string,
 };
 
+use crate::fonts::{CharStyle, Font, Script, style_at};
 use crate::pdf::{check_page, deref, dict_entry, load, page_ids, save};
 use crate::{Error, Result};
 
@@ -39,6 +40,8 @@ pub enum Annotation {
         font_size: f32,
         color: Color,
         rotation: i32,
+        font: Font,
+        styles: Vec<CharStyle>,
     },
     Square {
         rect: Rect,
@@ -97,10 +100,12 @@ impl Annotation {
                 text,
                 font_size,
                 rotation,
+                font,
+                styles,
                 ..
             } => {
                 let width = free_text_width(to, *rotation);
-                let lines = wrap_free_text(text, *font_size, width).len();
+                let lines = wrap_styled(text, styles, *font, *font_size, width).len();
                 *rect = with_free_text_height(to, *rotation, free_text_height(lines, *font_size));
             }
             Self::Ink { strokes, .. } => {
@@ -175,37 +180,70 @@ pub fn free_text_rect(top_left: (f32, f32), text: &str, font_size: f32) -> Rect 
 /// explicit line breaks are kept, long lines wrap at spaces, and a word wider than the box is
 /// split. Measured in Helvetica, the font the annotation is drawn with.
 pub fn wrap_free_text(text: &str, font_size: f32, width: f32) -> Vec<String> {
-    // Tolerance so a line measured to fit exactly is not pushed over by rounding.
+    let chars: Vec<char> = text.chars().collect();
+    wrap_styled(text, &[], Font::Helvetica, font_size, width)
+        .into_iter()
+        .map(|range| chars[range].iter().collect())
+        .collect()
+}
+
+pub fn wrap_styled(
+    text: &str,
+    styles: &[CharStyle],
+    font: Font,
+    font_size: f32,
+    width: f32,
+) -> Vec<std::ops::Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let advances: Vec<f32> = chars
+        .iter()
+        .enumerate()
+        .map(|(index, &c)| font.char_width(c, style_at(styles, index), font_size))
+        .collect();
     let room = (width - 2.0 * FREE_TEXT_PADDING).max(0.0) + 0.01;
-    let fits = |line: &str| crate::helvetica::line_width(line, font_size) <= room;
+    let fits = |range: &std::ops::Range<usize>| advances[range.clone()].iter().sum::<f32>() <= room;
     let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        for word in paragraph.split(' ') {
+    let mut start = 0;
+    while start <= chars.len() {
+        let end = chars[start..]
+            .iter()
+            .position(|&c| c == '\n')
+            .map_or(chars.len(), |offset| start + offset);
+        let mut line = start..start;
+        let mut word_start = start;
+        while word_start <= end {
+            let word_end = chars[word_start..end]
+                .iter()
+                .position(|&c| c == ' ')
+                .map_or(end, |offset| word_start + offset);
             let candidate = if line.is_empty() {
-                word.to_owned()
+                word_start..word_end
             } else {
-                format!("{line} {word}")
+                line.start..word_end
             };
             if fits(&candidate) {
                 line = candidate;
-                continue;
-            }
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-            }
-            // A single word wider than the box: split it by characters.
-            for ch in word.chars() {
-                let mut longer = line.clone();
-                longer.push(ch);
-                if !line.is_empty() && !fits(&longer) {
-                    lines.push(std::mem::replace(&mut line, ch.to_string()));
-                } else {
-                    line = longer;
+            } else {
+                if !line.is_empty() {
+                    lines.push(std::mem::replace(&mut line, word_start..word_start));
+                }
+                for index in word_start..word_end {
+                    let longer = if line.is_empty() {
+                        index..index + 1
+                    } else {
+                        line.start..index + 1
+                    };
+                    if !line.is_empty() && !fits(&longer) {
+                        lines.push(std::mem::replace(&mut line, index..index + 1));
+                    } else {
+                        line = longer;
+                    }
                 }
             }
+            word_start = word_end + 1;
         }
         lines.push(line);
+        start = end + 1;
     }
     lines
 }
@@ -297,7 +335,19 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             font_size,
             color,
             rotation,
-        } => free_text(normalized(*rect)?, text, *font_size, *color, *rotation),
+            font,
+            styles,
+        } => free_text(
+            normalized(*rect)?,
+            FreeTextLook {
+                text,
+                styles,
+                font: *font,
+                font_size: *font_size,
+                color: *color,
+            },
+            *rotation,
+        ),
         Annotation::Square { rect, color, width } => square(normalized(*rect)?, *color, *width),
         Annotation::Ink {
             strokes,
@@ -389,7 +439,22 @@ fn note(rect: Rect, text: &str) -> Parts {
 /// Helvetica text wrapped to the rectangle's width. The rectangle keeps its top edge and
 /// width; its height is set to fit the wrapped lines, so the text never leaves it. Width,
 /// height and top are as read on the page turned by `rotation`.
-fn free_text(rect: Rect, text: &str, font_size: f32, color: Color, rotation: i32) -> Result<Parts> {
+struct FreeTextLook<'a> {
+    text: &'a str,
+    styles: &'a [CharStyle],
+    font: Font,
+    font_size: f32,
+    color: Color,
+}
+
+fn free_text(rect: Rect, look: FreeTextLook, rotation: i32) -> Result<Parts> {
+    let FreeTextLook {
+        text,
+        styles,
+        font: family,
+        font_size,
+        color,
+    } = look;
     if !(font_size.is_finite() && font_size > 0.0) {
         return Err(Error::InvalidArgument(format!(
             "invalid font size {font_size}"
@@ -397,7 +462,8 @@ fn free_text(rect: Rect, text: &str, font_size: f32, color: Color, rotation: i32
     }
     let rotation = quarter_turns(rotation);
     let width = free_text_width(rect, rotation);
-    let lines = wrap_free_text(text, font_size, width);
+    let lines = wrap_styled(text, styles, family, font_size, width);
+    let chars: Vec<char> = text.chars().collect();
     let height = free_text_height(lines.len(), font_size);
     let rect = with_free_text_height(rect, rotation, height);
     let upright = Rect {
@@ -412,29 +478,86 @@ fn free_text(rect: Rect, text: &str, font_size: f32, color: Color, rotation: i32
         .collect::<Vec<_>>()
         .join(" ");
     let size = num(font_size);
+    let base = family.resource(false, false);
+    let first_baseline = height - FREE_TEXT_PADDING - FREE_TEXT_ASCENT * font_size;
     let mut appearance = format!(
-        "q {matrix} cm {} re W n BT /Helv {size} Tf {} rg {} TL {} {} Td",
+        "q {matrix} cm {} re W n BT /{base} {size} Tf {} rg {} TL {} {} Td",
         rect_ops(upright),
         rgb(color),
         num(font_size * FREE_TEXT_LINE_HEIGHT),
         num(FREE_TEXT_PADDING),
-        num(height - FREE_TEXT_PADDING - FREE_TEXT_ASCENT * font_size),
+        num(first_baseline),
     );
+    let mut used = vec![(false, false)];
+    let mut current = (base, font_size, 0.0f32);
+    let mut underlines = Vec::new();
     for (index, line) in lines.iter().enumerate() {
-        let advance = if index == 0 { "" } else { " T*" };
-        appearance += &format!("{advance} <{}> Tj", win_ansi_hex(line));
+        if index > 0 {
+            appearance += " T*";
+        }
+        let baseline = first_baseline - index as f32 * font_size * FREE_TEXT_LINE_HEIGHT;
+        let mut x = FREE_TEXT_PADDING;
+        let mut at = line.start;
+        while at < line.end {
+            let style = style_at(styles, at);
+            let run_end = (at..line.end)
+                .find(|&i| style_at(styles, i) != style)
+                .unwrap_or(line.end);
+            let run: String = chars[at..run_end].iter().collect();
+            let wanted = (
+                family.resource(style.bold, style.italic),
+                style.size(font_size),
+                style.rise(font_size),
+            );
+            if !used.contains(&(style.bold, style.italic)) {
+                used.push((style.bold, style.italic));
+            }
+            if (wanted.0, wanted.1) != (current.0, current.1) {
+                appearance += &format!(" /{} {} Tf", wanted.0, num(wanted.1));
+            }
+            if wanted.2 != current.2 {
+                appearance += &format!(" {} Ts", num(wanted.2));
+            }
+            current = wanted;
+            appearance += &format!(" <{}> Tj", win_ansi_hex(&run));
+            let advance: f32 = run
+                .chars()
+                .map(|c| family.char_width(c, style, font_size))
+                .sum();
+            if style.underline {
+                underlines.push((x, x + advance, baseline - 0.1 * font_size));
+            }
+            x += advance;
+            at = run_end;
+        }
     }
-    appearance += " ET Q";
-    let font = dictionary! {
-        "Type" => "Font",
-        "Subtype" => "Type1",
-        "BaseFont" => "Helvetica",
-        "Encoding" => "WinAnsiEncoding",
-    };
+    appearance += " ET";
+    if !underlines.is_empty() {
+        appearance += &format!(" {} RG {} w", rgb(color), num(font_size * 0.06));
+        for (x0, x1, y) in underlines {
+            appearance += &format!(" {} {} m {} {} l S", num(x0), num(y), num(x1), num(y));
+        }
+    }
+    appearance += " Q";
+    let mut fonts = Dictionary::new();
+    for (bold, italic) in used {
+        fonts.set(
+            family.resource(bold, italic),
+            dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type1",
+                "BaseFont" => family.base_font(bold, italic),
+                "Encoding" => "WinAnsiEncoding",
+            },
+        );
+    }
     let mut extra = dictionary! {
         "Contents" => contents_string(text),
-        "DA" => Object::string_literal(format!("/Helv {size} Tf {} rg", rgb(color))),
+        "DA" => Object::string_literal(format!("/{base} {size} Tf {} rg", rgb(color))),
     };
+    if styles.iter().any(|style| *style != CharStyle::default()) {
+        extra.set("RC", contents_string(&rich_text(&chars, styles)));
+    }
     if rotation != 0 {
         extra.set("Rotate", i64::from(rotation));
     }
@@ -445,7 +568,7 @@ fn free_text(rect: Rect, text: &str, font_size: f32, color: Color, rotation: i32
         color: None,
         extra,
         appearance,
-        resources: dictionary! { "Font" => dictionary! { "Helv" => font } },
+        resources: dictionary! { "Font" => fonts },
     })
 }
 
@@ -897,18 +1020,21 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             text: read_text(doc, dict),
         }),
         b"FreeText" => {
-            let (font_size, color) = parse_da(doc, dict);
+            let (font_size, color, font) = parse_da(doc, dict);
             let rotation = dict
                 .get(b"Rotate")
                 .ok()
                 .and_then(|rotate| number(doc, rotate))
                 .map_or(0, |rotate| quarter_turns(rotate.round() as i32));
+            let text = read_text(doc, dict);
             Some(Annotation::FreeText {
                 rect: read_rect(doc, dict)?,
-                text: read_text(doc, dict),
+                styles: read_styles(doc, dict, &text),
+                text,
                 font_size,
                 color,
                 rotation,
+                font,
             })
         }
         b"Square" => Some(Annotation::Square {
@@ -933,7 +1059,7 @@ const BLACK: Color = Color {
 };
 
 /// Font size (`Tf`) and fill colour (`rg` or `g`) from /DA; 12 pt black when absent.
-fn parse_da(doc: &Document, dict: &Dictionary) -> (f32, Color) {
+fn parse_da(doc: &Document, dict: &Dictionary) -> (f32, Color, Font) {
     let da = dict
         .get(b"DA")
         .ok()
@@ -949,12 +1075,20 @@ fn parse_da(doc: &Document, dict: &Dictionary) -> (f32, Color) {
             .ok()
             .filter(|v| v.is_finite())
     };
-    let (mut size, mut color) = (DEFAULT_FONT_SIZE, BLACK);
+    let (mut size, mut color, mut font) = (DEFAULT_FONT_SIZE, BLACK, Font::Helvetica);
     for (at, token) in tokens.iter().enumerate() {
         match *token {
             "Tf" => {
                 if let Some(value) = operand(at, 1).filter(|v| *v > 0.0) {
                     size = value;
+                }
+                if let Some((family, _, _)) = at
+                    .checked_sub(2)
+                    .and_then(|index| tokens.get(index))
+                    .and_then(|name| name.strip_prefix('/'))
+                    .and_then(Font::from_resource)
+                {
+                    font = family;
                 }
             }
             "rg" => {
@@ -976,5 +1110,219 @@ fn parse_da(doc: &Document, dict: &Dictionary) -> (f32, Color) {
             _ => {}
         }
     }
-    (size, color)
+    (size, color, font)
+}
+
+fn rich_text(chars: &[char], styles: &[CharStyle]) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\"?><body xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" xfa:APIVersion=\"Acrobat:11.0.0\" xfa:spec=\"2.0.2\"><p>",
+    );
+    let mut at = 0;
+    while at < chars.len() {
+        if chars[at] == '\n' {
+            out += "</p><p>";
+            at += 1;
+            continue;
+        }
+        let style = style_at(styles, at);
+        let end = (at..chars.len())
+            .find(|&i| chars[i] == '\n' || style_at(styles, i) != style)
+            .unwrap_or(chars.len());
+        let escaped: String = chars[at..end]
+            .iter()
+            .map(|&c| match c {
+                '&' => "&amp;".to_owned(),
+                '<' => "&lt;".to_owned(),
+                '>' => "&gt;".to_owned(),
+                '"' => "&quot;".to_owned(),
+                _ => c.to_string(),
+            })
+            .collect();
+        let css = css_of(style);
+        if css.is_empty() {
+            out += &escaped;
+        } else {
+            out += &format!("<span style=\"{css}\">{escaped}</span>");
+        }
+        at = end;
+    }
+    out + "</p></body>"
+}
+
+fn css_of(style: CharStyle) -> String {
+    let mut parts = Vec::new();
+    if style.bold {
+        parts.push("font-weight:bold");
+    }
+    if style.italic {
+        parts.push("font-style:italic");
+    }
+    if style.underline {
+        parts.push("text-decoration:underline");
+    }
+    match style.script {
+        Script::Normal => {}
+        Script::Sub => parts.push("vertical-align:sub"),
+        Script::Super => parts.push("vertical-align:super"),
+    }
+    parts.join(";")
+}
+
+fn apply_css(mut style: CharStyle, css: &str) -> CharStyle {
+    for declaration in css.split(';') {
+        let Some((key, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().to_ascii_lowercase();
+        match key.trim().to_ascii_lowercase().as_str() {
+            "font-weight" => {
+                style.bold = value == "bold"
+                    || value == "bolder"
+                    || value.parse::<u32>().is_ok_and(|weight| weight >= 600);
+            }
+            "font-style" => style.italic = value == "italic" || value == "oblique",
+            "text-decoration" => style.underline = value.contains("underline"),
+            "vertical-align" => {
+                style.script = if value == "super" || value.starts_with('+') {
+                    Script::Super
+                } else if value == "sub" || value.starts_with('-') {
+                    Script::Sub
+                } else {
+                    Script::Normal
+                };
+            }
+            _ => {}
+        }
+    }
+    style
+}
+
+fn decode_entities(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out += &rest[..at];
+        rest = &rest[at..];
+        let Some(end) = rest.find(';') else {
+            break;
+        };
+        let entity = &rest[1..end];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|dec| dec.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out + rest
+}
+
+fn attribute(tag: &str, name: &str) -> Option<String> {
+    let at = tag.find(&format!("{name}="))? + name.len() + 1;
+    let quote = tag[at..].chars().next()?;
+    let value = &tag[at + 1..];
+    Some(value[..value.find(quote)?].to_owned())
+}
+
+fn parse_rich_text(rc: &str) -> Option<(String, Vec<CharStyle>)> {
+    let body = &rc[rc.find("<body")?..];
+    let mut text = String::new();
+    let mut styles = Vec::new();
+    let mut stack = vec![CharStyle::default()];
+    let mut paragraphs = 0;
+    let mut rest = body;
+    while !rest.is_empty() {
+        let Some(open) = rest.find('<') else {
+            let chunk = decode_entities(rest);
+            styles.extend(
+                chunk
+                    .chars()
+                    .map(|_| *stack.last().unwrap_or(&CharStyle::default())),
+            );
+            text += &chunk;
+            break;
+        };
+        let chunk = decode_entities(&rest[..open]);
+        let current = *stack.last()?;
+        styles.extend(chunk.chars().map(|_| current));
+        text += &chunk;
+        let close = rest[open..].find('>')? + open;
+        let tag = &rest[open + 1..close];
+        rest = &rest[close + 1..];
+        if tag.starts_with('?') || tag.starts_with('!') {
+            continue;
+        }
+        if let Some(name) = tag.strip_prefix('/') {
+            if name.trim() != "body" && stack.len() > 1 {
+                stack.pop();
+            }
+            continue;
+        }
+        let name = tag
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if name == "br" {
+            text.push('\n');
+            styles.push(current);
+            continue;
+        }
+        if name == "p" {
+            if paragraphs > 0 {
+                text.push('\n');
+                styles.push(CharStyle::default());
+            }
+            paragraphs += 1;
+        }
+        if tag.ends_with('/') || name == "body" {
+            continue;
+        }
+        let mut style = current;
+        match name.as_str() {
+            "b" | "strong" => style.bold = true,
+            "i" | "em" => style.italic = true,
+            "u" => style.underline = true,
+            "sub" => style.script = Script::Sub,
+            "sup" => style.script = Script::Super,
+            _ => {}
+        }
+        if let Some(css) = attribute(tag, "style") {
+            style = apply_css(style, &css);
+        }
+        stack.push(style);
+    }
+    Some((text, styles))
+}
+
+fn read_styles(doc: &Document, dict: &Dictionary, text: &str) -> Vec<CharStyle> {
+    let rc = dict
+        .get(b"RC")
+        .ok()
+        .and_then(|rc| deref(doc, rc))
+        .and_then(|rc| decode_text_string(rc).ok());
+    match rc.as_deref().and_then(parse_rich_text) {
+        Some((plain, styles))
+            if plain == text && styles.iter().any(|s| *s != CharStyle::default()) =>
+        {
+            styles
+        }
+        _ => Vec::new(),
+    }
 }

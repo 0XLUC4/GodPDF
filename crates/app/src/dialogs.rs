@@ -471,7 +471,7 @@ fn updates(ui: &mut Ui, checker: &crate::updates::Checker, palette: &Palette) {
     ui.hyperlink_to("All releases on GitHub", RELEASES_PAGE);
 }
 
-const DOWNLOAD_BLUE: egui::Color32 = egui::Color32::from_rgb(0x25, 0x63, 0xEB);
+pub const DOWNLOAD_BLUE: egui::Color32 = egui::Color32::from_rgb(0x25, 0x63, 0xEB);
 
 fn install_row(ui: &mut Ui, checker: &crate::updates::Checker, asset: &str, palette: &Palette) {
     use crate::updates::Install;

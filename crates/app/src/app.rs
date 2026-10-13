@@ -432,13 +432,19 @@ impl GodApp {
                 if let Some((first, last)) = seen.reduce(|a, b| (a.0.min(b.0), a.1.max(b.1))) {
                     tab.retain_pages(first.saturating_sub(2)..=last + 2);
                 }
-                let target = if editing {
-                    StyleTarget::TextBox
-                } else if let Some((kind, style)) = selected_style(tab) {
-                    StyleTarget::Selected(kind, style)
+                let active = self.text_box.as_ref().map(TextBox::active);
+                let target = if let Some(active) = active.filter(|_| editing) {
+                    StyleTarget::TextBox(active)
+                } else if let Some((kind, style, formats)) = selected_style(tab) {
+                    StyleTarget::Selected(kind, style, formats)
                 } else {
                     StyleTarget::Tool(self.tool)
                 };
+                let text_look = (
+                    self.styles.text.font,
+                    self.styles.text.font_size,
+                    self.styles.text.color,
+                );
                 let bar = quickbar::show(
                     ui,
                     canvas,
@@ -448,12 +454,27 @@ impl GodApp {
                     tab.session.undo_label().is_some(),
                     tab.session.redo_label().is_some(),
                 );
+                let restyled = text_look
+                    != (
+                        self.styles.text.font,
+                        self.styles.text.font_size,
+                        self.styles.text.color,
+                    );
+                if let Some(text_box) = self.text_box.as_mut().filter(|_| editing && restyled) {
+                    text_box.refocus();
+                }
                 if let Some(tool) = bar.tool {
                     self.set_tool(tool);
                 }
                 clicked.extend(bar.cmd);
                 if let Some(style) = bar.restyle {
                     self.restyle_selected(&style);
+                }
+                if let Some(format) = bar.format {
+                    match self.text_box.as_mut().filter(|_| editing) {
+                        Some(text_box) => text_box.toggle(format),
+                        None => self.format_selected(format),
+                    }
                 }
                 if let Some(finished) = out.gesture {
                     self.commit_gesture(finished);
@@ -1075,6 +1096,40 @@ impl GodApp {
         self.report(result, None);
     }
 
+    fn format_selected(&mut self, format: textbox::Format) {
+        let Some((
+            page,
+            id,
+            Some(Annotation::FreeText {
+                rect,
+                text,
+                font_size,
+                color,
+                rotation,
+                font,
+                mut styles,
+            }),
+        )) = self.selected_annotation()
+        else {
+            return;
+        };
+        let len = text.chars().count();
+        textbox::toggle_all(&mut styles, len, 0..len, format);
+        let restyled = Annotation::FreeText {
+            rect,
+            text,
+            font_size,
+            color,
+            rotation,
+            font,
+            styles,
+        };
+        let result = self.tabs[self.active].apply("Change style", |pdf| {
+            core::replace_annotation(pdf, page, &id, &restyled)
+        });
+        self.report(result, None);
+    }
+
     /// Apply the style card to the selected annotation.
     fn restyle_selected(&mut self, style: &CommentStyle) {
         let Some((page, id, Some(annotation))) = self.selected_annotation() else {
@@ -1097,6 +1152,7 @@ impl GodApp {
                 rect,
                 text,
                 rotation,
+                styles,
                 ..
             } => Annotation::FreeText {
                 // Same top edge and width; core refits the height to the wrapped text.
@@ -1105,6 +1161,8 @@ impl GodApp {
                 font_size: style.font_size,
                 color,
                 rotation,
+                font: style.font,
+                styles,
             },
             Annotation::Note { .. } => return,
         };
@@ -1706,6 +1764,8 @@ impl GodApp {
                     font_size,
                     color,
                     rotation,
+                    font,
+                    styles,
                 } = &original
                 else {
                     return;
@@ -1715,6 +1775,8 @@ impl GodApp {
                 let text = text.clone();
                 self.styles.text.font_size = *font_size;
                 self.styles.text.color = egui_color(*color);
+                self.styles.text.font = *font;
+                let styles = styles.clone();
                 let result = tab.apply("Edit text", |pdf| core::remove_annotation(pdf, page, &id));
                 if let Err(err) = result {
                     self.toasts.error(format!("Cannot edit this text: {err}"));
@@ -1727,7 +1789,7 @@ impl GodApp {
                     geom,
                     displayed: size,
                 };
-                self.text_box = Some(TextBox::new(tab_id, place, text, Some(original)));
+                self.text_box = Some(TextBox::new(tab_id, place, text, styles, Some(original)));
             }
             None if new_allowed => {
                 // Put the middle of the first line under the click.
@@ -1744,7 +1806,7 @@ impl GodApp {
                     geom,
                     displayed: size,
                 };
-                self.text_box = Some(TextBox::new(tab_id, place, String::new(), None));
+                self.text_box = Some(TextBox::new(tab_id, place, String::new(), Vec::new(), None));
             }
             None => {}
         }
@@ -1763,14 +1825,18 @@ impl GodApp {
             return;
         };
         let style = &self.styles.text;
+        let text = text_box.text.trim_end().to_owned();
+        let styles = text_box.committed_styles(text.chars().count());
         let tab = &mut self.tabs[index];
         let annotation = Annotation::FreeText {
             // The box exactly as edited: same corner, width and line breaks.
             rect: text_box.pdf_rect(style.font_size),
-            text: text_box.text.trim_end().to_owned(),
+            text,
             font_size: style.font_size,
             color: core_color(style.color),
             rotation: text_box.rotation(),
+            font: style.font,
+            styles,
         };
         let add = |pdf: &[u8]| core::add_annotation(pdf, text_box.page, &annotation);
         let result = if text_box.original.is_some() {
@@ -2087,7 +2153,7 @@ impl GodApp {
 }
 
 /// Style of the selected annotation, for the style card of the quick bar.
-fn selected_style(tab: &mut DocTab) -> Option<(StyleKind, CommentStyle)> {
+fn selected_style(tab: &mut DocTab) -> Option<(StyleKind, CommentStyle, Option<core::CharStyle>)> {
     let selected = tab.canvas.selected.clone()?;
     let annotation = tab
         .annotations(selected.page)
@@ -2100,15 +2166,30 @@ fn selected_style(tab: &mut DocTab) -> Option<(StyleKind, CommentStyle)> {
         color: egui_color(color),
         width,
         font_size,
+        font: core::Font::Helvetica,
     };
     match annotation {
         Annotation::FreeText {
-            font_size, color, ..
-        } => Some((StyleKind::Text, style(color, 2.0, font_size))),
-        Annotation::Square { color, width, .. } | Annotation::Ink { color, width, .. } => {
-            Some((StyleKind::Stroke, style(color, width, 14.0)))
+            font_size,
+            color,
+            font,
+            text,
+            styles,
+            ..
+        } => {
+            let formats = textbox::common_style(&styles, 0..text.chars().count());
+            let style = CommentStyle {
+                font,
+                ..style(color, 2.0, font_size)
+            };
+            Some((StyleKind::Text, style, Some(formats)))
         }
-        Annotation::Highlight { color, .. } => Some((StyleKind::Fill, style(color, 2.0, 14.0))),
+        Annotation::Square { color, width, .. } | Annotation::Ink { color, width, .. } => {
+            Some((StyleKind::Stroke, style(color, width, 14.0), None))
+        }
+        Annotation::Highlight { color, .. } => {
+            Some((StyleKind::Fill, style(color, 2.0, 14.0), None))
+        }
         Annotation::Note { .. } => None,
     }
 }

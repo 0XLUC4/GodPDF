@@ -95,16 +95,37 @@ impl Font {
     }
 
     pub fn char_width(self, c: char, style: CharStyle, font_size: f32) -> f32 {
-        let code = win_ansi(c);
-        let units = match self.widths(style.bold, style.italic) {
+        let units = self.code_units(win_ansi(c), style.bold, style.italic);
+        f32::from(units) / 1000.0 * style.size(font_size)
+    }
+
+    pub(crate) fn code_units(self, code: u8, bold: bool, italic: bool) -> u16 {
+        match self.widths(bold, italic) {
             Some(table) => code
                 .checked_sub(32)
                 .and_then(|index| table.get(usize::from(index)))
                 .copied()
                 .unwrap_or(556),
             None => 600,
+        }
+    }
+
+    pub(crate) fn standard(base_font: &str) -> Option<(Font, bool, bool)> {
+        let name = base_font
+            .split_once('+')
+            .map_or(base_font, |(_, name)| name);
+        let font = if name.contains("Courier") {
+            Font::Courier
+        } else if name.contains("Times") {
+            Font::Times
+        } else if name.contains("Helvetica") || name.contains("Arial") {
+            Font::Helvetica
+        } else {
+            return None;
         };
-        f32::from(units) / 1000.0 * style.size(font_size)
+        let bold = name.contains("Bold");
+        let italic = name.contains("Italic") || name.contains("Oblique");
+        Some((font, bold, italic))
     }
 }
 

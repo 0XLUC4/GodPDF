@@ -9,6 +9,7 @@ mod comments;
 mod compare;
 mod dialogs;
 mod doc;
+mod fieldedit;
 mod formfill;
 mod geometry;
 mod import;

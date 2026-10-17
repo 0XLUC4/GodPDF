@@ -571,6 +571,21 @@ impl GodApp {
                 if let Some((page, id)) = out.erase {
                     self.erase(page, &id);
                 }
+                let typed = match out.field_event {
+                    Some(crate::fieldedit::Event::Commit(fill)) => Some(fill),
+                    Some(crate::fieldedit::Event::Cancel) => {
+                        self.tabs[self.active].field_edit = None;
+                        None
+                    }
+                    None => None,
+                };
+                if let Some((_, name, value)) = typed.or(out.fill) {
+                    let tab = &mut self.tabs[self.active];
+                    tab.field_edit = None;
+                    let changes = [(name, value)];
+                    let result = tab.apply("Fill in form", |pdf| core::fill_form(pdf, &changes));
+                    self.report(result.map_err(plain), None);
+                }
             }
             ViewMode::Organize => {
                 let out = organize::show(ui, tab, &mut budget);
@@ -1328,7 +1343,7 @@ impl GodApp {
         let tab = &self.tabs[self.active];
         let (id, generation) = (tab.id, tab.generation());
         let bytes = tab.session.bytes().to_vec();
-        self.toasts.info(if crate::ocr::models_ready() {
+        self.toasts.info(if crate::ocr::ready() {
             "Reading the scanned pages…"
         } else {
             "First use: downloading text recognition (12 MB), then reading the pages…"

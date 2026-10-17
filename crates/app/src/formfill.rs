@@ -145,8 +145,8 @@ pub fn panel(ui: &mut Ui, tab: &mut crate::doc::DocTab) -> PanelOut {
         .show(ui, |ui| {
             for (index, (field, value)) in fields.iter().zip(form.values.iter_mut()).enumerate() {
                 let label = match field.page {
-                    Some(page) => format!("{}  ·  page {}", field.name, page + 1),
-                    None => field.name.clone(),
+                    Some(page) => format!("{}  ·  page {}", field.label, page + 1),
+                    None => field.label.clone(),
                 };
                 let response = ui.add(
                     egui::Label::new(RichText::new(label).color(palette.text_dim))

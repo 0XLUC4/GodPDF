@@ -73,6 +73,11 @@ pub enum Cmd {
     RemoveHiddenData,
     ExportImages,
     Picture,
+    Sign,
+    FormField,
+    FillForm,
+    Compare,
+    Ocr,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +148,8 @@ pub enum CommentTool {
     Rectangle,
     Ink,
     Picture,
+    Signature,
+    Field,
 }
 
 impl CommentTool {
@@ -154,6 +161,8 @@ impl CommentTool {
             Self::Rectangle => "Drag to draw a rectangle",
             Self::Ink => "Draw freehand on the page",
             Self::Picture => "Click where the picture goes, or drag the box it fills",
+            Self::Signature => "Click where your signature goes",
+            Self::Field => "Drag the box of the field, or click for one of standard size",
         }
     }
 }
@@ -162,7 +171,7 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 66] = [
+    pub const ALL: [Cmd; 71] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
@@ -209,6 +218,11 @@ impl Cmd {
         Cmd::Rectangle,
         Cmd::Ink,
         Cmd::Picture,
+        Cmd::Sign,
+        Cmd::FormField,
+        Cmd::FillForm,
+        Cmd::Ocr,
+        Cmd::Compare,
         Cmd::Encrypt,
         Cmd::RemovePassword,
         Cmd::Properties,
@@ -299,6 +313,11 @@ impl Cmd {
             Self::RemoveHiddenData => "Remove hidden data",
             Self::ExportImages => "Export as images…",
             Self::Picture => "Picture",
+            Self::Sign => "Sign…",
+            Self::FormField => "Form field",
+            Self::FillForm => "Fill in form…",
+            Self::Compare => "Compare with…",
+            Self::Ocr => "Recognize text (OCR)",
         }
     }
 
@@ -369,6 +388,11 @@ impl Cmd {
             Self::RemoveHiddenData => icon::BROOM,
             Self::ExportImages => icon::FILE_IMAGE,
             Self::Picture => icon::IMAGE,
+            Self::Sign => icon::SIGNATURE,
+            Self::FormField => icon::TEXTBOX,
+            Self::FillForm => icon::LIST_CHECKS,
+            Self::Compare => icon::GIT_DIFF,
+            Self::Ocr => icon::SCAN,
         }
     }
 
@@ -434,6 +458,11 @@ impl Cmd {
             Self::Rectangle => "Frame an area",
             Self::Ink => "Draw freehand",
             Self::Picture => "Put a PNG or JPEG on the page, then move and resize it",
+            Self::Sign => "Draw your signature once, then click where it goes",
+            Self::FormField => "Add a text box or a check box to fill in",
+            Self::FillForm => "Type the answers of the fields of the form",
+            Self::Compare => "The text and the look of two PDFs, page by page",
+            Self::Ocr => "Make scanned pages searchable: their words become text",
             Self::Encrypt => "Protect with a password",
             Self::RemovePassword => "Save without a password",
             Self::Properties => "Edit title, author, keywords",
@@ -503,13 +532,15 @@ impl Cmd {
             | Self::HalvePages
             | Self::JoinPages
             | Self::RemoveBlank => Group::Organize,
-            Self::Merge | Self::Interleave => Group::Combine,
+            Self::Merge | Self::Interleave | Self::Compare => Group::Combine,
             Self::Highlight
             | Self::Note
             | Self::FreeText
             | Self::Rectangle
             | Self::Ink
-            | Self::Picture => Group::Comment,
+            | Self::Picture
+            | Self::Sign
+            | Self::FormField => Group::Comment,
             Self::Encrypt | Self::RemovePassword | Self::RemoveHiddenData => Group::Protect,
             Self::Properties
             | Self::ExtractText
@@ -523,7 +554,9 @@ impl Cmd {
             | Self::RemoveComments
             | Self::Flatten
             | Self::Attachments
-            | Self::Compress => Group::Document,
+            | Self::Compress
+            | Self::FillForm
+            | Self::Ocr => Group::Document,
             Self::About | Self::Updates => Group::Help,
         }
     }
@@ -536,6 +569,7 @@ impl Cmd {
             Self::Rectangle => Some(CommentTool::Rectangle),
             Self::Ink => Some(CommentTool::Ink),
             Self::Picture => Some(CommentTool::Picture),
+            Self::FormField => Some(CommentTool::Field),
             _ => None,
         }
     }

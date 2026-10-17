@@ -32,6 +32,10 @@ pub enum Purpose {
     },
     /// A picture to put on `page` of a tab: from the clicked point (displayed points), or
     /// fitted in the box dragged to `to`.
+    /// A PDF to compare with the document of a tab.
+    Compare {
+        tab: u64,
+    },
     Picture {
         tab: u64,
         page: usize,

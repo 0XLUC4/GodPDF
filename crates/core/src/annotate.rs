@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lopdf::{
     Dictionary, Document, Object, ObjectId, Stream, decode_text_string, dictionary, text_string,
 };
@@ -54,6 +56,161 @@ pub enum Annotation {
         color: Color,
         width: f32,
     },
+    /// A picture stretched over `rect`.
+    Image {
+        rect: Rect,
+        picture: Picture,
+    },
+}
+
+/// Name of the picture in the appearance of an image annotation: how it is found again.
+const PICTURE_NAME: &str = "GodPdfPicture";
+
+/// A picture as it is stored in the PDF. Cheap to clone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pixels: Pixels,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Pixels {
+    /// A JPEG file of 1, 3 or 4 colour channels, kept as it is.
+    Jpeg { bytes: Arc<Vec<u8>>, components: u8 },
+    /// Red, green, blue rows, top first, and the opacity of each pixel when not all solid.
+    Rgb {
+        rgb: Arc<Vec<u8>>,
+        alpha: Option<Arc<Vec<u8>>>,
+    },
+}
+
+impl Picture {
+    /// A JPEG, kept as it is: it is neither decoded nor compressed again.
+    pub fn jpeg(bytes: &[u8]) -> Result<Self> {
+        let info = crate::create::jpeg_info(bytes)
+            .filter(|info| matches!(info.components, 1 | 3 | 4))
+            .ok_or_else(|| Error::InvalidArgument("not a readable JPEG".into()))?;
+        Ok(Self {
+            width: info.width,
+            height: info.height,
+            pixels: Pixels::Jpeg {
+                bytes: Arc::new(bytes.to_vec()),
+                components: info.components,
+            },
+        })
+    }
+
+    /// Red, green, blue, alpha rows, top row first.
+    pub fn rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Self> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if width == 0 || height == 0 || expected != Some(rgba.len()) {
+            return Err(Error::InvalidArgument(format!(
+                "{} bytes are not a picture of {width}x{height}",
+                rgba.len()
+            )));
+        }
+        let rgb = rgba
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .collect();
+        let alpha: Vec<u8> = rgba.chunks_exact(4).map(|px| px[3]).collect();
+        let solid = alpha.iter().all(|&a| a == 255);
+        Ok(Self {
+            width,
+            height,
+            pixels: Pixels::Rgb {
+                rgb: Arc::new(rgb),
+                alpha: (!solid).then(|| Arc::new(alpha)),
+            },
+        })
+    }
+
+    /// The image object (and its soft mask) written into `doc`.
+    fn write(&self, doc: &mut Document) -> ObjectId {
+        let mut dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => i64::from(self.width),
+            "Height" => i64::from(self.height),
+            "BitsPerComponent" => 8,
+        };
+        let content = match &self.pixels {
+            Pixels::Jpeg { bytes, components } => {
+                dict.set("Filter", "DCTDecode");
+                match components {
+                    1 => dict.set("ColorSpace", "DeviceGray"),
+                    3 => dict.set("ColorSpace", "DeviceRGB"),
+                    _ => {
+                        // The four-colour JPEGs of Adobe programs hold their inks inverted.
+                        dict.set("ColorSpace", "DeviceCMYK");
+                        dict.set(
+                            "Decode",
+                            [1, 0, 1, 0, 1, 0, 1, 0].map(Object::Integer).to_vec(),
+                        );
+                    }
+                }
+                bytes.to_vec()
+            }
+            Pixels::Rgb { rgb, alpha } => {
+                dict.set("ColorSpace", "DeviceRGB");
+                if let Some(alpha) = alpha {
+                    let mask = doc.add_object(Stream::new(
+                        dictionary! {
+                            "Type" => "XObject",
+                            "Subtype" => "Image",
+                            "Width" => i64::from(self.width),
+                            "Height" => i64::from(self.height),
+                            "BitsPerComponent" => 8,
+                            "ColorSpace" => "DeviceGray",
+                        },
+                        alpha.to_vec(),
+                    ));
+                    dict.set("SMask", mask);
+                }
+                rgb.to_vec()
+            }
+        };
+        doc.add_object(Stream::new(dict, content))
+    }
+
+    /// The picture of an image object written by [`Picture::write`].
+    fn read(doc: &Document, image: &Stream) -> Option<Self> {
+        let dict = &image.dict;
+        let size =
+            |key: &[u8]| -> Option<u32> { u32::try_from(dict.get(key).ok()?.as_i64().ok()?).ok() };
+        let (width, height) = (size(b"Width")?, size(b"Height")?);
+        let filter = dict.get(b"Filter").and_then(Object::as_name).ok();
+        if filter == Some(b"DCTDecode".as_slice()) {
+            return Self::jpeg(&image.content).ok();
+        }
+        let rgb = image
+            .decompressed_content()
+            .unwrap_or_else(|_| image.content.clone());
+        if rgb.len() != width as usize * height as usize * 3 {
+            return None;
+        }
+        let alpha = dict
+            .get(b"SMask")
+            .ok()
+            .and_then(|mask| deref(doc, mask)?.as_stream().ok())
+            .map(|mask| {
+                Arc::new(
+                    mask.decompressed_content()
+                        .unwrap_or_else(|_| mask.content.clone()),
+                )
+            });
+        Some(Self {
+            width,
+            height,
+            pixels: Pixels::Rgb {
+                rgb: Arc::new(rgb),
+                alpha,
+            },
+        })
+    }
 }
 
 impl Rect {
@@ -76,7 +233,8 @@ impl Annotation {
             Self::Highlight { rect, .. }
             | Self::Note { rect, .. }
             | Self::FreeText { rect, .. }
-            | Self::Square { rect, .. } => *rect = rect.translated(dx, dy),
+            | Self::Square { rect, .. }
+            | Self::Image { rect, .. } => *rect = rect.translated(dx, dy),
             Self::Ink { strokes, .. } => {
                 for point in strokes.iter_mut().flatten() {
                     *point = (point.0 + dx, point.1 + dy);
@@ -92,7 +250,10 @@ impl Annotation {
     pub fn fitted(&self, from: Rect, to: Rect) -> Self {
         let mut fitted = self.clone();
         match &mut fitted {
-            Self::Highlight { rect, .. } | Self::Note { rect, .. } | Self::Square { rect, .. } => {
+            Self::Highlight { rect, .. }
+            | Self::Note { rect, .. }
+            | Self::Square { rect, .. }
+            | Self::Image { rect, .. } => {
                 *rect = to;
             }
             Self::FreeText {
@@ -136,6 +297,7 @@ impl Annotation {
             Self::FreeText { .. } => "Text",
             Self::Square { .. } => "Rectangle",
             Self::Ink { .. } => "Drawing",
+            Self::Image { .. } => "Picture",
         }
     }
 }
@@ -305,7 +467,8 @@ pub fn add_annotations(pdf: &[u8], page: usize, annotations: &[Annotation]) -> R
     let mut doc = load(pdf)?;
     let page_id = page_id(&doc, page)?;
     for annotation in annotations {
-        let parts = annotation_parts(annotation)?;
+        let mut parts = annotation_parts(annotation)?;
+        add_picture(&mut doc, annotation, &mut parts);
         let annot_id = doc.new_object_id();
         let dict = annotation_dict(&mut doc, page_id, annot_id, parts);
         doc.objects.insert(annot_id, Object::Dictionary(dict));
@@ -354,7 +517,45 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             color,
             width,
         } => ink(strokes, *color, *width),
+        Annotation::Image { rect, .. } => Ok(image(normalized(*rect)?)),
     }
+}
+
+/// Write the picture of an image annotation and list it in the resources of its appearance.
+fn add_picture(doc: &mut Document, annotation: &Annotation, parts: &mut Parts) {
+    if let Annotation::Image { picture, .. } = annotation {
+        let id = picture.write(doc);
+        parts.resources = dictionary! { "XObject" => dictionary! { PICTURE_NAME => id } };
+    }
+}
+
+/// A picture over the whole rectangle (its object is added by [`add_picture`]).
+fn image(rect: Rect) -> Parts {
+    Parts {
+        subtype: "Stamp",
+        rect,
+        color: None,
+        extra: Dictionary::new(),
+        appearance: format!(
+            "q {} 0 0 {} {} {} cm /{PICTURE_NAME} Do Q",
+            num(rect.x1 - rect.x0),
+            num(rect.y1 - rect.y0),
+            num(rect.x0),
+            num(rect.y0)
+        ),
+        resources: Dictionary::new(),
+    }
+}
+
+/// The picture shown by the appearance of a stamp written by [`image`].
+fn read_picture(doc: &Document, dict: &Dictionary) -> Option<Picture> {
+    let appearance = dict_entry(doc, dict, b"AP")?.get(b"N").ok()?;
+    let form = deref(doc, appearance)?.as_stream().ok()?;
+    let resources = dict_entry(doc, &form.dict, b"Resources")?;
+    let image = dict_entry(doc, resources, b"XObject")?
+        .get(PICTURE_NAME.as_bytes())
+        .ok()?;
+    Picture::read(doc, deref(doc, image)?.as_stream().ok()?)
 }
 
 fn annotation_dict(
@@ -855,7 +1056,8 @@ pub fn replace_annotation(
     let page_id = page_id(&doc, page)?;
     let mut entries = annots_entries(&doc, page_id)?;
     let index = find_annotation(&doc, &entries, id)?;
-    let parts = annotation_parts(annotation)?;
+    let mut parts = annotation_parts(annotation)?;
+    add_picture(&mut doc, annotation, &mut parts);
     let old = deref(&doc, &entries[index])
         .and_then(|o| o.as_dict().ok())
         .cloned()
@@ -1050,6 +1252,10 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             strokes: read_strokes(doc, dict)?,
             color: read_color(doc, dict)?,
             width: read_width(doc, dict),
+        }),
+        b"Stamp" => Some(Annotation::Image {
+            rect: read_rect(doc, dict)?,
+            picture: read_picture(doc, dict)?,
         }),
         _ => None,
     }

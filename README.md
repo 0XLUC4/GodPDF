@@ -26,6 +26,7 @@ New versions come through the Updates button: it downloads one and restarts on i
 - Combine: merge any number of PDFs, images (JPEG, PNG) and text files; interleave two PDFs (fronts and backs of a scan)
 - Open a picture or a text file as a PDF
 - Stamp: page numbers (position, format, first number) and watermarks (size, opacity, angle, offset from the centre), upright on turned pages
+- Pictures: put a PNG or JPEG on a page from the tool bar (`I`), at the click or in a dragged box; move and resize it like a comment
 - Comment: highlight in fluo colors, sticky note, free text (Helvetica, Times or Courier; bold, italic, underline, subscript, superscript), rectangle, ink; comments can be moved, resized and erased
 - Edit the text of a page, line by line
 - Remove every link of a document, remove every comment, flatten comments and form fields into the page

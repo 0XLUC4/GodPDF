@@ -214,7 +214,7 @@ pub fn show(
                             }
                         }
                     }
-                    Tool::Note | Tool::Ink | Tool::Rectangle => {
+                    Tool::Note | Tool::Ink | Tool::Rectangle | Tool::Picture => {
                         if let Some(comment) = tool.comment()
                             && let Some(done) =
                                 interact(ui, tab, page, rect, comment, styles.get(comment))
@@ -433,7 +433,7 @@ fn interact(
         )
     };
 
-    if tool == CommentTool::Note && response.clicked() {
+    if matches!(tool, CommentTool::Note | CommentTool::Picture) && response.clicked() {
         let pos = response.interact_pointer_pos()?;
         return Some(Finished {
             page,

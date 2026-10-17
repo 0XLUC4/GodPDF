@@ -26,12 +26,13 @@ pub enum Tool {
     Highlight,
     Ink,
     Rectangle,
+    Picture,
     /// Click or drag over comments to remove them.
     Eraser,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 8] = [
+    pub const ALL: [Tool; 9] = [
         Tool::Select,
         Tool::Hand,
         Tool::Text,
@@ -39,6 +40,7 @@ impl Tool {
         Tool::Highlight,
         Tool::Ink,
         Tool::Rectangle,
+        Tool::Picture,
         Tool::Eraser,
     ];
 
@@ -51,6 +53,7 @@ impl Tool {
             Self::Highlight => Some(CommentTool::Highlight),
             Self::Ink => Some(CommentTool::Ink),
             Self::Rectangle => Some(CommentTool::Rectangle),
+            Self::Picture => Some(CommentTool::Picture),
         }
     }
 
@@ -61,6 +64,7 @@ impl Tool {
             CommentTool::Highlight => Self::Highlight,
             CommentTool::Ink => Self::Ink,
             CommentTool::Rectangle => Self::Rectangle,
+            CommentTool::Picture => Self::Picture,
         }
     }
 
@@ -73,6 +77,7 @@ impl Tool {
             Self::Highlight => icon::HIGHLIGHTER,
             Self::Ink => icon::PENCIL_SIMPLE,
             Self::Rectangle => icon::SQUARE,
+            Self::Picture => icon::IMAGE,
             Self::Eraser => icon::ERASER,
         }
     }
@@ -86,6 +91,7 @@ impl Tool {
             Self::Highlight => "Highlight",
             Self::Ink => "Draw",
             Self::Rectangle => "Rectangle",
+            Self::Picture => "Picture",
             Self::Eraser => "Eraser",
         }
     }
@@ -100,6 +106,7 @@ impl Tool {
             Self::Ink => Some(Key::D),
             Self::Rectangle => Some(Key::R),
             Self::Eraser => Some(Key::E),
+            Self::Picture => Some(Key::I),
             Self::Highlight => None,
         }
     }
@@ -188,7 +195,9 @@ impl Styles {
             Some(CommentTool::Highlight) => &mut self.highlight,
             Some(CommentTool::Ink) => &mut self.ink,
             Some(CommentTool::Rectangle) => &mut self.rectangle,
-            Some(CommentTool::FreeText | CommentTool::Note) | None => &mut self.text,
+            Some(CommentTool::FreeText | CommentTool::Note | CommentTool::Picture) | None => {
+                &mut self.text
+            }
         }
     }
 
@@ -197,7 +206,7 @@ impl Styles {
             CommentTool::Highlight => &self.highlight,
             CommentTool::Ink => &self.ink,
             CommentTool::Rectangle => &self.rectangle,
-            CommentTool::FreeText | CommentTool::Note => &self.text,
+            CommentTool::FreeText | CommentTool::Note | CommentTool::Picture => &self.text,
         }
     }
 }
@@ -334,7 +343,7 @@ fn style_card(
                 Tool::Text => StyleKind::Text,
                 Tool::Ink | Tool::Rectangle => StyleKind::Stroke,
                 Tool::Highlight => StyleKind::Fill,
-                Tool::Note => {
+                Tool::Note | Tool::Picture => {
                     hint_card(ui, tool.hint(), palette);
                     return;
                 }

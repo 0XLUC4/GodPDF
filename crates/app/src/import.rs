@@ -38,6 +38,20 @@ pub fn to_pdf(file: PickedFile) -> Result<(PickedFile, bool), String> {
     ))
 }
 
+/// A PNG or JPEG file as a picture to put on a page. A JPEG is kept as it is.
+pub fn picture(bytes: &[u8]) -> Result<core::Picture, String> {
+    if bytes.starts_with(&[0xFF, 0xD8])
+        && let Ok(picture) = guarded(|| core::Picture::jpeg(bytes))
+    {
+        return Ok(picture);
+    }
+    let image = image::load_from_memory(bytes)
+        .map_err(|err| err.to_string())?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    guarded(|| core::Picture::rgba(width, height, image.as_raw())).map_err(|err| err.to_string())
+}
+
 /// A PNG on a page: what is see-through shows the white of the paper.
 fn png_document(png: &[u8]) -> Result<Vec<u8>, String> {
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)

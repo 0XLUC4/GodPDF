@@ -149,8 +149,10 @@ struct Item {
     editable: bool,
     /// Free text: only its width can be resized; the height follows the text.
     text: bool,
-    /// Opaque-on-blank kinds (text, notes): hide the original while a ghost shows it elsewhere.
+    /// Opaque-on-blank kinds (text, notes, pictures): hide the original while a ghost shows it
+    /// elsewhere.
     cover: bool,
+    picture: bool,
 }
 
 impl Item {
@@ -274,7 +276,8 @@ fn paint_shape(painter: &egui::Painter, view: &View, annotation: &Annotation) {
             };
             textbox::paint(painter, frame, turn, &shape, zoom);
         }
-        Annotation::Note { .. } => {}
+        // Shown with the pixels of the page (see `Ghost::pixels`).
+        Annotation::Note { .. } | Annotation::Image { .. } => {}
     }
 }
 
@@ -333,13 +336,15 @@ pub fn page(
         .map(|placed| {
             let text = matches!(placed.annotation, Some(Annotation::FreeText { .. }));
             let note = matches!(placed.annotation, Some(Annotation::Note { .. }));
+            let picture = matches!(placed.annotation, Some(Annotation::Image { .. }));
             Item {
                 id: placed.id.clone(),
                 rect: geometry::from_pdf_rect(&geom, displayed, &placed.rect),
                 movable: placed.annotation.is_some(),
                 editable: text || note,
                 text,
-                cover: text || note,
+                cover: text || note || picture,
+                picture,
             }
         })
         .collect();
@@ -558,7 +563,8 @@ pub fn page(
             annotation,
             // Text is drawn anew: its pixels would carry along what the page shows behind
             // it (an image, a coloured background). A note is only its small icon.
-            pixels: item.cover && !item.text && matches!(change, Change::Move(_)),
+            // A picture is its pixels, stretched when resized.
+            pixels: item.picture || (item.cover && !item.text && matches!(change, Change::Move(_))),
         })
     };
     let live = changing.and_then(|(index, change)| ghost_of(tab, index, change));

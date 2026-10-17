@@ -650,7 +650,7 @@ impl GodApp {
         for (purpose, files) in self.inbox.drain() {
             // Opened files become PDFs when their turn comes; the others are needed now.
             let files = match purpose {
-                Purpose::Open | Purpose::Attach { .. } => files,
+                Purpose::Open | Purpose::Attach { .. } | Purpose::Picture { .. } => files,
                 _ => self.converted(files),
             };
             match purpose {
@@ -671,6 +671,16 @@ impl GodApp {
                         self.report(result.map_err(plain), None);
                     }
                     self.show_attachments(tab);
+                }
+                Purpose::Picture {
+                    tab,
+                    page,
+                    from,
+                    to,
+                } => {
+                    if let Some(file) = files.into_iter().next() {
+                        self.place_picture(tab, page, from, to, &file);
+                    }
                 }
                 Purpose::Interleave { tab } => {
                     if let Some(file) = files.into_iter().next() {
@@ -1093,7 +1103,12 @@ impl GodApp {
                 }
                 self.dialog = Some(Dialog::Updates);
             }
-            Cmd::Highlight | Cmd::Note | Cmd::FreeText | Cmd::Rectangle | Cmd::Ink => {}
+            Cmd::Highlight
+            | Cmd::Note
+            | Cmd::FreeText
+            | Cmd::Rectangle
+            | Cmd::Ink
+            | Cmd::Picture => {}
             Cmd::CropPages
             | Cmd::PagesPerSheet
             | Cmd::PageSize
@@ -1188,6 +1203,70 @@ impl GodApp {
                 core::remove_hidden_data,
             ),
         }
+    }
+
+    /// Put the picture `file` on `page`: its top-left corner at `from` at its own size (96
+    /// pixels to the inch, smaller when the page has no room), or fitted in the box
+    /// `from`–`to`. It is then selected, to be moved or resized.
+    fn place_picture(
+        &mut self,
+        tab: u64,
+        page: usize,
+        from: (f32, f32),
+        to: Option<(f32, f32)>,
+        file: &PickedFile,
+    ) {
+        let Some(index) = self.tab_index(tab) else {
+            return;
+        };
+        let picture = match import::picture(&file.bytes) {
+            Ok(picture) => picture,
+            Err(err) => {
+                self.toasts
+                    .error(format!("Cannot use “{}”: {err}", file.name));
+                return;
+            }
+        };
+        let doc = &mut self.tabs[index];
+        let (Some(&size), Ok(geom)) = (
+            doc.page_sizes.get(page),
+            geometry::page_geometry(doc.session.bytes(), page),
+        ) else {
+            return;
+        };
+        let natural = vec2(picture.width as f32, picture.height as f32) * 0.75;
+        let from = egui::pos2(from.0, from.1);
+        let (min, max) = match to {
+            Some(to) => {
+                let frame = egui::Rect::from_two_pos(from, egui::pos2(to.0, to.1));
+                let shown = natural * (frame.width() / natural.x).min(frame.height() / natural.y);
+                let min = frame.center() - shown / 2.0;
+                (min, min + shown)
+            }
+            None => {
+                let room = (size - from.to_vec2()).max(size * 0.2);
+                let shown = natural * (room.x / natural.x).min(room.y / natural.y).min(1.0);
+                (from, from + shown)
+            }
+        };
+        let rect = geometry::to_pdf_rect(&geom, size, min, max);
+        let annotation = Annotation::Image { rect, picture };
+        let result = doc.apply("Picture", |pdf| {
+            core::add_annotation(pdf, page, &annotation)
+        });
+        if result.is_ok()
+            && let Some(placed) = doc.annotations(page).ok().and_then(|list| list.last())
+        {
+            doc.canvas.selected = Some(selection::Selected {
+                page,
+                id: placed.id.clone(),
+            });
+            self.tool = Tool::Select;
+        }
+        self.report(
+            result,
+            Some("Picture added: drag it to move it, its corners to resize it"),
+        );
     }
 
     /// Run `edit` on the document in front, named after `cmd` in the undo history.
@@ -1434,7 +1513,7 @@ impl GodApp {
                 font: style.font,
                 styles,
             },
-            Annotation::Note { .. } => return,
+            Annotation::Note { .. } | Annotation::Image { .. } => return,
         };
         let result = self.tabs[self.active].apply("Change style", |pdf| {
             core::replace_annotation(pdf, page, &id, &restyled)
@@ -2089,6 +2168,19 @@ impl GodApp {
             }
             // Free text is typed in a text box, never through a gesture.
             CommentTool::FreeText => return,
+            CommentTool::Picture => {
+                let id = tab.id;
+                let to = (!tiny).then_some((last.x, last.y));
+                let purpose = Purpose::Picture {
+                    tab: id,
+                    page: finished.page,
+                    from: (first.x, first.y),
+                    to,
+                };
+                let ctx = self.ctx.clone();
+                self.pick(&ctx, false, purpose);
+                return;
+            }
             CommentTool::Note => {
                 let rect = geometry::to_pdf_rect(&geom, size, first, first + vec2(24.0, 24.0));
                 self.dialog = Some(Dialog::CommentText {
@@ -2113,6 +2205,7 @@ impl GodApp {
             Annotation::FreeText { .. } => "Free text",
             Annotation::Square { .. } => "Rectangle",
             Annotation::Ink { .. } => "Ink",
+            Annotation::Image { .. } => "Picture",
         };
         let result = tab.apply(label, |pdf| core::add_annotation(pdf, page, &annotation));
         self.report(result, None);
@@ -2805,6 +2898,6 @@ fn selected_style(tab: &mut DocTab) -> Option<(StyleKind, CommentStyle, Option<c
         Annotation::Highlight { color, .. } => {
             Some((StyleKind::Fill, style(color, 2.0, 14.0), None))
         }
-        Annotation::Note { .. } => None,
+        Annotation::Note { .. } | Annotation::Image { .. } => None,
     }
 }

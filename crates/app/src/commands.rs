@@ -72,6 +72,7 @@ pub enum Cmd {
     Compress,
     RemoveHiddenData,
     ExportImages,
+    Picture,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +142,7 @@ pub enum CommentTool {
     FreeText,
     Rectangle,
     Ink,
+    Picture,
 }
 
 impl CommentTool {
@@ -151,6 +153,7 @@ impl CommentTool {
             Self::FreeText => "Click on the page to type",
             Self::Rectangle => "Drag to draw a rectangle",
             Self::Ink => "Draw freehand on the page",
+            Self::Picture => "Click where the picture goes, or drag the box it fills",
         }
     }
 }
@@ -159,7 +162,7 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 65] = [
+    pub const ALL: [Cmd; 66] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
@@ -205,6 +208,7 @@ impl Cmd {
         Cmd::FreeText,
         Cmd::Rectangle,
         Cmd::Ink,
+        Cmd::Picture,
         Cmd::Encrypt,
         Cmd::RemovePassword,
         Cmd::Properties,
@@ -294,6 +298,7 @@ impl Cmd {
             Self::Compress => "Compress",
             Self::RemoveHiddenData => "Remove hidden data",
             Self::ExportImages => "Export as images…",
+            Self::Picture => "Picture",
         }
     }
 
@@ -363,6 +368,7 @@ impl Cmd {
             Self::Compress => icon::ARROWS_IN,
             Self::RemoveHiddenData => icon::BROOM,
             Self::ExportImages => icon::FILE_IMAGE,
+            Self::Picture => icon::IMAGE,
         }
     }
 
@@ -427,6 +433,7 @@ impl Cmd {
             Self::FreeText => "Type text onto the page",
             Self::Rectangle => "Frame an area",
             Self::Ink => "Draw freehand",
+            Self::Picture => "Put a PNG or JPEG on the page, then move and resize it",
             Self::Encrypt => "Protect with a password",
             Self::RemovePassword => "Save without a password",
             Self::Properties => "Edit title, author, keywords",
@@ -497,9 +504,12 @@ impl Cmd {
             | Self::JoinPages
             | Self::RemoveBlank => Group::Organize,
             Self::Merge | Self::Interleave => Group::Combine,
-            Self::Highlight | Self::Note | Self::FreeText | Self::Rectangle | Self::Ink => {
-                Group::Comment
-            }
+            Self::Highlight
+            | Self::Note
+            | Self::FreeText
+            | Self::Rectangle
+            | Self::Ink
+            | Self::Picture => Group::Comment,
             Self::Encrypt | Self::RemovePassword | Self::RemoveHiddenData => Group::Protect,
             Self::Properties
             | Self::ExtractText
@@ -525,6 +535,7 @@ impl Cmd {
             Self::FreeText => Some(CommentTool::FreeText),
             Self::Rectangle => Some(CommentTool::Rectangle),
             Self::Ink => Some(CommentTool::Ink),
+            Self::Picture => Some(CommentTool::Picture),
             _ => None,
         }
     }

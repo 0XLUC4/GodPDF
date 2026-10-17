@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bookmarks;
 mod branding;
 mod commands;
 mod comments;
@@ -12,6 +13,7 @@ mod import;
 mod jobs;
 mod lineedit;
 mod organize;
+mod pagetools;
 mod platform;
 #[cfg(windows)]
 mod print;

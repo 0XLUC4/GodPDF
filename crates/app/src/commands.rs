@@ -54,6 +54,24 @@ pub enum Cmd {
     Palette,
     About,
     Updates,
+    ReversePages,
+    CropPages,
+    PagesPerSheet,
+    Booklet,
+    PageSize,
+    HalvePages,
+    JoinPages,
+    RemoveBlank,
+    Interleave,
+    AddBookmark,
+    ContentsPage,
+    PageColours,
+    RemoveComments,
+    Flatten,
+    Attachments,
+    Compress,
+    RemoveHiddenData,
+    ExportImages,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,7 +159,7 @@ const CMD: Modifiers = Modifiers::COMMAND;
 const CMD_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 impl Cmd {
-    pub const ALL: [Cmd; 47] = [
+    pub const ALL: [Cmd; 65] = [
         Cmd::Open,
         Cmd::Merge,
         Cmd::Save,
@@ -150,6 +168,7 @@ impl Cmd {
         Cmd::Close,
         Cmd::ReopenTab,
         Cmd::ExportPages,
+        Cmd::ExportImages,
         Cmd::Quit,
         Cmd::Undo,
         Cmd::Redo,
@@ -172,6 +191,14 @@ impl Cmd {
         Cmd::InsertFile,
         Cmd::Extract,
         Cmd::Split,
+        Cmd::ReversePages,
+        Cmd::CropPages,
+        Cmd::PageSize,
+        Cmd::HalvePages,
+        Cmd::PagesPerSheet,
+        Cmd::Booklet,
+        Cmd::JoinPages,
+        Cmd::RemoveBlank,
         Cmd::NumberPages,
         Cmd::Highlight,
         Cmd::Note,
@@ -185,6 +212,15 @@ impl Cmd {
         Cmd::EditText,
         Cmd::Watermark,
         Cmd::RemoveLinks,
+        Cmd::AddBookmark,
+        Cmd::ContentsPage,
+        Cmd::PageColours,
+        Cmd::RemoveComments,
+        Cmd::Flatten,
+        Cmd::Attachments,
+        Cmd::Compress,
+        Cmd::RemoveHiddenData,
+        Cmd::Interleave,
         Cmd::Find,
         Cmd::Palette,
         Cmd::About,
@@ -240,6 +276,24 @@ impl Cmd {
             Self::Palette => "Command palette",
             Self::About => "About GodPDF",
             Self::Updates => "Updates",
+            Self::ReversePages => "Reverse page order",
+            Self::CropPages => "Crop pages…",
+            Self::PagesPerSheet => "Pages per sheet…",
+            Self::Booklet => "Make a booklet",
+            Self::PageSize => "Change page size…",
+            Self::HalvePages => "Cut pages in half…",
+            Self::JoinPages => "Join into one long page",
+            Self::RemoveBlank => "Remove blank pages",
+            Self::Interleave => "Interleave with…",
+            Self::AddBookmark => "Bookmark this page",
+            Self::ContentsPage => "Contents page",
+            Self::PageColours => "Page colours…",
+            Self::RemoveComments => "Remove all comments",
+            Self::Flatten => "Flatten comments and forms",
+            Self::Attachments => "Attached files…",
+            Self::Compress => "Compress",
+            Self::RemoveHiddenData => "Remove hidden data",
+            Self::ExportImages => "Export as images…",
         }
     }
 
@@ -291,6 +345,24 @@ impl Cmd {
             Self::Palette => icon::COMMAND,
             Self::About => icon::QUESTION,
             Self::Updates => icon::ARROW_CIRCLE_UP,
+            Self::ReversePages => icon::SORT_DESCENDING,
+            Self::CropPages => icon::CROP,
+            Self::PagesPerSheet => icon::SQUARES_FOUR,
+            Self::Booklet => icon::BOOK_OPEN,
+            Self::PageSize => icon::RESIZE,
+            Self::HalvePages => icon::SQUARE_SPLIT_HORIZONTAL,
+            Self::JoinPages => icon::ROWS,
+            Self::RemoveBlank => icon::FILE_X,
+            Self::Interleave => icon::SHUFFLE,
+            Self::AddBookmark => icon::BOOKMARK_SIMPLE,
+            Self::ContentsPage => icon::LIST_BULLETS,
+            Self::PageColours => icon::PALETTE,
+            Self::RemoveComments => icon::ERASER,
+            Self::Flatten => icon::STACK_SIMPLE,
+            Self::Attachments => icon::PAPERCLIP,
+            Self::Compress => icon::ARROWS_IN,
+            Self::RemoveHiddenData => icon::BROOM,
+            Self::ExportImages => icon::FILE_IMAGE,
         }
     }
 
@@ -299,7 +371,8 @@ impl Cmd {
     pub fn tint(self) -> Color32 {
         match self {
             Self::DeletePages => RED,
-            Self::Extract | Self::ExportPages | Self::ExtractText => TEAL,
+            Self::Extract | Self::ExportPages | Self::ExtractText | Self::ExportImages => TEAL,
+            Self::RemoveBlank | Self::RemoveComments | Self::RemoveHiddenData => RED,
             Self::Find | Self::Properties => BLUE,
             other => other.group().tint(),
         }
@@ -319,6 +392,13 @@ impl Cmd {
             Self::Merge => "Merge",
             Self::Encrypt => "Set password",
             Self::ExtractText => "Text",
+            Self::PagesPerSheet => "Per sheet",
+            Self::HalvePages => "Cut in half",
+            Self::JoinPages => "One page",
+            Self::ReversePages => "Reverse",
+            Self::RemoveBlank => "Blank pages",
+            Self::PageColours => "Colours",
+            Self::RemoveHiddenData => "Hidden data",
             other => other.label().trim_end_matches('…'),
         }
     }
@@ -354,6 +434,24 @@ impl Cmd {
             Self::EditText => "Click a line of the page to change its words",
             Self::Find => "Find words with per-page counts",
             Self::SplitView => "Two PDFs, or two places of one, next to each other",
+            Self::ReversePages => "Last page first",
+            Self::CropPages => "Hide the margins of the pages",
+            Self::PagesPerSheet => "2, 4, 6, 8, 9 or 16 pages on each sheet",
+            Self::Booklet => "Print both sides, fold in the middle",
+            Self::PageSize => "A4, Letter, A3… what the pages show is scaled to fit",
+            Self::HalvePages => "Each page into two: scans of two pages side by side",
+            Self::JoinPages => "Every page one under the other, on one page",
+            Self::RemoveBlank => "Find the empty pages and take them out",
+            Self::Interleave => "Take the pages of two PDFs in turn: fronts and backs of a scan",
+            Self::AddBookmark => "A bookmark for the page you are reading",
+            Self::ContentsPage => "A first page listing the bookmarks, each line a link",
+            Self::PageColours => "Invert for night reading, greyscale, or tint the paper",
+            Self::RemoveComments => "Highlights, notes and drawings go; links stay",
+            Self::Flatten => "Draw comments and form fields into the page for good",
+            Self::Attachments => "Files carried inside the PDF: add, save, remove",
+            Self::Compress => "A smaller file that shows the same",
+            Self::RemoveHiddenData => "Properties, scripts and attached files go",
+            Self::ExportImages => "Each page as a PNG or JPEG picture",
             _ => "",
         }
     }
@@ -367,6 +465,7 @@ impl Cmd {
             | Self::Close
             | Self::ReopenTab
             | Self::ExportPages
+            | Self::ExportImages
             | Self::Quit => Group::File,
             Self::Undo | Self::Redo | Self::Palette => Group::Edit,
             Self::ToggleTheme
@@ -388,18 +487,33 @@ impl Cmd {
             | Self::InsertFile
             | Self::Extract
             | Self::Split
-            | Self::NumberPages => Group::Organize,
-            Self::Merge => Group::Combine,
+            | Self::NumberPages
+            | Self::ReversePages
+            | Self::CropPages
+            | Self::PagesPerSheet
+            | Self::Booklet
+            | Self::PageSize
+            | Self::HalvePages
+            | Self::JoinPages
+            | Self::RemoveBlank => Group::Organize,
+            Self::Merge | Self::Interleave => Group::Combine,
             Self::Highlight | Self::Note | Self::FreeText | Self::Rectangle | Self::Ink => {
                 Group::Comment
             }
-            Self::Encrypt | Self::RemovePassword => Group::Protect,
+            Self::Encrypt | Self::RemovePassword | Self::RemoveHiddenData => Group::Protect,
             Self::Properties
             | Self::ExtractText
             | Self::EditText
             | Self::Watermark
             | Self::RemoveLinks
-            | Self::Find => Group::Document,
+            | Self::Find
+            | Self::AddBookmark
+            | Self::ContentsPage
+            | Self::PageColours
+            | Self::RemoveComments
+            | Self::Flatten
+            | Self::Attachments
+            | Self::Compress => Group::Document,
             Self::About | Self::Updates => Group::Help,
         }
     }
@@ -450,6 +564,7 @@ impl Cmd {
             Self::ZoomOut => (CMD, Key::Minus),
             Self::Find => (CMD, Key::F),
             Self::GoToPage => (CMD, Key::G),
+            Self::AddBookmark => (CMD, Key::D),
             Self::Palette => (CMD, Key::K),
             Self::FitWidth => (CMD, Key::Num0),
             Self::MoveEarlier => (Modifiers::ALT, Key::ArrowLeft),

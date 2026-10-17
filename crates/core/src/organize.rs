@@ -45,6 +45,29 @@ pub fn merge(pdfs: &[&[u8]]) -> Result<Vec<u8>> {
     save(&mut out)
 }
 
+/// Pages of `first` and `second` taken in turn, the leftovers of the longer one at the end.
+/// With `reverse_second`, `second` is read from its last page: the backs of sheets scanned
+/// as a pile come out in reverse.
+pub fn interleave(first: &[u8], second: &[u8], reverse_second: bool) -> Result<Vec<u8>> {
+    let a = crate::page_count(first)?;
+    let b = crate::page_count(second)?;
+    let merged = merge(&[first, second])?;
+    let mut seconds: Vec<usize> = (a..a + b).collect();
+    if reverse_second {
+        seconds.reverse();
+    }
+    let mut order = Vec::with_capacity(a + b);
+    for index in 0..a.max(b) {
+        if index < a {
+            order.push(index);
+        }
+        if let Some(&page) = seconds.get(index) {
+            order.push(page);
+        }
+    }
+    reorder_pages(&merged, &order)
+}
+
 /// New document with only `pages`, in the given order (duplicates allowed).
 pub fn extract_pages(pdf: &[u8], pages: &[usize]) -> Result<Vec<u8>> {
     if pages.is_empty() {

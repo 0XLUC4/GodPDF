@@ -28,8 +28,8 @@ New versions come through the Updates button: it downloads one and restarts on i
 - Stamp: page numbers (position, format, first number) and watermarks (size, opacity, angle, offset from the centre), upright on turned pages
 - Pictures: put a PNG or JPEG on a page from the tool bar (`I`), at the click or in a dragged box; move and resize it like a comment
 - Sign (Signature panel on the right): draw your signature once (it is kept), then click where it goes; move and resize it
-- Forms (Form panel on the right): fill in text fields, check boxes, radio buttons and lists; add text fields and check boxes
-- Recognize text (OCR): scanned pages become searchable and their words can be selected; text recognition (12 MB) is downloaded on first use
+- Forms: click a field on the page to fill it in (text, check box, radio button, list), or use the Form panel on the right; number boxes get one character per cell; add text fields and check boxes
+- Recognize text (OCR): every page is read, words that are already text are left alone; scans become searchable and their words can be selected, in any language. On Windows the recognizer of the system is used (the languages installed there); elsewhere a model (12 MB) is downloaded on first use
 - Compare two PDFs: lines removed and added on each page, and pages that look different
 - Comment: highlight in fluo colors, sticky note, free text (Helvetica, Times or Courier; bold, italic, underline, subscript, superscript), rectangle, ink; comments can be moved, resized and erased
 - Edit the text of a page, line by line

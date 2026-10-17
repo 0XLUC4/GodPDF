@@ -20,6 +20,7 @@ const READ_ONLY: i64 = 1;
 const MULTILINE: i64 = 1 << 12;
 const RADIO: i64 = 1 << 15;
 const PUSH_BUTTON: i64 = 1 << 16;
+const COMB: i64 = 1 << 24;
 /// Space between the edge of a text field and its text.
 const PADDING: f32 = 2.0;
 
@@ -51,6 +52,8 @@ pub enum FieldValue {
 pub struct FormField {
     /// Full name, parts joined by dots: what [`fill_form`] takes.
     pub name: String,
+    /// What to show the user: the description of the field, or the last part of its name.
+    pub label: String,
     pub kind: FieldKind,
     pub value: FieldValue,
     /// Page of its first widget.
@@ -124,7 +127,11 @@ fn read_field(
         ),
         _ => return None,
     };
+    let label = text_entry(doc, dict, b"TU")
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| short_name(&field.name));
     Some(FormField {
+        label,
         page: field
             .widgets
             .iter()
@@ -133,6 +140,75 @@ fn read_field(
         kind,
         value,
         read_only: field.flags & READ_ONLY != 0,
+    })
+}
+
+/// A box of a field on a page: where to click to fill it in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldWidget {
+    pub field: FormField,
+    /// In unrotated page space.
+    pub rect: Rect,
+    /// For a radio button: the option it stands for.
+    pub option: Option<String>,
+}
+
+/// The boxes of the fields on `page`.
+pub fn field_widgets(pdf: &[u8], page: usize) -> Result<Vec<FieldWidget>> {
+    let doc = load(pdf)?;
+    check_page(page, page_ids(&doc).len())?;
+    let pages = widget_pages(&doc);
+    let mut out = Vec::new();
+    for terminal in terminals(&doc) {
+        let widgets: Vec<ObjectId> = terminal
+            .widgets
+            .iter()
+            .copied()
+            .filter(|widget| pages.get(widget) == Some(&page))
+            .collect();
+        if widgets.is_empty() {
+            continue;
+        }
+        let Some(field) = read_field(&doc, terminal, &pages) else {
+            continue;
+        };
+        for widget in widgets {
+            let Some(rect) = widget_rect(&doc, widget) else {
+                continue;
+            };
+            let option = matches!(field.kind, FieldKind::Radio { .. })
+                .then(|| on_states(&doc, widget).into_iter().next())
+                .flatten();
+            out.push(FieldWidget {
+                field: field.clone(),
+                rect,
+                option,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn widget_rect(doc: &Document, widget: ObjectId) -> Option<Rect> {
+    let numbers: Vec<f32> = doc
+        .get_dictionary(widget)
+        .ok()?
+        .get(b"Rect")
+        .ok()
+        .and_then(|r| deref(doc, r))?
+        .as_array()
+        .ok()?
+        .iter()
+        .filter_map(|n| deref(doc, n)?.as_float().ok())
+        .collect();
+    let [a, b, c, d] = numbers[..] else {
+        return None;
+    };
+    Some(Rect {
+        x0: a.min(c),
+        y0: b.min(d),
+        x1: a.max(c),
+        y1: b.max(d),
     })
 }
 
@@ -151,17 +227,35 @@ pub fn fill_form(pdf: &[u8], values: &[(String, FieldValue)]) -> Result<Vec<u8>>
         match value {
             FieldValue::Text(text) => {
                 check_text(text)?;
-                set_entry(&mut doc, field.id, "V", text_string(text))?;
-                let multiline = field.flags & MULTILINE != 0;
+                let max_len = doc
+                    .get_dictionary(field.id)?
+                    .get(b"MaxLen")
+                    .and_then(Object::as_i64)
+                    .ok()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|&n| n > 0);
+                let text: String = match max_len {
+                    Some(n) => text.chars().take(n).collect(),
+                    None => text.clone(),
+                };
+                set_entry(&mut doc, field.id, "V", text_string(&text))?;
+                let look = Look {
+                    multiline: field.flags & MULTILINE != 0,
+                    comb: max_len.filter(|_| field.flags & COMB != 0),
+                };
                 for &widget in &field.widgets {
-                    text_appearance(&mut doc, widget, text, multiline, font)?;
+                    text_appearance(&mut doc, widget, &text, look, font)?;
                 }
             }
             FieldValue::Choice(option) if field.kind == b"Ch" => {
                 check_text(option)?;
                 set_entry(&mut doc, field.id, "V", text_string(option))?;
+                let look = Look {
+                    multiline: false,
+                    comb: None,
+                };
                 for &widget in &field.widgets {
-                    text_appearance(&mut doc, widget, option, false, font)?;
+                    text_appearance(&mut doc, widget, option, look, font)?;
                 }
             }
             FieldValue::Choice(option) => {
@@ -191,7 +285,19 @@ pub fn fill_form(pdf: &[u8], values: &[(String, FieldValue)]) -> Result<Vec<u8>>
             }
         }
     }
+    // A form that also carries an XFA copy would show that copy, not these answers.
+    let form_id = acro_form(&mut doc)?;
+    doc.get_dictionary_mut(form_id)?.remove(b"XFA");
     save(&mut doc)
+}
+
+/// "topmostSubform[0].Page1[0].f1_01[0]" gives "f1_01".
+fn short_name(name: &str) -> String {
+    let last = name.rsplit('.').next().unwrap_or(name);
+    match last.split_once('[') {
+        Some((base, _)) if !base.is_empty() => base.to_owned(),
+        _ => last.to_owned(),
+    }
 }
 
 fn name(text: &str) -> Object {
@@ -360,14 +466,24 @@ fn form_font(doc: &mut Document) -> Result<ObjectId> {
     Ok(font)
 }
 
-/// Draw `text` as the look of `widget`: one line, or wrapped lines from the top.
+/// How the text of a field is laid out.
+#[derive(Clone, Copy)]
+struct Look {
+    multiline: bool,
+    /// One character per cell, this many cells across (number boxes).
+    comb: Option<usize>,
+}
+
+/// Draw `text` as the look of `widget`: one line, wrapped lines from the top, or one
+/// character per cell.
 fn text_appearance(
     doc: &mut Document,
     widget: ObjectId,
     text: &str,
-    multiline: bool,
+    look: Look,
     font: ObjectId,
 ) -> Result<()> {
+    let Look { multiline, comb } = look;
     let dict = doc.get_dictionary(widget)?;
     let rect: Vec<f32> = dict
         .get(b"Rect")
@@ -409,6 +525,21 @@ fn text_appearance(
         num(size)
     );
     let leading = size * 1.15;
+    if let Some(cells) = comb {
+        let cell = w / cells as f32;
+        let y = (h - size * 0.7) / 2.0;
+        for (index, c) in text.chars().enumerate() {
+            let letter = c.to_string();
+            let x = cell * index as f32 + (cell - line_width(&letter, size)) / 2.0;
+            ops += &format!(
+                "1 0 0 1 {} {} Tm <{}> Tj\n",
+                num(x),
+                num(y),
+                win_ansi_hex(&letter)
+            );
+        }
+    }
+    let lines = if comb.is_some() { Vec::new() } else { lines };
     for (index, line) in lines.iter().enumerate() {
         let width = line_width(line, size);
         let x = match align {
@@ -661,6 +792,21 @@ mod tests {
         assert_eq!(fields[2].value, FieldValue::Checked(true));
         let unknown = [("Nope".to_owned(), FieldValue::Checked(true))];
         assert!(fill_form(&filled, &unknown).is_err());
+    }
+
+    #[test]
+    fn widgets_of_a_page_are_found() {
+        let widgets = field_widgets(&form(), 0).unwrap();
+        assert_eq!(widgets.len(), 3);
+        assert_eq!(widgets[0].field.name, "Name");
+        assert_eq!(widgets[0].rect, rect(20.0, 300.0, 220.0, 320.0));
+        assert!(field_widgets(&form(), 1).is_err());
+    }
+
+    #[test]
+    fn short_names_drop_the_parents() {
+        assert_eq!(short_name("topmostSubform[0].Page1[0].f1_01[0]"), "f1_01");
+        assert_eq!(short_name("Name"), "Name");
     }
 
     #[test]

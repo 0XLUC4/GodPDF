@@ -47,6 +47,9 @@ pub struct Output {
     /// and where each is.
     pub edit_line: Option<ClickedLine>,
     pub line_event: Option<lineedit::Event>,
+    /// A form field to fill in: page, field name, value.
+    pub fill: Option<crate::fieldedit::Fill>,
+    pub field_event: Option<crate::fieldedit::Event>,
 }
 
 pub struct Editors<'a> {
@@ -186,6 +189,10 @@ pub fn show(
                         if let Some(action) = selection::page(ui, tab, page, rect, texture) {
                             out.select = Some(action);
                         }
+                        // Over the comments: a click on a field fills it in.
+                        if let Some(fill) = crate::fieldedit::page(ui, tab, page, rect) {
+                            out.fill = Some(fill);
+                        }
                     }
                     Tool::Eraser if !editing => {
                         if let Some(id) = selection::erase(ui, tab, page, rect) {
@@ -228,6 +235,12 @@ pub fn show(
                         }
                     }
                 }
+            }
+            if let Some(edit) = tab.field_edit.as_mut()
+                && edit.page == page
+            {
+                out.field_event =
+                    crate::fieldedit::show(ui, edit, rect, zoom).or(out.field_event.take());
             }
             // The box is shown even off-screen so its text field keeps keyboard focus.
             if let Some(line) = line_edit.as_deref_mut()

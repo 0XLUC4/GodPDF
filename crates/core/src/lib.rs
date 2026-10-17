@@ -40,7 +40,8 @@ pub use create::{jpeg_document, rgb_document, text_document};
 pub use error::{Error, Result};
 pub use fonts::{CharStyle, Font, Script, style_at};
 pub use forms::{
-    FieldKind, FieldValue, FormField, NewField, add_form_field, fill_form, form_fields,
+    FieldKind, FieldValue, FieldWidget, FormField, NewField, add_form_field, field_widgets,
+    fill_form, form_fields,
 };
 pub use helvetica::line_width as helvetica_line_width;
 pub use info::{

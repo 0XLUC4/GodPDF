@@ -250,6 +250,10 @@ pub struct DocTab {
     pub form: Option<crate::formfill::FormState>,
     /// Parsed annotations per page for hit-testing; cleared on reload (new generation).
     annotations: HashMap<usize, Vec<PlacedAnnotation>>,
+    /// Form field boxes of each page, read once per revision.
+    widgets: HashMap<usize, Vec<godpdf_core::FieldWidget>>,
+    /// The text field being typed in on the page.
+    pub field_edit: Option<crate::fieldedit::FieldEdit>,
     /// Page rotation / origin per page; cleared on reload.
     geometries: HashMap<usize, PageGeometry>,
     /// Text with positions per page, for text selection; cleared on reload.
@@ -320,6 +324,8 @@ impl DocTab {
             bookmark_rename: None,
             form: None,
             annotations: HashMap::new(),
+            widgets: HashMap::new(),
+            field_edit: None,
             geometries: HashMap::new(),
             texts: HashMap::new(),
             canvas: crate::selection::CanvasState::default(),
@@ -394,6 +400,8 @@ impl DocTab {
         self.page_errors.clear();
         self.outline = None;
         self.annotations.clear();
+        self.widgets.clear();
+        self.field_edit = None;
         self.geometries.clear();
         self.texts.clear();
         self.canvas.drag = None;
@@ -466,6 +474,14 @@ impl DocTab {
             .map_err(|err| err.to_string())?;
         self.reload();
         Ok(())
+    }
+
+    /// Form field boxes of `page`, read once per document revision; none when unreadable.
+    pub fn field_widgets(&mut self, page: usize) -> &[godpdf_core::FieldWidget] {
+        let bytes = self.session.bytes();
+        self.widgets.entry(page).or_insert_with(|| {
+            guarded(|| godpdf_core::field_widgets(bytes, page)).unwrap_or_default()
+        })
     }
 
     /// Annotations of `page`, parsed once per document revision.

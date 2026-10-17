@@ -1,4 +1,5 @@
-//! Right panel views: page thumbnails, bookmarks, text search (comments live in `comments`).
+//! Right panel views: page thumbnails, bookmarks (drawn by `bookmarks`), text search
+//! (comments live in `comments`).
 
 use egui::{
     Color32, CornerRadius, Id, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, pos2,
@@ -49,19 +50,27 @@ pub struct Output {
     pub jump: Option<usize>,
     /// Arrow clicked on a thumbnail: move that page by -1 / +1.
     pub move_page: Option<(usize, isize)>,
+    /// New bookmarks to write, named for the undo history.
+    pub outline: Option<(&'static str, Vec<OutlineItem>)>,
+    pub run: Option<crate::commands::Cmd>,
 }
 
 /// Pages, bookmarks or search (`Tab::Comments` is drawn by the caller).
 pub fn show(ui: &mut Ui, tab: &mut DocTab, current: Tab, budget: &mut Budget) -> Output {
     match current {
         Tab::Pages => pages(ui, tab, budget),
-        Tab::Bookmarks => Output {
-            jump: bookmarks(ui, tab),
-            move_page: None,
-        },
+        Tab::Bookmarks => {
+            let marks = crate::bookmarks::show(ui, tab);
+            Output {
+                jump: marks.jump,
+                outline: marks.write,
+                run: marks.run,
+                ..Output::default()
+            }
+        }
         Tab::Search => Output {
             jump: search(ui, tab),
-            move_page: None,
+            ..Output::default()
         },
         Tab::Comments => Output::default(),
     }
@@ -158,57 +167,6 @@ fn pages(ui: &mut Ui, tab: &mut DocTab, budget: &mut Budget) -> Output {
         ui.ctx().request_repaint();
     }
     out
-}
-
-fn bookmarks(ui: &mut Ui, tab: &mut DocTab) -> Option<usize> {
-    let outline = tab.outline.get_or_insert_with(|| {
-        godpdf_core::outline(tab.session.bytes()).map_err(|err| err.to_string())
-    });
-    let palette = Palette::of(ui);
-    let mut jump = None;
-    match outline {
-        Err(err) => {
-            ui.label(RichText::new(format!("Cannot read bookmarks: {err}")).color(palette.error));
-        }
-        Ok(items) if items.is_empty() => {
-            ui.label(RichText::new("This document has no bookmarks.").color(palette.text_dim));
-        }
-        Ok(items) => {
-            ScrollArea::vertical()
-                .id_salt(("outline", tab.id))
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    outline_items(ui, items, Id::new(("outline", tab.id)), &mut jump)
-                });
-        }
-    }
-    jump
-}
-
-fn outline_items(ui: &mut Ui, items: &[OutlineItem], parent: Id, jump: &mut Option<usize>) {
-    for (index, item) in items.iter().enumerate() {
-        let id = parent.with(index);
-        let mut row = |ui: &mut Ui| {
-            let label = ui.selectable_label(false, &item.title);
-            let label = match item.page {
-                Some(page) => label.on_hover_text(format!("Page {}", page + 1)),
-                None => label.on_hover_text("Destination not found"),
-            };
-            if label.clicked() {
-                *jump = item.page.or(*jump);
-            }
-        };
-        if item.children.is_empty() {
-            ui.horizontal(|ui| {
-                ui.add_space(ui.spacing().indent);
-                row(ui);
-            });
-        } else {
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
-                .show_header(ui, row)
-                .body(|ui| outline_items(ui, &item.children, id, jump));
-        }
-    }
 }
 
 fn search(ui: &mut Ui, tab: &mut DocTab) -> Option<usize> {

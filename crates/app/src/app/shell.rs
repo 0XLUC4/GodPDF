@@ -420,7 +420,7 @@ impl GodApp {
                 let out = if view == View::Comments {
                     sidebar::Output {
                         jump: comments::show(ui, found, tab.current_page),
-                        move_page: None,
+                        ..sidebar::Output::default()
                     }
                 } else {
                     sidebar::show(ui, tab, view, &mut budget)
@@ -437,6 +437,15 @@ impl GodApp {
         if let Some((page, delta)) = out.move_page {
             self.commit_text_box();
             self.move_pages(&[page], delta);
+        }
+        if let Some((label, items)) = out.outline {
+            let result =
+                self.tabs[self.active].apply(label, |pdf| godpdf_core::write_outline(pdf, &items));
+            self.report(result, None);
+        }
+        if let Some(cmd) = out.run {
+            let ctx = ui.ctx().clone();
+            self.run(&ctx, cmd);
         }
         self.start_search();
         if std::mem::take(&mut self.focus_search) {

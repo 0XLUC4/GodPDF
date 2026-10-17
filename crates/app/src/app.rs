@@ -13,7 +13,7 @@ use egui::{
 use godpdf_core::{self as core, Annotation, Metadata, Session};
 
 use crate::commands::{self, Cmd, CommentTool, Group};
-use crate::dialogs::{self, Dialog, Outcome, PaletteOutcome, PaletteState, TextView};
+use crate::dialogs::{self, AttachAction, Dialog, Outcome, PaletteOutcome, PaletteState, TextView};
 use crate::doc::{Budget, DocTab, ViewMode, guarded};
 use crate::jobs::{Done, Jobs};
 use crate::platform::{self, Inbox, PickedFile, Purpose, Saved};
@@ -24,7 +24,10 @@ use crate::theme::{self, Palette};
 use crate::toasts::Toasts;
 use crate::tools::{CommentStyle, Mode};
 use crate::widgets::{icon, with_icon};
-use crate::{branding, comments, geometry, import, organize, ranges, sidebar, updates, viewer};
+use crate::{
+    bookmarks, branding, comments, geometry, import, organize, pagetools, ranges, sidebar, updates,
+    viewer,
+};
 
 const MAX_RECENT: usize = 8;
 const ZOOM_STEP: f32 = 1.2;
@@ -647,7 +650,7 @@ impl GodApp {
         for (purpose, files) in self.inbox.drain() {
             // Opened files become PDFs when their turn comes; the others are needed now.
             let files = match purpose {
-                Purpose::Open => files,
+                Purpose::Open | Purpose::Attach { .. } => files,
                 _ => self.converted(files),
             };
             match purpose {
@@ -656,6 +659,28 @@ impl GodApp {
                     Some(Dialog::Merge { files: list }) => list.extend(files),
                     _ => self.dialog = Some(Dialog::Merge { files }),
                 },
+                Purpose::Attach { tab } => {
+                    let Some(index) = self.tab_index(tab) else {
+                        continue;
+                    };
+                    for file in &files {
+                        let label = format!("Attach {}", file.name);
+                        let result = self.tabs[index].apply(&label, |pdf| {
+                            core::add_attachment(pdf, &file.name, &file.bytes)
+                        });
+                        self.report(result.map_err(plain), None);
+                    }
+                    self.show_attachments(tab);
+                }
+                Purpose::Interleave { tab } => {
+                    if let Some(file) = files.into_iter().next() {
+                        self.dialog = Some(Dialog::Interleave {
+                            tab,
+                            file,
+                            reverse: false,
+                        });
+                    }
+                }
                 Purpose::Insert { tab, at } => {
                     let Some(index) = self.tab_index(tab) else {
                         continue;
@@ -1069,6 +1094,129 @@ impl GodApp {
                 self.dialog = Some(Dialog::Updates);
             }
             Cmd::Highlight | Cmd::Note | Cmd::FreeText | Cmd::Rectangle | Cmd::Ink => {}
+            Cmd::CropPages
+            | Cmd::PagesPerSheet
+            | Cmd::PageSize
+            | Cmd::HalvePages
+            | Cmd::PageColours
+            | Cmd::ExportImages => {
+                let tab = &self.tabs[self.active];
+                if let Some(form) = pagetools::Form::of(cmd) {
+                    self.dialog = Some(Dialog::Tool {
+                        tab: tab.id,
+                        form,
+                        range: stamp_range(tab),
+                        error: None,
+                    });
+                }
+            }
+            Cmd::ReversePages => {
+                let order: Vec<usize> = (0..self.tabs[self.active].page_count()).rev().collect();
+                self.edit_active(cmd, "Page order reversed", |pdf| {
+                    core::reorder_pages(pdf, &order)
+                });
+            }
+            Cmd::Booklet => self.edit_active(
+                cmd,
+                "Booklet made: print on both sides, turning on the short edge",
+                core::booklet,
+            ),
+            Cmd::JoinPages => self.edit_active(cmd, "Pages joined into one", core::join_pages),
+            Cmd::RemoveBlank => {
+                let tab = &self.tabs[self.active];
+                let (id, generation) = (tab.id, tab.generation());
+                let bytes = tab.session.bytes().to_vec();
+                self.toasts.info("Looking for blank pages…");
+                self.jobs.spawn(ctx, move || Done::Blank {
+                    tab: id,
+                    generation,
+                    result: pagetools::blank_pages(bytes),
+                });
+            }
+            Cmd::Interleave => {
+                let id = self.tabs[self.active].id;
+                self.pick(ctx, false, Purpose::Interleave { tab: id });
+            }
+            Cmd::AddBookmark => {
+                let tab = &mut self.tabs[self.active];
+                let result = bookmarks::appended(tab).and_then(|items| {
+                    tab.apply("Add bookmark", |pdf| core::write_outline(pdf, &items))
+                });
+                self.report(result, None);
+                self.show_sidebar = true;
+                self.sidebar_tab = sidebar::Tab::Bookmarks;
+            }
+            Cmd::ContentsPage => {
+                self.edit_active(
+                    cmd,
+                    "Contents page added: each line leads to its page",
+                    |pdf| core::contents_page(pdf, "Contents"),
+                );
+                self.goto_page(0);
+            }
+            Cmd::RemoveComments => {
+                self.edit_active(cmd, "Comments removed", core::remove_comments);
+            }
+            Cmd::Flatten => self.edit_active(
+                cmd,
+                "Comments and form fields are now part of the pages",
+                core::flatten_annotations,
+            ),
+            Cmd::Attachments => {
+                let id = self.tabs[self.active].id;
+                self.show_attachments(id);
+            }
+            Cmd::Compress => {
+                let before = self.tabs[self.active].session.bytes().len();
+                let result = self.tabs[self.active].apply(cmd.label(), core::compress);
+                match result.map_err(plain) {
+                    Ok(()) => {
+                        let after = self.tabs[self.active].session.bytes().len();
+                        self.toasts.success(format!(
+                            "{} → {} ({:.0} % smaller)",
+                            dialogs::size_text(before),
+                            dialogs::size_text(after),
+                            100.0 - after as f64 * 100.0 / before.max(1) as f64
+                        ));
+                    }
+                    Err(err) => self.toasts.info(err),
+                }
+            }
+            Cmd::RemoveHiddenData => self.edit_active(
+                cmd,
+                "Properties, scripts and attached files removed",
+                core::remove_hidden_data,
+            ),
+        }
+    }
+
+    /// Run `edit` on the document in front, named after `cmd` in the undo history.
+    fn edit_active(
+        &mut self,
+        cmd: Cmd,
+        done: &str,
+        edit: impl FnOnce(&[u8]) -> core::Result<Vec<u8>>,
+    ) {
+        let result = self.tabs[self.active].apply(cmd.label().trim_end_matches('…'), edit);
+        self.report(result.map_err(plain), Some(done));
+    }
+
+    /// The attached files of tab `id`, in their dialog.
+    fn show_attachments(&mut self, id: u64) {
+        let Some(index) = self.tab_index(id) else {
+            return;
+        };
+        match guarded(|| core::attachments(self.tabs[index].session.bytes())) {
+            Ok(files) => {
+                self.dialog = Some(Dialog::Attachments {
+                    tab: id,
+                    files,
+                    action: None,
+                });
+            }
+            Err(err) => self
+                .toasts
+                .error(format!("Cannot read attached files: {err}")),
         }
     }
 
@@ -1492,7 +1640,28 @@ impl GodApp {
                 .info("Opened without password: it will be saved unencrypted"),
             Cmd::Properties => self.open_properties(),
             Cmd::ExtractText => self.extract_text(),
-            Cmd::NumberPages | Cmd::Watermark | Cmd::RemoveLinks | Cmd::EditText => {
+            Cmd::NumberPages
+            | Cmd::Watermark
+            | Cmd::RemoveLinks
+            | Cmd::EditText
+            | Cmd::ReversePages
+            | Cmd::CropPages
+            | Cmd::PagesPerSheet
+            | Cmd::Booklet
+            | Cmd::PageSize
+            | Cmd::HalvePages
+            | Cmd::JoinPages
+            | Cmd::RemoveBlank
+            | Cmd::Interleave
+            | Cmd::AddBookmark
+            | Cmd::ContentsPage
+            | Cmd::PageColours
+            | Cmd::RemoveComments
+            | Cmd::Flatten
+            | Cmd::Attachments
+            | Cmd::Compress
+            | Cmd::RemoveHiddenData
+            | Cmd::ExportImages => {
                 let ctx = self.ctx.clone();
                 self.run(&ctx, cmd);
             }
@@ -1770,6 +1939,44 @@ impl GodApp {
                     generation,
                     result,
                 } => self.comments.store(tab, generation, result),
+                Done::Images(result) => {
+                    let saved = result.and_then(|files| {
+                        platform::save_files(&files).map(|folder| folder.map(|f| (files.len(), f)))
+                    });
+                    match saved {
+                        Ok(Some((count, folder))) => self
+                            .toasts
+                            .success(format!("Saved {count} pictures to {folder}")),
+                        Ok(None) => {}
+                        Err(err) => self.toasts.error(err),
+                    }
+                }
+                Done::Blank {
+                    tab,
+                    generation,
+                    result,
+                } => {
+                    let Some(index) = self.tab_index(tab) else {
+                        continue;
+                    };
+                    match result {
+                        Ok(_) if self.tabs[index].generation() != generation => {
+                            self.toasts
+                                .info("The document changed meanwhile: look again");
+                        }
+                        Ok(pages) if pages.is_empty() => self.toasts.info("No blank page found"),
+                        Ok(pages) => {
+                            let result = self.tabs[index]
+                                .apply("Remove blank pages", |pdf| core::delete_pages(pdf, &pages));
+                            let done = match pages.len() {
+                                1 => format!("Removed blank page {}", pages[0] + 1),
+                                count => format!("Removed {count} blank pages"),
+                            };
+                            self.report(result.map_err(plain), Some(&done));
+                        }
+                        Err(err) => self.toasts.error(err),
+                    }
+                }
                 Done::Printed(result) => {
                     self.printing = false;
                     match result {
@@ -2441,6 +2648,118 @@ impl GodApp {
                             error: Some(err),
                         });
                     }
+                }
+            }
+            Dialog::Tool {
+                tab, form, range, ..
+            } => {
+                let Some(index) = self.tab_index(tab) else {
+                    return;
+                };
+                let doc = &mut self.tabs[index];
+                let count = doc.page_count();
+                let pages = if form.has_range() {
+                    ranges::parse(&range, count)
+                } else {
+                    Ok((0..count).collect())
+                };
+                let pages = match pages {
+                    Ok(pages) => pages,
+                    Err(err) => {
+                        self.dialog = Some(Dialog::Tool {
+                            tab,
+                            form,
+                            range,
+                            error: Some(err),
+                        });
+                        return;
+                    }
+                };
+                if let pagetools::Form::Images { dpi, jpeg } = form {
+                    let bytes = doc.session.bytes().to_vec();
+                    let base = stem(doc.title()).to_owned();
+                    self.toasts.info("Drawing the pages…");
+                    self.jobs.spawn(ctx, move || {
+                        Done::Images(pagetools::render_images(bytes, &pages, dpi, jpeg, &base))
+                    });
+                    return;
+                }
+                let label = form.cmd().label().trim_end_matches('…');
+                match doc
+                    .apply(label, |pdf| form.edit(pdf, &pages))
+                    .map_err(plain)
+                {
+                    Ok(()) => self.toasts.success(form.done()),
+                    Err(err) => {
+                        self.dialog = Some(Dialog::Tool {
+                            tab,
+                            form,
+                            range,
+                            error: Some(err),
+                        });
+                    }
+                }
+            }
+            Dialog::Attachments { tab, files, action } => match action {
+                None => {}
+                Some(AttachAction::Add) => {
+                    self.dialog = Some(Dialog::Attachments {
+                        tab,
+                        files,
+                        action: None,
+                    });
+                    self.pick(ctx, true, Purpose::Attach { tab });
+                }
+                Some(AttachAction::Save(file)) => {
+                    let file = &files[file];
+                    match platform::save_file(&file.name, &file.bytes) {
+                        Ok(Saved::To(_)) => self.toasts.success(format!("Saved “{}”", file.name)),
+                        Ok(Saved::Cancelled) => {}
+                        Err(err) => self.toasts.error(err),
+                    }
+                    self.dialog = Some(Dialog::Attachments {
+                        tab,
+                        files,
+                        action: None,
+                    });
+                }
+                Some(AttachAction::Remove(file)) => {
+                    let Some(index) = self.tab_index(tab) else {
+                        return;
+                    };
+                    let name = files[file].name.clone();
+                    let result = self.tabs[index].apply(&format!("Remove {name}"), |pdf| {
+                        core::remove_attachment(pdf, &name)
+                    });
+                    self.report(result.map_err(plain), None);
+                    self.show_attachments(tab);
+                }
+            },
+            Dialog::Interleave { tab, file, reverse } => {
+                let Some(index) = self.tab_index(tab) else {
+                    return;
+                };
+                let doc = &self.tabs[index];
+                let name = format!(
+                    "{} + {} (interleaved).pdf",
+                    stem(doc.title()),
+                    stem(&file.name)
+                );
+                match guarded(|| core::interleave(doc.session.bytes(), &file.bytes, reverse)) {
+                    Ok(bytes) => {
+                        self.add_tab(
+                            PickedFile {
+                                name,
+                                path: None,
+                                bytes,
+                            },
+                            true,
+                        );
+                        self.toasts.success("Pages interleaved");
+                    }
+                    Err(err) => self
+                        .toasts
+                        .error(format!("Cannot interleave: {}", plain(err.to_string()))),
                 }
             }
             Dialog::About | Dialog::Updates | Dialog::Preferences => {}

@@ -144,7 +144,7 @@ pub fn number_pages(pdf: &[u8], pages: &[usize], numbers: &PageNumbers) -> Resul
             num(y),
             win_ansi_hex(&text)
         );
-        overlay(&mut doc, id, &ops, font, None)?;
+        wrap(&mut doc, id, "", &ops, &[("Font", FONT_NAME, font)])?;
     }
     save(&mut doc)
 }
@@ -191,7 +191,8 @@ pub fn watermark(pdf: &[u8], pages: &[usize], mark: &Watermark) -> Result<Vec<u8
             num(-mark.font_size * 0.35),
             win_ansi_hex(&mark.text)
         );
-        overlay(&mut doc, id, &ops, font, Some(state))?;
+        let resources = [("Font", FONT_NAME, font), ("ExtGState", STATE_NAME, state)];
+        wrap(&mut doc, id, "", &ops, &resources)?;
     }
     save(&mut doc)
 }
@@ -226,7 +227,7 @@ fn is_link(doc: &Document, annot: &Object) -> bool {
         == Some(b"Link".as_slice())
 }
 
-fn helvetica() -> Dictionary {
+pub(crate) fn helvetica() -> Dictionary {
     dictionary! {
         "Type" => "Font",
         "Subtype" => "Type1",
@@ -256,7 +257,7 @@ pub(crate) fn check_text(text: &str) -> Result<()> {
 }
 
 /// The ids of `pages`, each with its own resources and boxes.
-fn targets(doc: &mut Document, pages: &[usize]) -> Result<Vec<ObjectId>> {
+pub(crate) fn targets(doc: &mut Document, pages: &[usize]) -> Result<Vec<ObjectId>> {
     if pages.is_empty() {
         return Err(Error::InvalidArgument("no pages selected".into()));
     }
@@ -268,17 +269,17 @@ fn targets(doc: &mut Document, pages: &[usize]) -> Result<Vec<ObjectId>> {
 }
 
 /// The visible box of a page and its rotation: where "bottom left" is for the reader.
-struct View {
+pub(crate) struct View {
     /// Box in page space: x0, y0, x1, y1.
-    corners: [f32; 4],
+    pub(crate) corners: [f32; 4],
     rotation: i64,
     /// Size as displayed.
-    width: f32,
-    height: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 impl View {
-    fn of(doc: &Document, page: ObjectId) -> Self {
+    pub(crate) fn of(doc: &Document, page: ObjectId) -> Self {
         let dict = doc.get_dictionary(page).ok();
         let read = |key: &[u8]| {
             let numbers: Vec<f32> = deref(doc, dict?.get(key).ok()?)?
@@ -317,41 +318,43 @@ impl View {
     }
 
     /// From the page as displayed (origin bottom left, y up) to page space.
-    fn matrix(&self) -> String {
+    pub(crate) fn to_page(&self) -> [f32; 6] {
         let [x0, y0, x1, y1] = self.corners;
-        let (a, b, c, d, e, f) = match self.rotation {
-            90 => (0, 1, -1, 0, x1, y0),
-            180 => (-1, 0, 0, -1, x1, y1),
-            270 => (0, -1, 1, 0, x0, y1),
-            _ => (1, 0, 0, 1, x0, y0),
-        };
+        match self.rotation {
+            90 => [0.0, 1.0, -1.0, 0.0, x1, y0],
+            180 => [-1.0, 0.0, 0.0, -1.0, x1, y1],
+            270 => [0.0, -1.0, 1.0, 0.0, x0, y1],
+            _ => [1.0, 0.0, 0.0, 1.0, x0, y0],
+        }
+    }
+
+    /// [`Self::to_page`] as `cm` operands.
+    pub(crate) fn matrix(&self) -> String {
+        let [a, b, c, d, e, f] = self.to_page();
         format!("{a} {b} {c} {d} {} {}", num(e), num(f))
     }
 }
 
-/// Draw `ops` over the page. What the page draws is closed in `q … Q`, so whatever state it
-/// leaves behind does not move the stamp.
-fn overlay(
+/// Draw `under` beneath what the page shows and `over` above it, adding `resources` (kind,
+/// name, object) to the page. What the page draws is closed in `q … Q`, so whatever state it
+/// leaves behind does not move the marks.
+pub(crate) fn wrap(
     doc: &mut Document,
     page: ObjectId,
-    ops: &str,
-    font: ObjectId,
-    state: Option<ObjectId>,
+    under: &str,
+    over: &str,
+    resources: &[(&str, &str, ObjectId)],
 ) -> Result<()> {
     let dict = doc.get_dictionary(page)?;
-    let mut resources = dict_entry(doc, dict, b"Resources")
+    let mut page_resources = dict_entry(doc, dict, b"Resources")
         .cloned()
         .unwrap_or_default();
-    let mut add = |kind: &str, name: &str, id: ObjectId| {
-        let mut entries = dict_entry(doc, &resources, kind.as_bytes())
+    for &(kind, name, id) in resources {
+        let mut entries = dict_entry(doc, &page_resources, kind.as_bytes())
             .cloned()
             .unwrap_or_default();
         entries.set(name, id);
-        resources.set(kind, entries);
-    };
-    add("Font", FONT_NAME, font);
-    if let Some(state) = state {
-        add("ExtGState", STATE_NAME, state);
+        page_resources.set(kind, entries);
     }
     let existing: Vec<Object> = match dict.get(b"Contents").ok() {
         Some(Object::Array(items)) => items.clone(),
@@ -361,16 +364,28 @@ fn overlay(
         },
         _ => Vec::new(),
     };
-    let open = doc.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
+    let open = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!(
+            "{under}q
+"
+        )
+        .into_bytes(),
+    ));
     let close = doc.add_object(Stream::new(
         Dictionary::new(),
-        format!("\nQ\n{ops}").into_bytes(),
+        format!(
+            "
+Q
+{over}"
+        )
+        .into_bytes(),
     ));
     let mut contents = vec![Object::Reference(open)];
     contents.extend(existing);
     contents.push(Object::Reference(close));
     let dict = doc.get_dictionary_mut(page)?;
-    dict.set("Resources", resources);
+    dict.set("Resources", page_resources);
     dict.set("Contents", contents);
     Ok(())
 }

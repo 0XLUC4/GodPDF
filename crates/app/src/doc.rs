@@ -244,6 +244,8 @@ pub struct DocTab {
     #[cfg(not(target_arch = "wasm32"))]
     worker: Option<Worker>,
     pub outline: Option<Result<Vec<OutlineItem>, String>>,
+    /// The bookmark whose name is being typed in the bookmarks panel.
+    pub bookmark_rename: Option<crate::bookmarks::Renaming>,
     /// Parsed annotations per page for hit-testing; cleared on reload (new generation).
     annotations: HashMap<usize, Vec<PlacedAnnotation>>,
     /// Page rotation / origin per page; cleared on reload.
@@ -313,6 +315,7 @@ impl DocTab {
             #[cfg(not(target_arch = "wasm32"))]
             worker: None,
             outline: None,
+            bookmark_rename: None,
             annotations: HashMap::new(),
             geometries: HashMap::new(),
             texts: HashMap::new(),

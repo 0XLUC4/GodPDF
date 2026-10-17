@@ -5,11 +5,15 @@
 //! origin bottom-left, unrotated page space.
 
 mod annotate;
+mod attach;
+mod bookmarks;
+mod clean;
 mod create;
 mod error;
 mod fonts;
 mod helvetica;
 mod info;
+mod layout;
 mod organize;
 mod pdf;
 mod retype;
@@ -23,6 +27,11 @@ pub use annotate::{
     PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
     free_text_width, remove_annotation, replace_annotation, wrap_free_text, wrap_styled,
 };
+pub use attach::{Attachment, add_attachment, attachments, remove_attachment};
+pub use bookmarks::{contents_page, write_outline};
+pub use clean::{
+    Tint, compress, flatten_annotations, remove_comments, remove_hidden_data, tint_pages,
+};
 pub use create::{jpeg_document, rgb_document, text_document};
 pub use error::{Error, Result};
 pub use fonts::{CharStyle, Font, Script, style_at};
@@ -31,8 +40,9 @@ pub use info::{
     Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometry, read_metadata,
     write_metadata,
 };
+pub use layout::{booklet, crop_pages, halve_pages, join_pages, pages_per_sheet, resize_pages};
 pub use organize::{
-    blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, merge,
+    blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, interleave, merge,
     reorder_pages, rotate_pages, split_at, split_every,
 };
 pub use retype::{LineLook, line_look, replace_styled, replace_text};

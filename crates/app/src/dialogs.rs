@@ -76,9 +76,35 @@ pub enum Dialog {
         range: String,
         error: Option<String>,
     },
+    /// A page tool and the pages of `range` it works on.
+    Tool {
+        tab: u64,
+        form: crate::pagetools::Form,
+        range: String,
+        error: Option<String>,
+    },
+    /// Files attached to the document; `action` is what the user just asked for.
+    Attachments {
+        tab: u64,
+        files: Vec<godpdf_core::Attachment>,
+        action: Option<AttachAction>,
+    },
+    /// A PDF whose pages go in turn with those of the tab.
+    Interleave {
+        tab: u64,
+        file: PickedFile,
+        reverse: bool,
+    },
     About,
     Updates,
     Preferences,
+}
+
+#[derive(Clone, Copy)]
+pub enum AttachAction {
+    Add,
+    Save(usize),
+    Remove(usize),
 }
 
 pub const META_LABELS: [&str; 6] = [
@@ -468,6 +494,101 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
                 }
             })
         }
+        Dialog::Tool {
+            form, range, error, ..
+        } => {
+            let cmd = form.cmd();
+            title(
+                ui,
+                &with_icon(cmd.icon(), cmd.label().trim_end_matches('…')),
+            );
+            ui.label(RichText::new(cmd.description()).color(palette.text_dim));
+            ui.add_space(6.0);
+            egui::Grid::new("tool-grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    form.ui(ui);
+                    if form.has_range() {
+                        ui.label("Pages");
+                        range_field(ui, range);
+                        ui.end_row();
+                    }
+                });
+            error_line(ui, error.as_deref(), &palette);
+            buttons(ui, form.button(), Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
+                if primary {
+                    Outcome::Primary
+                } else {
+                    Outcome::Cancel
+                }
+            })
+        }
+        Dialog::Attachments { files, action, .. } => {
+            title(ui, &with_icon(icon::PAPERCLIP, "Attached files"));
+            if files.is_empty() {
+                ui.label(
+                    RichText::new("No file is attached to this document.").color(palette.text_dim),
+                );
+            }
+            ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                for (index, file) in files.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(with_icon(icon::FILE, &file.name));
+                        ui.label(
+                            RichText::new(size_text(file.bytes.len())).color(palette.text_dim),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::small_icon_button(ui, icon::TRASH, "Remove").clicked() {
+                                *action = Some(AttachAction::Remove(index));
+                            }
+                            if widgets::small_icon_button(ui, icon::DOWNLOAD_SIMPLE, "Save a copy")
+                                .clicked()
+                            {
+                                *action = Some(AttachAction::Save(index));
+                            }
+                        });
+                    });
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(primary_button(ui, &with_icon(icon::PLUS, "Attach files…")))
+                    .clicked()
+                {
+                    *action = Some(AttachAction::Add);
+                }
+                if ui.button("Close").clicked() {
+                    return Outcome::Cancel;
+                }
+                if action.is_some() {
+                    Outcome::Primary
+                } else {
+                    Outcome::Keep
+                }
+            })
+            .inner
+        }
+        Dialog::Interleave { file, reverse, .. } => {
+            title(ui, &with_icon(icon::SHUFFLE, "Interleave pages"));
+            ui.label(format!(
+                "The pages of this document and of “{}”, taken in turn.",
+                file.name
+            ));
+            ui.add_space(6.0);
+            ui.checkbox(reverse, "Read the second one from its last page")
+                .on_hover_text(
+                    "For the backs of sheets scanned as a pile, which come out in reverse",
+                );
+            buttons(ui, "Interleave", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
+                if primary {
+                    Outcome::Primary
+                } else {
+                    Outcome::Cancel
+                }
+            })
+        }
         Dialog::About => {
             ui.vertical_centered(|ui| {
                 if let Some(logo) = env.logo {
@@ -752,6 +873,15 @@ fn color_button(ui: &mut Ui, color: &mut godpdf_core::Color) {
     if ui.color_edit_button_rgb(&mut rgb).changed() {
         let [r, g, b] = rgb;
         *color = godpdf_core::Color { r, g, b };
+    }
+}
+
+/// `1.2 MB`, `340 KB`, `12 bytes`.
+pub fn size_text(bytes: usize) -> String {
+    match bytes {
+        0..1_000 => format!("{bytes} bytes"),
+        1_000..1_000_000 => format!("{:.0} KB", bytes as f64 / 1e3),
+        _ => format!("{:.1} MB", bytes as f64 / 1e6),
     }
 }
 

@@ -37,6 +37,14 @@ pub enum Done {
         generation: u64,
         result: Result<Vec<crate::comments::Entry>, String>,
     },
+    /// Pages drawn as pictures, named, to be written to a folder.
+    Images(Result<Vec<(String, Vec<u8>)>, String>),
+    /// Pages found blank in a document revision, to be removed.
+    Blank {
+        tab: u64,
+        generation: u64,
+        result: Result<Vec<usize>, String>,
+    },
     /// The document was printed, or not: what to tell the user.
     Printed(Result<Option<&'static str>, String>),
     /// The job panicked or could not start.

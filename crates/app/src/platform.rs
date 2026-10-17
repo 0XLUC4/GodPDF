@@ -18,7 +18,25 @@ pub struct PickedFile {
 pub enum Purpose {
     Open,
     MergeAdd,
-    Insert { tab: u64, at: usize },
+    Insert {
+        tab: u64,
+        at: usize,
+    },
+    /// Files of any kind to attach to the document of a tab.
+    Attach {
+        tab: u64,
+    },
+    /// A PDF whose pages go in turn with those of a tab.
+    Interleave {
+        tab: u64,
+    },
+}
+
+impl Purpose {
+    /// Any kind of file may be picked, not only what opens as a PDF.
+    fn any_file(self) -> bool {
+        matches!(self, Self::Attach { .. })
+    }
 }
 
 type Batch = (Purpose, Vec<PickedFile>);
@@ -113,9 +131,12 @@ mod native {
         inbox: &Inbox,
         _ctx: &egui::Context,
     ) -> Result<(), String> {
-        let dialog = rfd::FileDialog::new()
-            .add_filter("PDFs, images and text", &OPENABLE)
-            .add_filter("PDF document", &["pdf"]);
+        let mut dialog = rfd::FileDialog::new();
+        if !purpose.any_file() {
+            dialog = dialog
+                .add_filter("PDFs, images and text", &OPENABLE)
+                .add_filter("PDF document", &["pdf"]);
+        }
         let paths = if multiple {
             dialog.pick_files().unwrap_or_default()
         } else {
@@ -202,6 +223,29 @@ mod native {
         Ok(Some(folder.display().to_string()))
     }
 
+    /// Ask for a folder and write each `(name, bytes)` there. Returns the folder, `None` if
+    /// cancelled.
+    pub fn save_files(files: &[(String, Vec<u8>)]) -> Result<Option<String>, String> {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+            return Ok(None);
+        };
+        for (name, bytes) in files {
+            write_atomic(&free_path(&folder, name), bytes)?;
+        }
+        Ok(Some(folder.display().to_string()))
+    }
+
+    /// Ask where to write one file named `name`.
+    pub fn save_file(name: &str, bytes: &[u8]) -> Result<Saved, String> {
+        match rfd::FileDialog::new().set_file_name(name).save_file() {
+            Some(path) => {
+                write_atomic(&path, bytes)?;
+                Ok(Saved::To(Some(path)))
+            }
+            None => Ok(Saved::Cancelled),
+        }
+    }
+
     /// Write to `<name>.godpdf.tmp` next to `target`, then rename over it, so a failed
     /// write never leaves a truncated file behind.
     fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -226,11 +270,14 @@ mod native {
 
     /// `folder/name.pdf`, or `folder/name (2).pdf`, ... if taken.
     fn free_path(folder: &Path, name: &str) -> PathBuf {
-        let stem = name.strip_suffix(".pdf").unwrap_or(name);
+        let (stem, extension) = match name.rsplit_once('.') {
+            Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+            _ => (name, String::new()),
+        };
         let mut path = folder.join(name);
         let mut copy = 2;
         while path.exists() {
-            path = folder.join(format!("{stem} ({copy}).pdf"));
+            path = folder.join(format!("{stem} ({copy}){extension}"));
             copy += 1;
         }
         path
@@ -256,7 +303,10 @@ mod web {
         let inbox = inbox.clone();
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let dialog = rfd::AsyncFileDialog::new().add_filter("PDFs, images and text", &OPENABLE);
+            let mut dialog = rfd::AsyncFileDialog::new();
+            if !purpose.any_file() {
+                dialog = dialog.add_filter("PDFs, images and text", &OPENABLE);
+            }
             let handles = if multiple {
                 dialog.pick_files().await.unwrap_or_default()
             } else {
@@ -288,7 +338,12 @@ mod web {
         let fail = |what: &str| format!("Download failed: {what}");
         let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
         let options = web_sys::BlobPropertyBag::new();
-        options.set_type("application/pdf");
+        let kind = if name.to_ascii_lowercase().ends_with(".pdf") {
+            "application/pdf"
+        } else {
+            "application/octet-stream"
+        };
+        options.set_type(kind);
         let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options)
             .map_err(|_| fail("blob"))?;
         let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(|_| fail("url"))?;
@@ -318,5 +373,17 @@ mod web {
             download(&part_name(base, index + 1), bytes)?;
         }
         Ok(Some("Downloads".to_owned()))
+    }
+
+    pub fn save_files(files: &[(String, Vec<u8>)]) -> Result<Option<String>, String> {
+        for (name, bytes) in files {
+            download(name, bytes)?;
+        }
+        Ok(Some("Downloads".to_owned()))
+    }
+
+    pub fn save_file(name: &str, bytes: &[u8]) -> Result<Saved, String> {
+        download(name, bytes)?;
+        Ok(Saved::To(None))
     }
 }

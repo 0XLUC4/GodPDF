@@ -246,6 +246,8 @@ pub struct DocTab {
     pub outline: Option<Result<Vec<OutlineItem>, String>>,
     /// The bookmark whose name is being typed in the bookmarks panel.
     pub bookmark_rename: Option<crate::bookmarks::Renaming>,
+    /// The form shown in the form panel, read once per revision.
+    pub form: Option<crate::formfill::FormState>,
     /// Parsed annotations per page for hit-testing; cleared on reload (new generation).
     annotations: HashMap<usize, Vec<PlacedAnnotation>>,
     /// Page rotation / origin per page; cleared on reload.
@@ -316,6 +318,7 @@ impl DocTab {
             worker: None,
             outline: None,
             bookmark_rename: None,
+            form: None,
             annotations: HashMap::new(),
             geometries: HashMap::new(),
             texts: HashMap::new(),

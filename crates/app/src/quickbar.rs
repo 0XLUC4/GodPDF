@@ -27,6 +27,10 @@ pub enum Tool {
     Ink,
     Rectangle,
     Picture,
+    /// Chosen from the signature panel, not shown in the bar.
+    Sign,
+    /// Chosen from the form panel, not shown in the bar.
+    Field,
     /// Click or drag over comments to remove them.
     Eraser,
 }
@@ -54,6 +58,8 @@ impl Tool {
             Self::Ink => Some(CommentTool::Ink),
             Self::Rectangle => Some(CommentTool::Rectangle),
             Self::Picture => Some(CommentTool::Picture),
+            Self::Sign => Some(CommentTool::Signature),
+            Self::Field => Some(CommentTool::Field),
         }
     }
 
@@ -65,6 +71,8 @@ impl Tool {
             CommentTool::Ink => Self::Ink,
             CommentTool::Rectangle => Self::Rectangle,
             CommentTool::Picture => Self::Picture,
+            CommentTool::Signature => Self::Sign,
+            CommentTool::Field => Self::Field,
         }
     }
 
@@ -78,6 +86,8 @@ impl Tool {
             Self::Ink => icon::PENCIL_SIMPLE,
             Self::Rectangle => icon::SQUARE,
             Self::Picture => icon::IMAGE,
+            Self::Sign => icon::SIGNATURE,
+            Self::Field => icon::TEXTBOX,
             Self::Eraser => icon::ERASER,
         }
     }
@@ -92,6 +102,8 @@ impl Tool {
             Self::Ink => "Draw",
             Self::Rectangle => "Rectangle",
             Self::Picture => "Picture",
+            Self::Sign => "Sign",
+            Self::Field => "Form field",
             Self::Eraser => "Eraser",
         }
     }
@@ -107,6 +119,7 @@ impl Tool {
             Self::Rectangle => Some(Key::R),
             Self::Eraser => Some(Key::E),
             Self::Picture => Some(Key::I),
+            Self::Sign | Self::Field => None,
             Self::Highlight => None,
         }
     }
@@ -195,9 +208,14 @@ impl Styles {
             Some(CommentTool::Highlight) => &mut self.highlight,
             Some(CommentTool::Ink) => &mut self.ink,
             Some(CommentTool::Rectangle) => &mut self.rectangle,
-            Some(CommentTool::FreeText | CommentTool::Note | CommentTool::Picture) | None => {
-                &mut self.text
-            }
+            Some(
+                CommentTool::FreeText
+                | CommentTool::Note
+                | CommentTool::Picture
+                | CommentTool::Signature
+                | CommentTool::Field,
+            )
+            | None => &mut self.text,
         }
     }
 
@@ -206,7 +224,11 @@ impl Styles {
             CommentTool::Highlight => &self.highlight,
             CommentTool::Ink => &self.ink,
             CommentTool::Rectangle => &self.rectangle,
-            CommentTool::FreeText | CommentTool::Note | CommentTool::Picture => &self.text,
+            CommentTool::FreeText
+            | CommentTool::Note
+            | CommentTool::Picture
+            | CommentTool::Signature
+            | CommentTool::Field => &self.text,
         }
     }
 }
@@ -343,7 +365,7 @@ fn style_card(
                 Tool::Text => StyleKind::Text,
                 Tool::Ink | Tool::Rectangle => StyleKind::Stroke,
                 Tool::Highlight => StyleKind::Fill,
-                Tool::Note | Tool::Picture => {
+                Tool::Note | Tool::Picture | Tool::Sign | Tool::Field => {
                     hint_card(ui, tool.hint(), palette);
                     return;
                 }

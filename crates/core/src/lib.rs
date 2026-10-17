@@ -8,9 +8,11 @@ mod annotate;
 mod attach;
 mod bookmarks;
 mod clean;
+mod compare;
 mod create;
 mod error;
 mod fonts;
+mod forms;
 mod helvetica;
 mod info;
 mod layout;
@@ -21,6 +23,7 @@ mod security;
 mod session;
 mod stamp;
 mod text;
+mod textlayer;
 
 pub use annotate::{
     Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Picture,
@@ -32,9 +35,13 @@ pub use bookmarks::{contents_page, write_outline};
 pub use clean::{
     Tint, compress, flatten_annotations, remove_comments, remove_hidden_data, tint_pages,
 };
+pub use compare::{PageDiff, compare_text};
 pub use create::{jpeg_document, rgb_document, text_document};
 pub use error::{Error, Result};
 pub use fonts::{CharStyle, Font, Script, style_at};
+pub use forms::{
+    FieldKind, FieldValue, FormField, NewField, add_form_field, fill_form, form_fields,
+};
 pub use helvetica::line_width as helvetica_line_width;
 pub use info::{
     Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometry, read_metadata,
@@ -50,3 +57,4 @@ pub use security::{decrypt, encrypt, is_encrypted};
 pub use session::Session;
 pub use stamp::{PageNumbers, Place, Watermark, number_pages, remove_links, watermark};
 pub use text::{SearchHit, extract_all_text, extract_text, search};
+pub use textlayer::{Word, add_text_layer};

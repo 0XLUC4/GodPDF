@@ -18,10 +18,19 @@ pub enum Tab {
     Pages,
     Bookmarks,
     Search,
+    Form,
+    Sign,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Comments, Tab::Pages, Tab::Bookmarks, Tab::Search];
+    pub const ALL: [Tab; 6] = [
+        Tab::Comments,
+        Tab::Pages,
+        Tab::Bookmarks,
+        Tab::Search,
+        Tab::Form,
+        Tab::Sign,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -29,6 +38,8 @@ impl Tab {
             Self::Pages => "Pages",
             Self::Bookmarks => "Bookmarks",
             Self::Search => "Search",
+            Self::Form => "Form",
+            Self::Sign => "Signature",
         }
     }
 
@@ -38,6 +49,8 @@ impl Tab {
             Self::Pages => icon::FILES,
             Self::Bookmarks => icon::BOOKMARK_SIMPLE,
             Self::Search => icon::MAGNIFYING_GLASS,
+            Self::Form => icon::LIST_CHECKS,
+            Self::Sign => icon::SIGNATURE,
         }
     }
 }
@@ -53,9 +66,14 @@ pub struct Output {
     /// New bookmarks to write, named for the undo history.
     pub outline: Option<(&'static str, Vec<OutlineItem>)>,
     pub run: Option<crate::commands::Cmd>,
+    /// Form answers to write.
+    pub fill: Option<Vec<(String, godpdf_core::FieldValue)>>,
+    /// Draw a new form field of this kind.
+    pub add_field: Option<godpdf_core::NewField>,
 }
 
-/// Pages, bookmarks or search (`Tab::Comments` is drawn by the caller).
+/// Pages, bookmarks, search or form (`Tab::Comments` and `Tab::Sign` are drawn by the
+/// caller).
 pub fn show(ui: &mut Ui, tab: &mut DocTab, current: Tab, budget: &mut Budget) -> Output {
     match current {
         Tab::Pages => pages(ui, tab, budget),
@@ -72,7 +90,17 @@ pub fn show(ui: &mut Ui, tab: &mut DocTab, current: Tab, budget: &mut Budget) ->
             jump: search(ui, tab),
             ..Output::default()
         },
-        Tab::Comments => Output::default(),
+        Tab::Form => {
+            let form = crate::formfill::panel(ui, tab);
+            Output {
+                jump: form.jump,
+                fill: form.fill,
+                add_field: form.add,
+                ..Output::default()
+            }
+        }
+        // Drawn by the caller.
+        Tab::Comments | Tab::Sign => Output::default(),
     }
 }
 

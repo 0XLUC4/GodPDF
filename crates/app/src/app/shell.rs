@@ -387,6 +387,7 @@ impl GodApp {
         let tab = &self.tabs[self.active];
         let (id, generation) = (tab.id, tab.generation());
         let mut budget = Budget(3);
+        let mut sign = None;
         let (out, close) = Panel::right("right-panel")
             .resizable(true)
             .default_size(320.0)
@@ -422,6 +423,9 @@ impl GodApp {
                         jump: comments::show(ui, found, tab.current_page),
                         ..sidebar::Output::default()
                     }
+                } else if view == View::Sign {
+                    sign = crate::signature::panel(ui, self.signature.as_ref());
+                    sidebar::Output::default()
                 } else {
                     sidebar::show(ui, tab, view, &mut budget)
                 };
@@ -446,6 +450,31 @@ impl GodApp {
         if let Some(cmd) = out.run {
             let ctx = ui.ctx().clone();
             self.run(&ctx, cmd);
+        }
+        if let Some(changes) = out.fill {
+            let result = self.tabs[self.active]
+                .apply("Fill in form", |pdf| godpdf_core::fill_form(pdf, &changes));
+            self.report(result, Some("Form filled in"));
+        }
+        if let Some(kind) = out.add_field {
+            self.field_kind = kind;
+            self.set_tool(crate::quickbar::Tool::Field);
+            self.toasts.info("Drag the box of the field on the page");
+        }
+        match sign {
+            Some(crate::signature::PanelAction::Draw) => {
+                self.dialog = Some(crate::dialogs::Dialog::Signature {
+                    strokes: Vec::new(),
+                    place: None,
+                    saved: false,
+                });
+            }
+            Some(crate::signature::PanelAction::Place) => {
+                self.set_tool(crate::quickbar::Tool::Sign);
+                self.toasts.info("Click where your signature goes");
+            }
+            Some(crate::signature::PanelAction::Forget) => self.signature = None,
+            None => {}
         }
         self.start_search();
         if std::mem::take(&mut self.focus_search) {

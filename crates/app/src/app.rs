@@ -64,6 +64,12 @@ pub struct GodApp {
     dialog: Option<Dialog>,
     palette: Option<PaletteState>,
     text_view: Option<TextView>,
+    /// Two documents compared, shown in a window.
+    compare_view: Option<crate::compare::CompareView>,
+    /// The signature the user drew, kept between sessions.
+    signature: Option<crate::signature::Signature>,
+    /// Kind of the next form field drawn with the field tool.
+    field_kind: core::NewField,
     /// What a click or drag on the page does (Select by default).
     tool: Tool,
     /// Style of new comments, per tool kind.
@@ -135,6 +141,11 @@ impl GodApp {
             dialog: None,
             palette: None,
             text_view: None,
+            compare_view: None,
+            field_kind: core::NewField::Text,
+            signature: get("signature")
+                .as_deref()
+                .and_then(crate::signature::Signature::from_text),
             tool: Tool::Select,
             styles: quickbar::Styles::default(),
             erase_stroke: false,
@@ -227,6 +238,11 @@ impl eframe::App for GodApp {
         storage.set_string("dark_mode", flag(self.dark));
         storage.set_string("sidebar", flag(self.show_sidebar));
         storage.set_string("tools_panel", flag(self.show_tools));
+        let signature = self
+            .signature
+            .as_ref()
+            .map(crate::signature::Signature::to_text);
+        storage.set_string("signature", signature.unwrap_or_default());
         let recent: Vec<String> = self
             .recent
             .iter()
@@ -604,6 +620,15 @@ impl GodApp {
         {
             self.text_view = None;
         }
+        if let Some(view) = &self.compare_view {
+            let (open, jump) = crate::compare::window(ctx, view);
+            if !open {
+                self.compare_view = None;
+            }
+            if let Some(page) = jump {
+                self.goto_page(page);
+            }
+        }
 
         let has_doc = !self.tabs.is_empty();
         if let Some(state) = &mut self.palette {
@@ -681,6 +706,20 @@ impl GodApp {
                     if let Some(file) = files.into_iter().next() {
                         self.place_picture(tab, page, from, to, &file);
                     }
+                }
+                Purpose::Compare { tab } => {
+                    let (Some(index), Some(file)) = (self.tab_index(tab), files.into_iter().next())
+                    else {
+                        continue;
+                    };
+                    let doc = &self.tabs[index];
+                    let title = format!("{} compared with {}", doc.title(), file.name);
+                    let bytes = doc.session.bytes().to_vec();
+                    self.toasts.info("Comparing…");
+                    let ctx = self.ctx.clone();
+                    self.jobs.spawn(&ctx, move || {
+                        Done::Compared(crate::compare::run(bytes, file.bytes, title))
+                    });
                 }
                 Purpose::Interleave { tab } => {
                     if let Some(file) = files.into_iter().next() {
@@ -1108,7 +1147,8 @@ impl GodApp {
             | Cmd::FreeText
             | Cmd::Rectangle
             | Cmd::Ink
-            | Cmd::Picture => {}
+            | Cmd::Picture
+            | Cmd::FormField => {}
             Cmd::CropPages
             | Cmd::PagesPerSheet
             | Cmd::PageSize
@@ -1197,6 +1237,19 @@ impl GodApp {
                     Err(err) => self.toasts.info(err),
                 }
             }
+            Cmd::Sign => {
+                self.show_sidebar = true;
+                self.sidebar_tab = sidebar::Tab::Sign;
+            }
+            Cmd::FillForm => {
+                self.show_sidebar = true;
+                self.sidebar_tab = sidebar::Tab::Form;
+            }
+            Cmd::Compare => {
+                let id = self.tabs[self.active].id;
+                self.pick(ctx, false, Purpose::Compare { tab: id });
+            }
+            Cmd::Ocr => self.recognize_text(ctx),
             Cmd::RemoveHiddenData => self.edit_active(
                 cmd,
                 "Properties, scripts and attached files removed",
@@ -1267,6 +1320,71 @@ impl GodApp {
             result,
             Some("Picture added: drag it to move it, its corners to resize it"),
         );
+    }
+
+    /// Read the words of the scanned pages of the document in front, in the background.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recognize_text(&mut self, ctx: &Context) {
+        let tab = &self.tabs[self.active];
+        let (id, generation) = (tab.id, tab.generation());
+        let bytes = tab.session.bytes().to_vec();
+        self.toasts.info(if crate::ocr::models_ready() {
+            "Reading the scanned pages…"
+        } else {
+            "First use: downloading text recognition (12 MB), then reading the pages…"
+        });
+        self.jobs.spawn(ctx, move || Done::Ocr {
+            tab: id,
+            generation,
+            result: crate::ocr::recognize(bytes),
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn recognize_text(&mut self, _ctx: &Context) {
+        self.toasts
+            .error("Text recognition needs the desktop app: it is not in the browser");
+    }
+
+    /// Put the saved signature on `page` of tab `tab`, top left corner at `at` (displayed
+    /// points). It is then selected, to be moved or resized.
+    fn place_signature(&mut self, tab: u64, page: usize, at: (f32, f32)) {
+        let (Some(index), Some(signature)) = (self.tab_index(tab), self.signature.clone()) else {
+            return;
+        };
+        let doc = &mut self.tabs[index];
+        let (Some(&size), Ok(geom)) = (
+            doc.page_sizes.get(page),
+            geometry::page_geometry(doc.session.bytes(), page),
+        ) else {
+            return;
+        };
+        let strokes = signature
+            .placed(egui::pos2(at.0, at.1))
+            .into_iter()
+            .map(|stroke| {
+                stroke
+                    .into_iter()
+                    .map(|point| geometry::to_pdf(&geom, size, point))
+                    .collect()
+            })
+            .collect();
+        let annotation = Annotation::Ink {
+            strokes,
+            color: crate::signature::INK,
+            width: crate::signature::PEN,
+        };
+        let result = doc.apply("Sign", |pdf| core::add_annotation(pdf, page, &annotation));
+        if result.is_ok()
+            && let Some(placed) = doc.annotations(page).ok().and_then(|list| list.last())
+        {
+            doc.canvas.selected = Some(selection::Selected {
+                page,
+                id: placed.id.clone(),
+            });
+            self.tool = Tool::Select;
+        }
+        self.report(result, Some("Signed: drag the signature to move it"));
     }
 
     /// Run `edit` on the document in front, named after `cmd` in the undo history.
@@ -1740,7 +1858,11 @@ impl GodApp {
             | Cmd::Attachments
             | Cmd::Compress
             | Cmd::RemoveHiddenData
-            | Cmd::ExportImages => {
+            | Cmd::ExportImages
+            | Cmd::Sign
+            | Cmd::FillForm
+            | Cmd::Compare
+            | Cmd::Ocr => {
                 let ctx = self.ctx.clone();
                 self.run(&ctx, cmd);
             }
@@ -2056,6 +2178,38 @@ impl GodApp {
                         Err(err) => self.toasts.error(err),
                     }
                 }
+                Done::Compared(result) => match result {
+                    Ok(view) => self.compare_view = Some(view),
+                    Err(err) => self.toasts.error(format!("Cannot compare: {err}")),
+                },
+                Done::Ocr {
+                    tab,
+                    generation,
+                    result,
+                } => {
+                    let Some(index) = self.tab_index(tab) else {
+                        continue;
+                    };
+                    match result {
+                        Ok(_) if self.tabs[index].generation() != generation => {
+                            self.toasts
+                                .info("The document changed meanwhile: run it again");
+                        }
+                        Ok(pages) if pages.is_empty() => {
+                            self.toasts.info("Every page already has text");
+                        }
+                        Ok(pages) => {
+                            let count = pages.iter().filter(|(_, words)| !words.is_empty()).count();
+                            let result = self.tabs[index]
+                                .apply("Recognize text", |pdf| core::add_text_layer(pdf, &pages));
+                            let done = format!(
+                                "Text recognized on {count} pages: it can be searched and selected now"
+                            );
+                            self.report(result.map_err(plain), Some(&done));
+                        }
+                        Err(err) => self.toasts.error(err),
+                    }
+                }
                 Done::Printed(result) => {
                     self.printing = false;
                     match result {
@@ -2168,6 +2322,35 @@ impl GodApp {
             }
             // Free text is typed in a text box, never through a gesture.
             CommentTool::FreeText => return,
+            CommentTool::Signature => {
+                let place = (tab.id, finished.page, (first.x, first.y));
+                if self.signature.is_some() {
+                    self.place_signature(place.0, place.1, place.2);
+                } else {
+                    self.dialog = Some(Dialog::Signature {
+                        strokes: Vec::new(),
+                        place: Some(place),
+                        saved: false,
+                    });
+                }
+                return;
+            }
+            CommentTool::Field => {
+                let end = if tiny {
+                    first + vec2(160.0, 22.0)
+                } else {
+                    last
+                };
+                self.dialog = Some(Dialog::NewField {
+                    tab: tab.id,
+                    page: finished.page,
+                    rect: geometry::to_pdf_rect(&geom, size, first, end),
+                    kind: self.field_kind,
+                    name: "Field".to_owned(),
+                    error: None,
+                });
+                return;
+            }
             CommentTool::Picture => {
                 let id = tab.id;
                 let to = (!tiny).then_some((last.x, last.y));
@@ -2853,6 +3036,62 @@ impl GodApp {
                     Err(err) => self
                         .toasts
                         .error(format!("Cannot interleave: {}", plain(err.to_string()))),
+                }
+            }
+            Dialog::Signature {
+                strokes,
+                place,
+                saved,
+            } => {
+                if let Some(signature) = crate::signature::Signature::from_pad(&strokes) {
+                    self.signature = Some(signature);
+                } else if !saved {
+                    self.toasts.info("Draw your signature first");
+                    self.dialog = Some(Dialog::Signature {
+                        strokes,
+                        place,
+                        saved,
+                    });
+                    return;
+                }
+                match place {
+                    Some((tab, page, at)) => self.place_signature(tab, page, at),
+                    None => {
+                        self.set_tool(Tool::Sign);
+                        self.toasts.info("Click where your signature goes");
+                    }
+                }
+            }
+            Dialog::NewField {
+                tab,
+                page,
+                rect,
+                kind,
+                name,
+                ..
+            } => {
+                let Some(index) = self.tab_index(tab) else {
+                    return;
+                };
+                let result = self.tabs[index]
+                    .apply("Add form field", |pdf| {
+                        core::add_form_field(pdf, page, rect, kind, &name)
+                    })
+                    .map_err(plain);
+                match result {
+                    Ok(()) => self
+                        .toasts
+                        .success("Field added: type its answer with Fill in form"),
+                    Err(err) => {
+                        self.dialog = Some(Dialog::NewField {
+                            tab,
+                            page,
+                            rect,
+                            kind,
+                            name,
+                            error: Some(err),
+                        });
+                    }
                 }
             }
             Dialog::About | Dialog::Updates | Dialog::Preferences => {}

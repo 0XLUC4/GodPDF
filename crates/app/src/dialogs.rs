@@ -95,6 +95,21 @@ pub enum Dialog {
         file: PickedFile,
         reverse: bool,
     },
+    /// The signature pad. `place` is where it goes once drawn; `saved` when one is kept.
+    Signature {
+        strokes: Vec<Vec<egui::Pos2>>,
+        place: Option<(u64, usize, (f32, f32))>,
+        saved: bool,
+    },
+    /// A field to add over `rect` of `page`.
+    NewField {
+        tab: u64,
+        page: usize,
+        rect: godpdf_core::Rect,
+        kind: godpdf_core::NewField,
+        name: String,
+        error: Option<String>,
+    },
     About,
     Updates,
     Preferences,
@@ -582,6 +597,70 @@ fn body(ui: &mut Ui, dialog: &mut Dialog, env: Env<'_>) -> Outcome {
                     "For the backs of sheets scanned as a pile, which come out in reverse",
                 );
             buttons(ui, "Interleave", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
+                if primary {
+                    Outcome::Primary
+                } else {
+                    Outcome::Cancel
+                }
+            })
+        }
+        Dialog::Signature { strokes, saved, .. } => {
+            title(ui, &with_icon(icon::SIGNATURE, "Your signature"));
+            ui.label(
+                RichText::new("Draw it with the mouse or a pen. It is kept for the next time.")
+                    .color(palette.text_dim),
+            );
+            ui.add_space(6.0);
+            crate::signature::pad(ui, strokes);
+            let drawn = strokes.iter().any(|stroke| !stroke.is_empty());
+            ui.add_space(8.0);
+            let mut outcome = Outcome::Keep;
+            ui.horizontal(|ui| {
+                let label = if drawn || !*saved {
+                    "Use this signature"
+                } else {
+                    "Use my saved signature"
+                };
+                let ready = drawn || *saved;
+                if ui.add_enabled(ready, primary_button(ui, label)).clicked() {
+                    outcome = Outcome::Primary;
+                }
+                if ui.add_enabled(drawn, Button::new("Clear")).clicked() {
+                    strokes.clear();
+                }
+                if ui.button("Cancel").clicked() {
+                    outcome = Outcome::Cancel;
+                }
+            });
+            outcome
+        }
+        Dialog::NewField {
+            kind, name, error, ..
+        } => {
+            title(ui, &with_icon(icon::TEXTBOX, "New form field"));
+            egui::Grid::new("field-grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Kind");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(kind, godpdf_core::NewField::Text, "Text");
+                        ui.selectable_value(kind, godpdf_core::NewField::CheckBox, "Check box");
+                    });
+                    ui.end_row();
+                    ui.label("Name");
+                    let edit = ui.add(
+                        TextEdit::singleline(name)
+                            .margin(crate::widgets::FIELD_MARGIN)
+                            .desired_width(240.0),
+                    );
+                    if name.is_empty() {
+                        edit.request_focus();
+                    }
+                    ui.end_row();
+                });
+            error_line(ui, error.as_deref(), &palette);
+            buttons(ui, "Add field", Some("Cancel"), enter).map_or(Outcome::Keep, |primary| {
                 if primary {
                     Outcome::Primary
                 } else {

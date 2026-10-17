@@ -45,6 +45,15 @@ pub enum Done {
         generation: u64,
         result: Result<Vec<usize>, String>,
     },
+    /// Two documents compared.
+    Compared(Result<crate::compare::CompareView, String>),
+    /// Words read on the scanned pages of a document revision.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Ocr {
+        tab: u64,
+        generation: u64,
+        result: Result<Vec<(usize, Vec<godpdf_core::Word>)>, String>,
+    },
     /// The document was printed, or not: what to tell the user.
     Printed(Result<Option<&'static str>, String>),
     /// The job panicked or could not start.

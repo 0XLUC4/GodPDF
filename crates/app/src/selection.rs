@@ -194,6 +194,26 @@ pub fn resized_rect(original: Rect, corner: usize, pointer: Pos2, page: Vec2, te
     Rect::from_min_max(pos2(x.0, y.0), pos2(x.1, y.1))
 }
 
+/// `rect` given the shape of `original`, as big as the larger of its two sides asks, the
+/// corner opposite `corner` staying put.
+pub fn keep_ratio(original: Rect, rect: Rect, corner: usize) -> Rect {
+    let fixed = corners(original)[(corner + 2) % 4];
+    let scale =
+        (rect.width() / original.width().max(1.0)).max(rect.height() / original.height().max(1.0));
+    let size = original.size() * scale;
+    let (x0, x1) = if corner == 1 || corner == 2 {
+        (fixed.x, fixed.x + size.x)
+    } else {
+        (fixed.x - size.x, fixed.x)
+    };
+    let (y0, y1) = if corner == 2 || corner == 3 {
+        (fixed.y, fixed.y + size.y)
+    } else {
+        (fixed.y - size.y, fixed.y)
+    };
+    Rect::from_min_max(pos2(x0, y0), pos2(x1, y1))
+}
+
 /// A page shown at `rect` (screen) with `zoom`, to place PDF-space things on screen.
 struct View {
     rect: Rect,
@@ -444,6 +464,10 @@ pub fn page(
         {
             let pointer = to_displayed(page_rect, zoom, pos);
             resize.rect = resized_rect(item.rect, resize.corner, pointer, displayed, item.text);
+            // A picture keeps its proportions; Shift stretches it freely.
+            if item.picture && !ui.input(|input| input.modifiers.shift) {
+                resize.rect = keep_ratio(item.rect, resize.rect, resize.corner);
+            }
         }
         if response.drag_stopped() {
             if resize.rect != item.rect {
@@ -866,6 +890,23 @@ mod tests {
         assert_eq!(
             text,
             Rect::from_min_max(pos2(100.0, 100.0), pos2(400.0, 150.0))
+        );
+    }
+
+    #[test]
+    fn a_picture_keeps_its_proportions() {
+        let original = Rect::from_min_max(pos2(100.0, 100.0), pos2(200.0, 150.0));
+        // Bottom-right dragged mostly sideways: the height follows.
+        let wide = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 160.0));
+        assert_eq!(
+            keep_ratio(original, wide, 2),
+            Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0))
+        );
+        // Top-left: the bottom-right corner stays put.
+        let small = Rect::from_min_max(pos2(150.0, 140.0), pos2(200.0, 150.0));
+        assert_eq!(
+            keep_ratio(original, small, 0),
+            Rect::from_min_max(pos2(150.0, 125.0), pos2(200.0, 150.0))
         );
     }
 

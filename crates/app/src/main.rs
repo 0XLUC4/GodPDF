@@ -36,6 +36,7 @@ mod updates;
 mod viewer;
 mod welcome;
 mod widgets;
+mod window;
 
 pub const APP_NAME: &str = "GodPDF";
 
@@ -51,8 +52,15 @@ fn main() -> eframe::Result {
         viewport = viewport.with_icon(icon);
     }
     let files = std::env::args_os().skip(1).map(Into::into).collect();
+    let remembered = window::load(egui::vec2(760.0, 480.0));
+    if let Some(size) = remembered.size {
+        viewport = viewport.with_inner_size(size);
+    }
+    viewport = viewport.with_maximized(remembered.maximized);
     let options = eframe::NativeOptions {
         viewport,
+        // Kept by `window`, which never brings back the size of a minimized window.
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(

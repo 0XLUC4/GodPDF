@@ -174,6 +174,7 @@ impl GodApp {
 
 impl eframe::App for GodApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        crate::window::track(ui.ctx());
         let ctx = ui.ctx().clone();
         self.process_inbox();
         self.process_jobs();
@@ -234,6 +235,7 @@ impl eframe::App for GodApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        crate::window::save();
         let flag = |on: bool| if on { "1" } else { "0" }.to_owned();
         storage.set_string("dark_mode", flag(self.dark));
         storage.set_string("sidebar", flag(self.show_sidebar));
@@ -483,6 +485,8 @@ impl GodApp {
                 let active = self.text_box.as_ref().map(TextBox::active);
                 let target = if let Some(active) = active.filter(|_| editing) {
                     StyleTarget::TextBox(active)
+                } else if let Some((size, natural)) = selected_picture(tab) {
+                    StyleTarget::Picture { size, natural }
                 } else if let Some((kind, style, formats)) = selected_style(tab) {
                     StyleTarget::Selected(kind, style, formats)
                 } else {
@@ -517,6 +521,9 @@ impl GodApp {
                 clicked.extend(bar.cmd);
                 if let Some(style) = bar.restyle {
                     self.restyle_selected(&style);
+                }
+                if let Some(size) = bar.resize {
+                    self.resize_selected_picture(size);
                 }
                 if let Some(format) = bar.format {
                     match self.text_box.as_mut().filter(|_| editing) {
@@ -1517,6 +1524,36 @@ impl GodApp {
     }
 
     /// Selected annotation of the active tab: (page, id, parsed annotation).
+    /// Give the selected picture `size` (points); its top left corner stays put.
+    fn resize_selected_picture(&mut self, size: egui::Vec2) {
+        let Some((page, id, Some(Annotation::Image { rect, picture }))) =
+            self.selected_annotation()
+        else {
+            return;
+        };
+        let (w, h) = (size.x.max(4.0), size.y.max(4.0));
+        let (left, top) = (rect.x0.min(rect.x1), rect.y0.max(rect.y1));
+        let resized = Annotation::Image {
+            rect: core::Rect {
+                x0: left,
+                y0: top - h,
+                x1: left + w,
+                y1: top,
+            },
+            picture,
+        };
+        // Steps of the same field fold into one undo step.
+        let tab = &mut self.tabs[self.active];
+        let again = tab.session.undo_label() == Some("Resize picture");
+        let edit = |pdf: &[u8]| core::replace_annotation(pdf, page, &id, &resized);
+        let result = if again {
+            tab.amend("Resize picture", edit)
+        } else {
+            tab.apply("Resize picture", edit)
+        };
+        self.report(result, None);
+    }
+
     fn selected_annotation(&mut self) -> Option<(usize, String, Option<Annotation>)> {
         let tab = self.tabs.get_mut(self.active)?;
         let selected = tab.canvas.selected.clone()?;
@@ -3112,6 +3149,22 @@ impl GodApp {
             Dialog::About | Dialog::Updates | Dialog::Preferences => {}
         }
     }
+}
+
+/// Size of the selected picture and of its pixels at 96 per inch, in points.
+fn selected_picture(tab: &mut DocTab) -> Option<(egui::Vec2, egui::Vec2)> {
+    let selected = tab.canvas.selected.clone()?;
+    let placed = tab
+        .annotations(selected.page)
+        .ok()?
+        .iter()
+        .find(|placed| placed.id == selected.id)?;
+    let Some(Annotation::Image { rect, picture }) = &placed.annotation else {
+        return None;
+    };
+    let size = egui::vec2((rect.x1 - rect.x0).abs(), (rect.y1 - rect.y0).abs());
+    let natural = egui::vec2(picture.width as f32, picture.height as f32) * 0.75;
+    Some((size, natural))
 }
 
 /// Style of the selected annotation, for the style card of the quick bar.

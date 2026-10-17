@@ -241,6 +241,11 @@ pub enum StyleTarget {
     Selected(StyleKind, CommentStyle, Option<CharStyle>),
     /// The text box being typed (edits the text style live).
     TextBox(CharStyle),
+    /// The selected picture: its size and the size of its pixels at 96 per inch, in points.
+    Picture {
+        size: egui::Vec2,
+        natural: egui::Vec2,
+    },
 }
 
 #[derive(Default)]
@@ -249,6 +254,8 @@ pub struct Output {
     pub cmd: Option<Cmd>,
     /// New style for the selected annotation.
     pub restyle: Option<CommentStyle>,
+    /// New size of the selected picture, in points.
+    pub resize: Option<egui::Vec2>,
     pub format: Option<Format>,
 }
 
@@ -381,6 +388,10 @@ fn style_card(
             formats = Some(active);
             (StyleKind::Text, None, None)
         }
+        StyleTarget::Picture { size, natural } => {
+            picture_card(ui, size, natural, palette, out);
+            return;
+        }
     };
     let style: &mut CommentStyle = match (&mut selected_copy, hint) {
         (Some(copy), _) => copy,
@@ -493,6 +504,68 @@ pub fn format_toggle(
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(tooltip)
+}
+
+/// Millimetres in a point.
+const MM: f32 = 25.4 / 72.0;
+
+/// Width and height of the selected picture in millimetres, proportions kept or not, and
+/// its own size back in a click.
+fn picture_card(
+    ui: &mut Ui,
+    size: egui::Vec2,
+    natural: egui::Vec2,
+    palette: &Palette,
+    out: &mut Output,
+) {
+    let keep_id = egui::Id::new("picture-keep-proportions");
+    let mut keep = ui.data(|data| data.get_temp::<bool>(keep_id).unwrap_or(true));
+    let mut width = size.x * MM;
+    let mut height = size.y * MM;
+    card(palette).show(ui, |ui| {
+        ui.set_max_width(150.0);
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        ui.label(RichText::new("Picture size").strong());
+        let mut changed = None;
+        ui.horizontal(|ui| {
+            ui.label("Width");
+            if ui.add(mm_field(&mut width)).changed() {
+                changed = Some(true);
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Height");
+            if ui.add(mm_field(&mut height)).changed() {
+                changed = Some(false);
+            }
+        });
+        ui.checkbox(&mut keep, "Keep proportions");
+        if let Some(by_width) = changed {
+            let ratio = size.y / size.x.max(0.01);
+            if keep && by_width {
+                height = width * ratio;
+            } else if keep {
+                width = height / ratio.max(0.0001);
+            }
+            out.resize = Some(vec2(width, height) / MM);
+        }
+        if ui
+            .button(widgets::with_icon(icon::ARROWS_OUT_SIMPLE, "Original size"))
+            .on_hover_text("96 pixels to the inch")
+            .clicked()
+        {
+            out.resize = Some(natural);
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(keep_id, keep));
+}
+
+fn mm_field(value: &mut f32) -> egui::DragValue<'_> {
+    egui::DragValue::new(value)
+        .range(2.0..=2000.0)
+        .speed(0.5)
+        .max_decimals(1)
+        .suffix(" mm")
 }
 
 fn hint_card(ui: &mut Ui, text: &str, palette: &Palette) {

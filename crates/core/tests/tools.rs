@@ -243,3 +243,28 @@ fn attachments_are_added_replaced_and_removed() {
         Ok(Object::Dictionary(_))
     ));
 }
+
+#[test]
+fn pictures_are_placed_read_back_and_moved() {
+    let rgba: Vec<u8> = (0..2 * 2)
+        .flat_map(|i| [255, 0, 0, if i == 0 { 128 } else { 255 }])
+        .collect();
+    let picture = godpdf_core::Picture::rgba(2, 2, &rgba).unwrap();
+    let rect = Rect {
+        x0: 100.0,
+        y0: 100.0,
+        x1: 300.0,
+        y1: 250.0,
+    };
+    let image = Annotation::Image { rect, picture };
+    let pdf = add_annotation(&make_pdf(1, None), 0, &image).unwrap();
+    let placed = annotations(&pdf, 0).unwrap();
+    assert_eq!(placed[0].annotation.as_ref(), Some(&image));
+
+    let moved = image.translated(50.0, -20.0);
+    let pdf = godpdf_core::replace_annotation(&pdf, 0, &placed[0].id, &moved).unwrap();
+    let placed = annotations(&pdf, 0).unwrap();
+    assert_eq!(placed.len(), 1);
+    assert_eq!(placed[0].annotation.as_ref(), Some(&moved));
+    assert!(godpdf_core::Picture::rgba(2, 2, &[0; 3]).is_err());
+}

@@ -30,12 +30,27 @@ pub enum Purpose {
     Interleave {
         tab: u64,
     },
+    /// A picture to put on `page` of a tab: from the clicked point (displayed points), or
+    /// fitted in the box dragged to `to`.
+    Picture {
+        tab: u64,
+        page: usize,
+        from: (f32, f32),
+        to: Option<(f32, f32)>,
+    },
 }
 
+/// Pictures that can be put on a page.
+const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
+
 impl Purpose {
-    /// Any kind of file may be picked, not only what opens as a PDF.
-    fn any_file(self) -> bool {
-        matches!(self, Self::Attach { .. })
+    /// The kinds of file offered: `None` for any file.
+    fn filter(self) -> Option<(&'static str, &'static [&'static str])> {
+        match self {
+            Self::Attach { .. } => None,
+            Self::Picture { .. } => Some(("Pictures", &PICTURES)),
+            _ => Some(("PDFs, images and text", &OPENABLE)),
+        }
     }
 }
 
@@ -102,7 +117,7 @@ pub use web::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{Inbox, OPENABLE, PickedFile, Purpose, Saved, part_name, pdf_name};
+    use super::{Inbox, PickedFile, Purpose, Saved, part_name, pdf_name};
     use std::ffi::OsString;
     use std::io::Write as _;
     use std::path::{Path, PathBuf};
@@ -132,10 +147,8 @@ mod native {
         _ctx: &egui::Context,
     ) -> Result<(), String> {
         let mut dialog = rfd::FileDialog::new();
-        if !purpose.any_file() {
-            dialog = dialog
-                .add_filter("PDFs, images and text", &OPENABLE)
-                .add_filter("PDF document", &["pdf"]);
+        if let Some((name, kinds)) = purpose.filter() {
+            dialog = dialog.add_filter(name, kinds);
         }
         let paths = if multiple {
             dialog.pick_files().unwrap_or_default()
@@ -286,7 +299,7 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use super::{Inbox, OPENABLE, PickedFile, Purpose, Saved, part_name, pdf_name};
+    use super::{Inbox, PickedFile, Purpose, Saved, part_name, pdf_name};
     use std::path::Path;
     use wasm_bindgen::JsCast as _;
 
@@ -304,8 +317,8 @@ mod web {
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let mut dialog = rfd::AsyncFileDialog::new();
-            if !purpose.any_file() {
-                dialog = dialog.add_filter("PDFs, images and text", &OPENABLE);
+            if let Some((name, kinds)) = purpose.filter() {
+                dialog = dialog.add_filter(name, kinds);
             }
             let handles = if multiple {
                 dialog.pick_files().await.unwrap_or_default()

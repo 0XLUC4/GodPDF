@@ -16,6 +16,7 @@ pub enum Kind {
     FreeText,
     Rectangle,
     Ink,
+    Picture,
 }
 
 impl Kind {
@@ -26,6 +27,7 @@ impl Kind {
             Self::FreeText => "Text box",
             Self::Rectangle => "Rectangle",
             Self::Ink => "Ink",
+            Self::Picture => "Picture",
         }
     }
 
@@ -36,6 +38,7 @@ impl Kind {
             Self::FreeText => icon::TEXT_T,
             Self::Rectangle => icon::RECTANGLE,
             Self::Ink => icon::PENCIL_SIMPLE,
+            Self::Picture => icon::IMAGE,
         }
     }
 }
@@ -55,6 +58,7 @@ impl Entry {
             Annotation::FreeText { text, .. } => (Kind::FreeText, text),
             Annotation::Square { .. } => (Kind::Rectangle, String::new()),
             Annotation::Ink { .. } => (Kind::Ink, String::new()),
+            Annotation::Image { .. } => (Kind::Picture, String::new()),
         };
         Self { page, kind, text }
     }

@@ -23,7 +23,7 @@ mod stamp;
 mod text;
 
 pub use annotate::{
-    Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING,
+    Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Picture,
     PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
     free_text_width, remove_annotation, replace_annotation, wrap_free_text, wrap_styled,
 };

@@ -177,16 +177,16 @@ impl Builder {
     }
 }
 
-struct JpegInfo {
-    width: u32,
-    height: u32,
-    components: u8,
+pub(crate) struct JpegInfo {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) components: u8,
     /// Quarter turns, clockwise, that show the photo upright: 0, 90, 180 or 270.
     rotation: i64,
 }
 
 /// Size and channels from the frame header of a JPEG, and the turn its EXIF data asks for.
-fn jpeg_info(jpeg: &[u8]) -> Option<JpegInfo> {
+pub(crate) fn jpeg_info(jpeg: &[u8]) -> Option<JpegInfo> {
     if !jpeg.starts_with(&[0xFF, 0xD8]) {
         return None;
     }

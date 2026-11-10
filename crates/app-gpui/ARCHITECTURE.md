@@ -27,7 +27,7 @@ reference for behavior: port from it.
 | `files.rs` | rfd file dialogs, read, atomic write. |
 | `widgets.rs` | `button`, `action_button`, `primary_button`, `separator` in the palette. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested). |
-| `panels/` | **Hook** (empty): left sidebar, right panels. |
+| `panels/` | Left sidebar (icon rail + one panel): page thumbnails with drag reorder and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`). `right` is still an empty hook. |
 | `dialogs/` | **Hook** (empty): modal dialogs, command palette. |
 
 Each hook module has a `register(cx)` (called from `app::register`) for its actions and key
@@ -50,7 +50,8 @@ same handler:
 
 Current bindings (same as egui): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W
 close tab, Ctrl+Tab / Ctrl+Shift+Tab switch tab, Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo,
-Ctrl+= / Ctrl++ zoom in, Ctrl+- zoom out, Ctrl+0 fit width, Ctrl+Q quit. Ctrl+wheel zooms
+Ctrl+= / Ctrl++ zoom in, Ctrl+- zoom out, Ctrl+0 fit width, Ctrl+Q quit, Ctrl+F find,
+Ctrl+D add bookmark, F3 / Shift+F3 next / previous search hit (Enter / Shift+Enter in the field). Ctrl+wheel zooms
 around the pointer.
 
 ## A tool
@@ -76,6 +77,11 @@ and right of the viewer in a flex row (give it a fixed width). Keep which panel 
 `tab.update(cx, |tab, cx| { tab.scroll_to_page(page); cx.notify() })`.
 Thumbnails: render with `godpdf_render::Document::thumbnail` on
 `cx.background_executor()`, as `DocTab::request` does for pages.
+
+Done in `panels/`: `PanelState` global (open panel, shared search field, tab shown) and
+`DocTab::panels` (`TabPanels`: thumbnail cache, search hits, outline + bookmark rename).
+Thumbnails use a `uniform_list` (only visible rows render; far ones are evicted). The viewer
+calls `panels::page_overlay` per page for the search marks.
 
 ## A dialog
 

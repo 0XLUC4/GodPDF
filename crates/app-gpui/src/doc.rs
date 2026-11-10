@@ -66,6 +66,8 @@ pub struct DocTab {
     pub thumb_drag: Option<crate::viewer::ThumbDrag>,
     /// Canvas tools state: selection, gesture, text being typed.
     pub canvas: crate::tools::Canvas,
+    /// Sidebar state of this document: thumbnails, search hits, bookmark being renamed.
+    pub panels: crate::panels::TabPanels,
 }
 
 impl DocTab {
@@ -83,6 +85,7 @@ impl DocTab {
             geometries: HashMap::new(),
             thumb_drag: None,
             canvas: Default::default(),
+            panels: Default::default(),
             view: ViewState {
                 zoom: 1.0,
                 scroll: (0.0, 0.0),
@@ -195,6 +198,11 @@ impl DocTab {
             self.reload();
             label
         })
+    }
+
+    /// The parsed document, `None` when it cannot be displayed.
+    pub fn renderer(&self) -> Option<Arc<Document>> {
+        self.render.clone()
     }
 
     /// Rotation and origin of `page`, parsed once per document revision.
@@ -357,7 +365,7 @@ impl DocTab {
 }
 
 /// hayro gives straight RGBA; gpui wants BGRA.
-fn to_render_image(bitmap: Bitmap) -> Result<RenderImage, String> {
+pub fn to_render_image(bitmap: Bitmap) -> Result<RenderImage, String> {
     let Bitmap {
         width,
         height,

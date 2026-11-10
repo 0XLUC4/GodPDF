@@ -220,7 +220,9 @@ radius 10, margin 4, shadow (0, 4) blur 16 black alpha 28; tool toggles 28 × 28
 `ARROW_U_UP_RIGHT`. Style card 6 px to its right; its colours are dots 18 (1 px `border`)
 in a 26 ring, 2 apart: 2 px `text` stroke with a 2 px gap on the current one, `border` on
 hover. Circles get a radius half a pixel under half their side (`circle_radius`): layout
-snaps sides to device pixels, and a radius over half the snapped side makes lumpy edges. Tool glyphs: Select `CURSOR`, Hand `HAND`,
+snaps sides to device pixels, and a radius over half the snapped side makes lumpy edges.
+Rectangle / ellipse cards add a Fill column ("Stroke" / "Fill" headings, 9 px `text_dim`)
+opening with No fill: a white dot with a red slash. Tool glyphs: Select `CURSOR`, Hand `HAND`,
 Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`, Rectangle `SQUARE`,
 Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
 GPUI already uses these glyphs (plus its own shapes); left to do: 28 px buttons (GPUI: 32),

@@ -110,13 +110,15 @@ fn fitted_maps_rectangles_and_ink_onto_the_new_box() {
         rect: from,
         color: BLUE,
         width: 1.0,
+        fill: None,
     };
     assert_eq!(
         square.fitted(from, to),
         Annotation::Square {
             rect: to,
             color: BLUE,
-            width: 1.0
+            width: 1.0,
+            fill: None,
         }
     );
     let ink = Annotation::Ink {
@@ -184,6 +186,7 @@ fn every_kind_parses_back() {
             rect: RECT,
             color: BLUE,
             width: 2.5,
+            fill: None,
         },
         Annotation::Ink {
             strokes: vec![vec![(10.0, 10.0), (50.0, 60.0)], vec![(5.0, 5.0)]],

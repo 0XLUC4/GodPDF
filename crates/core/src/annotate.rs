@@ -45,10 +45,12 @@ pub enum Annotation {
         font: Font,
         styles: Vec<CharStyle>,
     },
+    /// Stroked rectangle kept inside `rect`, painted inside with `fill` (/IC) when set.
     Square {
         rect: Rect,
         color: Color,
         width: f32,
+        fill: Option<Color>,
     },
     /// Each stroke is a polyline of (x, y) points.
     Ink {
@@ -61,11 +63,12 @@ pub enum Annotation {
         rect: Rect,
         picture: Picture,
     },
-    /// Stroked ellipse kept inside `rect`.
+    /// Stroked ellipse kept inside `rect`, painted inside with `fill` (/IC) when set.
     Circle {
         rect: Rect,
         color: Color,
         width: f32,
+        fill: Option<Color>,
     },
     /// Straight line from `start` to `end`, with an open arrow head at `end` when `arrow`.
     Line {
@@ -629,14 +632,24 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             },
             *rotation,
         ),
-        Annotation::Square { rect, color, width } => square(normalized(*rect)?, *color, *width),
+        Annotation::Square {
+            rect,
+            color,
+            width,
+            fill,
+        } => shape("Square", normalized(*rect)?, *color, *width, *fill),
         Annotation::Ink {
             strokes,
             color,
             width,
         } => ink(strokes, *color, *width),
         Annotation::Image { rect, .. } => Ok(image(normalized(*rect)?)),
-        Annotation::Circle { rect, color, width } => circle(normalized(*rect)?, *color, *width),
+        Annotation::Circle {
+            rect,
+            color,
+            width,
+            fill,
+        } => shape("Circle", normalized(*rect)?, *color, *width, *fill),
         Annotation::Line {
             start,
             end,
@@ -937,38 +950,39 @@ fn free_text(rect: Rect, look: FreeTextLook, rotation: i32) -> Result<Parts> {
     })
 }
 
-/// Stroked rectangle, kept inside `rect`.
-fn square(rect: Rect, color: Color, width: f32) -> Result<Parts> {
+/// Rectangle (`Square`) or ellipse (`Circle`) kept inside `rect`: stroked, and filled
+/// first when `fill` is set. A zero width with a fill paints the interior only.
+fn shape(
+    subtype: &'static str,
+    rect: Rect,
+    color: Color,
+    width: f32,
+    fill: Option<Color>,
+) -> Result<Parts> {
     check_width(width)?;
+    let inner = inset(rect, width / 2.0);
+    let path = if subtype == "Square" {
+        format!("{} re", rect_ops(inner))
+    } else {
+        ellipse_ops(inner)
+    };
+    let mut extra = dictionary! { "BS" => border_style(width) };
+    let mut appearance = format!("{} w {} RG", num(width), rgb(color));
+    let paint = match fill {
+        Some(fill) => {
+            extra.set("IC", color_array(fill));
+            appearance += &format!(" {} rg", rgb(fill));
+            if width > 0.0 { "B" } else { "f" }
+        }
+        None => "S",
+    };
+    appearance += &format!(" {path} {paint}");
     Ok(Parts {
-        subtype: "Square",
+        subtype,
         rect,
         color: Some(color),
-        extra: dictionary! { "BS" => border_style(width) },
-        appearance: format!(
-            "{} w {} RG {} re S",
-            num(width),
-            rgb(color),
-            rect_ops(inset(rect, width / 2.0))
-        ),
-        resources: Dictionary::new(),
-    })
-}
-
-/// Stroked ellipse, kept inside `rect`.
-fn circle(rect: Rect, color: Color, width: f32) -> Result<Parts> {
-    check_width(width)?;
-    Ok(Parts {
-        subtype: "Circle",
-        rect,
-        color: Some(color),
-        extra: dictionary! { "BS" => border_style(width) },
-        appearance: format!(
-            "{} w {} RG {} S",
-            num(width),
-            rgb(color),
-            ellipse_ops(inset(rect, width / 2.0))
-        ),
+        extra,
+        appearance,
         resources: Dictionary::new(),
     })
 }
@@ -1529,7 +1543,12 @@ pub(crate) fn read_rect(doc: &Document, dict: &Dictionary) -> Option<Rect> {
 }
 
 fn read_color(doc: &Document, dict: &Dictionary) -> Option<Color> {
-    match numbers(doc, dict, b"C")?.as_slice() {
+    read_rgb(doc, dict, b"C")
+}
+
+/// An RGB colour array under `key` (/C, /IC).
+fn read_rgb(doc: &Document, dict: &Dictionary, key: &[u8]) -> Option<Color> {
+    match numbers(doc, dict, key)?.as_slice() {
         &[r, g, b] => Some(Color { r, g, b }),
         _ => None,
     }
@@ -1608,6 +1627,7 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             rect: read_rect(doc, dict)?,
             color: read_color(doc, dict)?,
             width: read_width(doc, dict),
+            fill: read_rgb(doc, dict, b"IC"),
         }),
         b"Ink" => Some(Annotation::Ink {
             strokes: read_strokes(doc, dict)?,
@@ -1631,6 +1651,7 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             rect: read_rect(doc, dict)?,
             color: read_color(doc, dict)?,
             width: read_width(doc, dict),
+            fill: read_rgb(doc, dict, b"IC"),
         }),
         b"Line" => {
             let &[x0, y0, x1, y1] = numbers(doc, dict, b"L")?.as_slice() else {

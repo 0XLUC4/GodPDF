@@ -10,6 +10,7 @@ mod canvas;
 mod editor;
 mod fields;
 mod geom;
+mod picker;
 mod quickbar;
 mod richtext;
 mod sign;
@@ -28,6 +29,7 @@ use crate::geometry::PageRect;
 use crate::icons;
 
 pub use canvas::Canvas;
+pub use picker::parse_hex;
 pub use sign::place_in as place_signature;
 
 actions!(
@@ -440,6 +442,10 @@ pub struct ToolState {
     /// The document the viewer shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
     picture_card: Option<quickbar::PictureCard>,
+    /// The custom colour picker of the style card.
+    picker: picker::Picker,
+    /// Custom colours picked last (`0xRRGGBB`), newest first.
+    recent_colors: Vec<u32>,
 }
 
 impl Default for ToolState {
@@ -455,6 +461,8 @@ impl Default for ToolState {
             field_kind: NewField::Text,
             active: None,
             picture_card: None,
+            picker: picker::Picker::default(),
+            recent_colors: Vec::new(),
         }
     }
 }
@@ -463,6 +471,18 @@ impl Global for ToolState {}
 
 fn tool_state(cx: &mut App) -> &mut ToolState {
     cx.default_global::<ToolState>()
+}
+
+/// Custom colours picked last (`0xRRGGBB`, newest first), for the settings.
+pub fn recent_colors(cx: &App) -> Vec<u32> {
+    cx.try_global::<ToolState>()
+        .map_or_else(Vec::new, |state| state.recent_colors.clone())
+}
+
+/// Bring back the custom colours of the last session.
+pub fn set_recent_colors(mut colors: Vec<u32>, cx: &mut App) {
+    colors.truncate(picker::RECENT_MAX);
+    tool_state(cx).recent_colors = colors;
 }
 
 fn current_tool(cx: &App) -> Tool {
@@ -489,6 +509,7 @@ fn set_tool(tool: Tool, cx: &mut App) {
     with_active(cx, canvas::reset);
     let state = tool_state(cx);
     state.tool = tool;
+    state.picker.open = None;
     if tool.is_shape() {
         state.shape = tool;
     } else if Tool::MARKUP.contains(&tool) {

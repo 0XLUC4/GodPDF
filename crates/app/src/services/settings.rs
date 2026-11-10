@@ -21,6 +21,8 @@ pub struct Settings {
     /// Size when not maximized, in logical pixels; `None` when never seen so.
     pub size: Option<(f32, f32)>,
     pub maximized: bool,
+    /// Custom colours of the style card (`0xRRGGBB`), newest first.
+    pub recent_colors: Vec<u32>,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             recent: Vec::new(),
             size: None,
             maximized: false,
+            recent_colors: Vec::new(),
         }
     }
 }
@@ -79,6 +82,11 @@ fn to_json(settings: &Settings) -> String {
         "sidebar": settings.sidebar,
         "tools_panel": settings.tools_panel,
         "recent": recent,
+        "recent_colors": settings
+            .recent_colors
+            .iter()
+            .map(|&rgb| format!("#{rgb:06X}"))
+            .collect::<Vec<_>>(),
         "window": {
             "width": settings.size.map(|size| size.0),
             "height": settings.size.map(|size| size.1),
@@ -109,6 +117,16 @@ fn parse(text: &str) -> Settings {
                 .collect()
         })
         .unwrap_or_default();
+    let recent_colors = value
+        .get("recent_colors")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .filter_map(crate::tools::parse_hex)
+                .collect()
+        })
+        .unwrap_or_default();
     let window = value.get("window");
     let number = |key: &str| {
         window
@@ -131,6 +149,7 @@ fn parse(text: &str) -> Settings {
             .and_then(|window| window.get("maximized"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        recent_colors,
     }
 }
 
@@ -171,6 +190,7 @@ mod tests {
             recent: vec![PathBuf::from("C:/a.pdf"), PathBuf::from("/b c.pdf")],
             size: Some((1200.0, 800.0)),
             maximized: true,
+            recent_colors: vec![0x1F5FD6, 0x000000],
         };
         assert_eq!(parse(&to_json(&settings)), settings);
     }
@@ -185,5 +205,7 @@ mod tests {
         let missing = parse(r#"{"dark_mode": true, "window": {"width": 1000}}"#);
         assert!(missing.dark && missing.sidebar && missing.tools_panel);
         assert_eq!(missing.size, None);
+        let colors = parse(r##"{"recent_colors": ["#FF0000", "nope", 3, "0f0"]}"##);
+        assert_eq!(colors.recent_colors, [0xFF0000, 0x00FF00]);
     }
 }

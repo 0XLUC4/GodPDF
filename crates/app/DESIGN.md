@@ -214,19 +214,28 @@ File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
 
 ### Quick bar (canvas): `src/tools/quickbar.rs`
 
-Card 16 px from the canvas' top-left: fill `panel`, 1 px `border`,
-radius 10, margin 4, shadow (0, 4) blur 16 black alpha 28; tool toggles 28 × 28 (glyph 16)
-2 px apart, `selected` fill when on; divider 7 high; undo `ARROW_U_UP_LEFT` / redo
-`ARROW_U_UP_RIGHT`. Style card 6 px to its right; its colours are dots 18 (1 px `border`)
-in a 26 ring, 2 apart: 2 px `text` stroke with a 2 px gap on the current one, `border` on
-hover. Circles get a radius half a pixel under half their side (`circle_radius`): layout
-snaps sides to device pixels, and a radius over half the snapped side makes lumpy edges.
-Rectangle / ellipse cards add a Fill column ("Stroke" / "Fill" headings, 9 px `text_dim`)
-opening with No fill: a white dot with a red slash. Tool glyphs: Select `CURSOR`, Hand `HAND`,
-Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`, Rectangle `SQUARE`,
-Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
-GPUI already uses these glyphs (plus its own shapes); left to do: 28 px buttons (GPUI: 32),
-card radius / margin / shadow.
+Bar 12 px from the viewer's top-left (cards never pass the viewer's height less 12 above and
+below: they scroll): fill `panel`, 1 px `border`, radius 12, padding 6, shadow (0, 4) blur 16
+black alpha 28; tool toggles 32 × 32 (glyph 18, radius 6) 4 px apart, hover fill `hover`, the
+active one tinted blue (`theme::BLUE` glyph on blue at 16 %); groups Select Hand | Text Note
+Highlight Ink Rectangle Picture Stamp | Redact Eraser | undo `ARROW_U_UP_LEFT` / redo
+`ARROW_U_UP_RIGHT`, split by 1 px dividers 20 wide. Tooltips carry the shortcut.
+Style card 8 px to its right, top-aligned, same card; columns one button wide, 4 apart, each
+under a 9 px `text_dim` heading 14 high (Type, Colour / Stroke, Fill, Size / Width). Colours
+are dots 18 (1 px `border`) in a 26 ring, 2 apart: 2 px `text` stroke with a 2 px gap on the
+current one, `border` on hover. Circles get a radius half a pixel under half their side
+(`circle_radius`): layout snaps sides to device pixels, and a radius over half the snapped
+side makes lumpy edges. The Fill column opens with No fill: a white dot with a red slash.
+Each colour column ends with the custom swatch: `PLUS` 12 on a `surface` dot, or the current
+colour when it is none of the presets (ringed as current). It opens the picker card
+(`tools/picker.rs`) 8 px right of the style card (in its place when the viewer is too narrow
+for both): padding 10, gap 10, title + `X`; saturation / value square 192 × 128 and hue slider
+192 × 12 (six gradient segments of 32), radius 6, knobs 14 with a 2 px white ring; preview
+chip 40 × 26 and a hex field (`#RRGGBB`, `RRGGBB`, `#RGB`); "Recent" (9 dim) and the last 6
+custom colours (settings `recent_colors`). A colour is applied on release, Enter or a click
+(one undo step). Text cards (stamp, redact, picture) pad 10. Tool glyphs: Select `CURSOR`,
+Hand `HAND`, Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`,
+Rectangle `SQUARE`, Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
 
 ### Not covered yet
 

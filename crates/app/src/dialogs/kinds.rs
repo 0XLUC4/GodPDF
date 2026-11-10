@@ -182,7 +182,7 @@ pub fn build(
         form::text(label, value.to_owned(), hint.to_owned(), window, cx)
     };
     let fields = match kind {
-        Kind::GoToPage => vec![text("Page", "", &format!("1–{count}"))],
+        Kind::GoToPage => vec![text("Page", "", &format!("1 to {count}"))],
         Kind::NumberPages => vec![
             form::choice("Position", Place::ALL.map(Place::label), 0),
             form::choice("Format", NUMBER_FORMATS.map(number_sample), 0),

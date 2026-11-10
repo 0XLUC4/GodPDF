@@ -460,7 +460,7 @@ fn row(
     let hover = palette.hover;
     let number = item
         .page
-        .map_or_else(|| "–".to_owned(), |page| (page + 1).to_string());
+        .map_or_else(|| "-".to_owned(), |page| (page + 1).to_string());
     let (click_tab, path_owned) = (tab.clone(), path.to_vec());
     let (title, page) = (item.title.clone(), item.page);
     let (menu_tab, menu_path, menu_item) = (tab.clone(), path.to_vec(), item.clone());

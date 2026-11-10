@@ -164,7 +164,9 @@ impl GodPdfApp {
             } else {
                 tab.session.path.clone()
             };
-            let result = files::save_pdf(&tab.session.name, path.as_deref(), tab.session.bytes());
+            // A password set in the Protect dialog encrypts what is written, not the session.
+            let bytes = dialogs::bytes_to_save(cx.entity_id(), tab.session.bytes(), cx)?;
+            let result = files::save_pdf(&tab.session.name, path.as_deref(), &bytes);
             if let Ok(Some(path)) = &result {
                 if let Some(name) = path.file_name() {
                     tab.session.name = name.to_string_lossy().into_owned();
@@ -379,6 +381,7 @@ impl GodPdfApp {
                     .child(crate::APP_NAME),
             )
             .child(action_button("open", "Open", Open, palette))
+            .child(dialogs::menus(palette))
             .children(doc_buttons)
             .child(div().flex_1())
             .child(action_button(
@@ -558,7 +561,7 @@ impl Render for GodPdfApp {
                     .child(body)
                     .children(panels::right(active.as_ref(), window, cx)),
             )
-            .children(dialogs::overlay(window, cx))
+            .children(dialogs::overlay(cx.weak_entity(), active.as_ref(), window, cx))
             .children(toasts::render(cx))
     }
 }

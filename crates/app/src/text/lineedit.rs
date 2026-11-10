@@ -1,6 +1,7 @@
-//! Changing a line the page draws, where it is:
-//! each word keeps the style (bold, slanted, underlined) and the colour the page had for it;
-//! the keys or the small bar above the line change those of the selected words.
+//! Changing a run of text the page draws (a line, or a cell of a table on it), where it is.
+//! Text only: what changed is written again in place, everything else on the page stays as
+//! it was (core `replace_run`). Bold / slanted / underlined from the keys or the small bar
+//! above the run rewrite it word by word in a standard font (core `replace_styled`).
 //!
 //! Enter or a click away writes it, Esc drops it.
 
@@ -38,6 +39,8 @@ pub struct LineEdit {
     marked: String,
     /// Picked on the bar with nothing selected: the style and colour of what is typed next.
     typing: Option<(CharStyle, usize)>,
+    /// A style was changed on the bar or with the keys: the run is written word by word.
+    restyled: bool,
     font: Font,
     size: f32,
     colors: Vec<Hsla>,
@@ -113,9 +116,6 @@ pub(crate) fn reconcile<T: Copy + Default>(
     marks.extend(kept);
 }
 
-/// Each letter of a line with the middle of its glyph, displayed points.
-type Letters = Vec<(char, (f32, f32))>;
-
 fn font_family(font: Font) -> &'static str {
     match font {
         Font::Helvetica => "Arial",
@@ -124,13 +124,11 @@ fn font_family(font: Font) -> &'static str {
     }
 }
 
-/// A line of `page` was clicked: open it for typing. `band` in displayed points, `letters`
-/// as [`sel::spelled`] gives them.
+/// A run of `page` was clicked: open it for typing. `band` in displayed points.
 pub fn open(
     tab: &mut DocTab,
     page: usize,
     band: [f32; 4],
-    letters: Letters,
     window: &mut Window,
     cx: &mut Context<DocTab>,
 ) {
@@ -146,23 +144,29 @@ pub fn open(
         Err(err) => return fail(err, cx),
     };
     let area = geometry::to_pdf_rect(&geom, size, (band[0], band[1]), (band[2], band[3]));
-    let look: LineLook = match guarded(|| godpdf_core::line_look(tab.session.bytes(), page, area)) {
-        Ok(look) => look,
+    // The letters as the fonts of the page say them (the viewer may only guess some).
+    let letters = match guarded(|| godpdf_core::run_text(tab.session.bytes(), page, area)) {
+        Ok(letters) => letters,
         Err(err) => return fail(err.to_string(), cx),
     };
+    // Only to show the field like the page; a run whose look cannot be read still opens.
+    let look: Option<LineLook> =
+        guarded(|| godpdf_core::line_look(tab.session.bytes(), page, area)).ok();
     // Each letter is as the page draws it where it is.
     let marks: Vec<(char, CharStyle, usize)> = letters
         .into_iter()
-        .map(|(letter, at)| {
-            let (x, _) = geometry::to_pdf(&geom, size, at);
-            (letter, look.style_at(x), look.ink_at(x))
+        .map(|(letter, x)| {
+            let (style, ink) = look
+                .as_ref()
+                .map_or_else(Default::default, |look| (look.style_at(x), look.ink_at(x)));
+            (letter, style, ink)
         })
         .collect();
     let text: String = marks.iter().map(|(letter, ..)| *letter).collect();
     let styles: Vec<CharStyle> = marks.iter().map(|(_, style, _)| *style).collect();
     let inks: Vec<usize> = marks.iter().map(|(.., ink)| *ink).collect();
-    let colors = look
-        .inks
+    let inks_of_look = look.as_ref().map_or(&[None][..], |look| &look.inks[..]);
+    let colors = inks_of_look
         .iter()
         .map(|ink| {
             ink.map_or(gpui::black(), |color| {
@@ -213,27 +217,32 @@ pub fn open(
         styles,
         inks,
         typing: None,
-        font: look.font,
-        size: look.size,
+        restyled: false,
+        font: look.as_ref().map_or(Font::Times, |look| look.font),
+        size: look.as_ref().map_or(band[3] - band[1], |look| look.size),
         colors,
         _events,
     });
 }
 
-/// Write the line when it changed.
+/// Write the run when it changed: nothing (and no undo step) when it did not.
 pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     let Some(edit) = tab.text.line.take().filter(LineEdit::changed) else {
         return;
     };
     let result = tab.apply("Edit text", |pdf| {
-        godpdf_core::replace_styled(
-            pdf,
-            edit.page,
-            edit.area,
-            &edit.marked,
-            &edit.styles,
-            &edit.inks,
-        )
+        if edit.restyled {
+            godpdf_core::replace_styled(
+                pdf,
+                edit.page,
+                edit.area,
+                &edit.marked,
+                &edit.styles,
+                &edit.inks,
+            )
+        } else {
+            godpdf_core::replace_run(pdf, edit.page, edit.area, &edit.marked)
+        }
     });
     if let Err(err) = result {
         toasts::error(cx, format!("Cannot edit this text: {err}"));
@@ -246,6 +255,7 @@ fn toggle(tab: &mut DocTab, format: Format, window: &mut Window, cx: &mut Contex
         return;
     };
     let range = line.selection(cx);
+    line.restyled = true;
     if range.is_empty() {
         let mut typing = line.typing.unwrap_or(line.mark_before(range.start));
         let on = !format.is_on(typing.0);
@@ -392,23 +402,17 @@ pub fn render(
         .into_any_element()
 }
 
-/// The line under the pointer at `point` (displayed points): its band and its letters.
-pub fn line_at(
-    chars: &[godpdf_render::TextChar],
-    point: (f32, f32),
-) -> Option<([f32; 4], Letters)> {
-    let line = sel::line_of(chars, sel::char_near(chars, point)?);
-    let band = sel::bands(chars, line.clone())
-        .into_iter()
-        .reduce(|all, band| {
-            [
-                all[0].min(band[0]),
-                all[1].min(band[1]),
-                all[2].max(band[2]),
-                all[3].max(band[3]),
-            ]
-        })?;
-    Some((band, sel::spelled(chars, line)))
+/// The band (displayed points) of the run of text under the pointer at `point`.
+pub fn line_at(chars: &[godpdf_render::TextChar], point: (f32, f32)) -> Option<[f32; 4]> {
+    let run = sel::run_of(chars, sel::char_near(chars, point)?);
+    sel::bands(chars, run).into_iter().reduce(|all, band| {
+        [
+            all[0].min(band[0]),
+            all[1].min(band[1]),
+            all[2].max(band[2]),
+            all[3].max(band[3]),
+        ]
+    })
 }
 
 #[cfg(test)]

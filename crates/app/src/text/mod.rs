@@ -501,9 +501,9 @@ fn edit_down(
         return;
     };
     let chars = chars(tab, page);
-    if let Some((band, letters)) = lineedit::line_at(&chars, point) {
+    if let Some(band) = lineedit::line_at(&chars, point) {
         tab.text.hover = None;
-        lineedit::open(tab, page, band, letters, window, cx);
+        lineedit::open(tab, page, band, window, cx);
     }
 }
 
@@ -511,7 +511,7 @@ fn edit_hover(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Co
     let hover = match page_point(tab, page, event.position) {
         Some(point) if tab.text.line.is_none() => {
             let chars = chars(tab, page);
-            lineedit::line_at(&chars, point).map(|(band, _)| (page, band))
+            lineedit::line_at(&chars, point).map(|band| (page, band))
         }
         _ => None,
     };

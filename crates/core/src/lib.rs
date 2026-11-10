@@ -20,6 +20,7 @@ mod organize;
 mod pdf;
 mod redact;
 mod retype;
+mod runedit;
 mod security;
 mod session;
 mod stamp;
@@ -57,6 +58,7 @@ pub use organize::{
 };
 pub use redact::{erase_content, redact, redact_with};
 pub use retype::{LineLook, line_look, replace_styled, replace_text};
+pub use runedit::{replace_run, run_text};
 pub use security::{decrypt, encrypt, is_encrypted};
 pub use session::Session;
 pub use stamp::{PageNumbers, Place, Watermark, number_pages, remove_links, watermark};

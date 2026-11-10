@@ -37,23 +37,23 @@ actions!(
 /// Key context of the root view; bindings with `None` context apply everywhere.
 const CONTEXT: &str = "GodPdf";
 
-/// Shortcuts of the egui app (`crates/app/src/commands.rs`). `secondary` = Ctrl (Cmd on macOS).
+/// Shortcuts of the egui app (`crates/app/src/commands.rs`). `secondary!` = Ctrl (Cmd on macOS).
 pub fn register(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("secondary-o", Open, None),
-        KeyBinding::new("secondary-s", Save, None),
-        KeyBinding::new("secondary-shift-s", SaveAs, None),
-        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new(secondary!("o"), Open, None),
+        KeyBinding::new(secondary!("s"), Save, None),
+        KeyBinding::new(secondary!("shift-s"), SaveAs, None),
+        KeyBinding::new(secondary!("w"), CloseTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("secondary-z", Undo, None),
-        KeyBinding::new("secondary-y", Redo, None),
-        KeyBinding::new("secondary-shift-z", Redo, None),
-        KeyBinding::new("secondary-=", ZoomIn, None),
-        KeyBinding::new("secondary-+", ZoomIn, None),
-        KeyBinding::new("secondary--", ZoomOut, None),
-        KeyBinding::new("secondary-0", FitWidth, None),
-        KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new(secondary!("z"), Undo, None),
+        KeyBinding::new(secondary!("y"), Redo, None),
+        KeyBinding::new(secondary!("shift-z"), Redo, None),
+        KeyBinding::new(secondary!("="), ZoomIn, None),
+        KeyBinding::new(secondary!("+"), ZoomIn, None),
+        KeyBinding::new(secondary!("-"), ZoomOut, None),
+        KeyBinding::new(secondary!("0"), FitWidth, None),
+        KeyBinding::new(secondary!("q"), Quit, None),
     ]);
     tools::register(cx);
     panels::register(cx);
@@ -561,7 +561,12 @@ impl Render for GodPdfApp {
                     .child(body)
                     .children(panels::right(active.as_ref(), window, cx)),
             )
-            .children(dialogs::overlay(cx.weak_entity(), active.as_ref(), window, cx))
+            .children(dialogs::overlay(
+                cx.weak_entity(),
+                active.as_ref(),
+                window,
+                cx,
+            ))
             .children(toasts::render(cx))
     }
 }

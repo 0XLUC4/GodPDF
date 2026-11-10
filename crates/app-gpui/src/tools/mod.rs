@@ -457,9 +457,9 @@ pub fn register(cx: &mut App) {
         KeyBinding::new("delete", DeleteSelection, keys),
         KeyBinding::new("backspace", DeleteSelection, keys),
         KeyBinding::new("escape", Deselect, keys),
-        KeyBinding::new("secondary-b", ToggleBold, Some(TEXT_BOX)),
-        KeyBinding::new("secondary-i", ToggleItalic, Some(TEXT_BOX)),
-        KeyBinding::new("secondary-u", ToggleUnderline, Some(TEXT_BOX)),
+        KeyBinding::new(secondary!("b"), ToggleBold, Some(TEXT_BOX)),
+        KeyBinding::new(secondary!("i"), ToggleItalic, Some(TEXT_BOX)),
+        KeyBinding::new(secondary!("u"), ToggleUnderline, Some(TEXT_BOX)),
     ]);
     cx.on_action(|_: &SelectTool, cx| set_tool(Tool::Select, cx));
     cx.on_action(|_: &HandTool, cx| set_tool(Tool::Hand, cx));

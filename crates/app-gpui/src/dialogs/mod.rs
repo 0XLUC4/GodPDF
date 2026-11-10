@@ -134,9 +134,9 @@ pub fn register(cx: &mut App) {
     cx.set_global(Dialogs::default());
     // In a text field, "Dialog > Input" outranks the field's own Enter / Esc / arrows.
     cx.bind_keys([
-        KeyBinding::new("secondary-k", CommandPalette, None),
-        KeyBinding::new("secondary-p", Print, None),
-        KeyBinding::new("secondary-g", GoToPage, None),
+        KeyBinding::new(secondary!("k"), CommandPalette, None),
+        KeyBinding::new(secondary!("p"), Print, None),
+        KeyBinding::new(secondary!("g"), GoToPage, None),
         KeyBinding::new("enter", DialogConfirm, Some("GodPdfDialog > Input")),
         KeyBinding::new("escape", DialogCancel, Some("GodPdfDialog")),
         KeyBinding::new("escape", DialogCancel, Some("GodPdfDialog > Input")),

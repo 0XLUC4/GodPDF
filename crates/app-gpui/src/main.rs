@@ -4,6 +4,18 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+/// Ctrl on Windows/Linux, Cmd on macOS, as a key binding prefix:
+/// `KeyBinding::new` cannot resolve gpui's `secondary-` and panics on it.
+macro_rules! secondary {
+    ($keys:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $keys)
+        } else {
+            concat!("ctrl-", $keys)
+        }
+    };
+}
+
 mod app;
 mod dialogs;
 // Edit, PDF-space and palette API not used yet: it is for the tools and panels to come.
@@ -63,4 +75,19 @@ fn main() {
             })
             .detach();
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn secondary_bindings_parse() {
+        for keys in [
+            secondary!("o"),
+            secondary!("shift-s"),
+            secondary!("="),
+            secondary!("-"),
+        ] {
+            gpui::Keystroke::parse(keys).unwrap();
+        }
+    }
 }

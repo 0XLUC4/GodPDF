@@ -123,8 +123,8 @@ fn with_active(cx: &mut App, update: impl FnOnce(&mut DocTab, &mut Context<DocTa
 pub fn register(cx: &mut App) {
     cx.set_global(PanelState::default());
     cx.bind_keys([
-        KeyBinding::new("secondary-f", Find, None),
-        KeyBinding::new("secondary-d", AddBookmark, None),
+        KeyBinding::new(secondary!("f"), Find, None),
+        KeyBinding::new(secondary!("d"), AddBookmark, None),
         KeyBinding::new("f3", FindNext, None),
         KeyBinding::new("shift-f3", FindPrevious, None),
     ]);

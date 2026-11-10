@@ -110,16 +110,23 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
                 Some(common_style(&styles, text.chars().count())),
             ),
             Some(
-                Annotation::Square { color, width, .. } | Annotation::Ink { color, width, .. },
+                Annotation::Square { color, width, .. }
+                | Annotation::Circle { color, width, .. }
+                | Annotation::Line { color, width, .. }
+                | Annotation::Ink { color, width, .. },
             ) => Target::Selected(
                 Kind::Stroke,
                 style(color, width, 14.0, Font::Helvetica),
                 None,
             ),
-            Some(Annotation::Highlight { color, .. }) => {
-                Target::Selected(Kind::Fill, style(color, 2.0, 14.0, Font::Helvetica), None)
+            Some(
+                Annotation::Highlight { color, .. }
+                | Annotation::Underline { color, .. }
+                | Annotation::StrikeOut { color, .. },
+            ) => Target::Selected(Kind::Fill, style(color, 2.0, 14.0, Font::Helvetica), None),
+            Some(Annotation::Note { .. } | Annotation::Stamp { .. }) | None => {
+                Target::Tool(current_tool(cx))
             }
-            Some(Annotation::Note { .. }) | None => Target::Tool(current_tool(cx)),
         },
         None => Target::Tool(current_tool(cx)),
     }
@@ -181,6 +188,22 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
             color,
             width: style.width,
         },
+        Annotation::Circle { rect, .. } => Annotation::Circle {
+            rect,
+            color,
+            width: style.width,
+        },
+        Annotation::Line {
+            start, end, arrow, ..
+        } => Annotation::Line {
+            start,
+            end,
+            color,
+            width: style.width,
+            arrow,
+        },
+        Annotation::Underline { rect, .. } => Annotation::Underline { rect, color },
+        Annotation::StrikeOut { rect, .. } => Annotation::StrikeOut { rect, color },
         Annotation::Ink { strokes, .. } => Annotation::Ink {
             strokes,
             color,
@@ -207,7 +230,9 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
                 styles,
             }
         }
-        other @ (Annotation::Note { .. } | Annotation::Image { .. }) => other,
+        other @ (Annotation::Note { .. } | Annotation::Image { .. } | Annotation::Stamp { .. }) => {
+            other
+        }
     }
 }
 

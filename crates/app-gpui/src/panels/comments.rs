@@ -107,9 +107,7 @@ fn request(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     }
     tab.panels.comments.0 = Some((generation, None));
     let (bytes, pages) = (tab.session.bytes().to_vec(), tab.page_count());
-    let found = cx
-        .background_executor()
-        .spawn(async move { collect(&bytes, pages) });
+    let found = crate::services::jobs::background(cx, async move { collect(&bytes, pages) });
     cx.spawn(async move |this, cx| {
         let result = found.await;
         let _ = this.update(cx, |tab, cx| {

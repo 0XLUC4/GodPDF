@@ -18,3 +18,9 @@ gpui = { package = "gpui-kit", version = "0.9.1" }
 rfd = "0.17"
 # Same version gpui uses, to build its page bitmaps (`image::Frame`) and decode pictures.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Updates: GitHub releases (same as the egui app), settings as JSON.
+ureq = "3"
+serde_json = "1"
+
+[build-dependencies]
+winresource = "0.1"

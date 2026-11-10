@@ -2518,6 +2518,9 @@ dependencies = [
  "gpui-kit",
  "image",
  "rfd",
+ "serde_json",
+ "ureq",
+ "winresource",
 ]
 
 [[package]]

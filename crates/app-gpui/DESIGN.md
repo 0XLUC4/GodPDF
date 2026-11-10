@@ -100,7 +100,6 @@ egui: `GodApp::tab_row`, `tab_shape`, `centered_glyph`, `doc_tab` (`app/shell.rs
 - Right, left to right: `ARROW_CIRCLE_UP` "Updates" (blue dot r 4 at top-right −6/+6 when an
   update is out, tooltip "Update available: <tag>"), `QUESTION` "About GodPDF", `MOON` "Dark
   mode" / `SUN` "Light mode" (28 × 28 icon buttons).
-- Left to do: Updates / About actions (their egui dialogs are not ported) and the update dot.
 
 ### Header: `src/shell/header.rs`
 
@@ -125,8 +124,8 @@ egui: `GodApp::header_row`, `mode_tab`, `search_field`.
   right (only when wider than 200). Text cursor; tooltip "Command palette (Ctrl+K)"; click
   opens the palette.
 - Menu entries: `header.rs::look` gives each command its egui icon and shortcut text (by label).
-- Left to do: spinner (no job list), hide the shortcut under 200 px, Preferences, About,
-  View > Side by side / Toggle sidebar / Organize pages.
+- Left to do: hide the shortcut under 200 px, View > Side by side / Toggle sidebar /
+  Organize pages.
 
 ### Left tools panel: `src/shell/leftpanel.rs`
 
@@ -192,8 +191,8 @@ three buttons 170 × 44 radius 10, text 16, 8 apart: "Open PDF" `FOLDER_OPEN` (f
 text `on_accent`), "New PDF" `FILE_PLUS` and "Merge PDFs" `STACK` (1 px `accent` stroke).
 Then, with recent files: 26 px, "RECENT" (small, strong, `accent_text`) and one frameless row
 per file (`FILE_PDF` + name, tooltip the path).
-Recent files: `Shell::recent` (newest first, 8), kept for the run only (no settings storage
-yet); also Menu > File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
+Recent files: `Shell::recent` (newest first, 8), kept in `services::settings`; also Menu >
+File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
 
 ### Quick bar (canvas): `src/tools/quickbar.rs`
 

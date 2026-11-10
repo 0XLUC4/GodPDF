@@ -17,7 +17,7 @@ mod header;
 mod leftpanel;
 mod rail;
 mod tabrow;
-mod welcome;
+pub mod welcome;
 
 use std::path::PathBuf;
 
@@ -32,7 +32,7 @@ use crate::theme::Palette;
 actions!(godpdf, [ToggleToolsPanel, FitPage, ReopenTab]);
 
 /// Most recent files kept (egui `MAX_RECENT`).
-const MAX_RECENT: usize = 8;
+pub const MAX_RECENT: usize = 8;
 
 /// Ctrl+Shift+T reopens the last closed tab (egui `Cmd::ReopenTab`).
 pub fn register(cx: &mut App) {
@@ -104,7 +104,6 @@ pub struct Shell {
     /// Files of the tabs closed, the last one last: what "Reopen closed tab" opens.
     pub closed: Vec<PathBuf>,
     /// Files opened, newest first (welcome screen, Menu > File > Open recent).
-    /// shortcut: kept for this run only, persist it once GPUI has settings storage.
     pub recent: Vec<PathBuf>,
 }
 

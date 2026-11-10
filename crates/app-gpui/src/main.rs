@@ -27,6 +27,7 @@ mod fonts;
 mod geometry;
 mod icons;
 mod panels;
+mod services;
 mod shell;
 #[allow(dead_code)]
 mod theme;
@@ -47,12 +48,20 @@ fn main() {
         .run(move |cx: &mut App| {
             gpui::init(cx);
             fonts::load(cx);
-            theme::set_dark(false, cx);
+            let remembered = services::settings::load();
+            theme::set_dark(remembered.dark, cx);
             app::register(cx);
-            let bounds = Bounds::centered(None, size(px(1280.), px(860.)), cx);
+            let (width, height) = remembered.size.unwrap_or((1280., 860.));
+            let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+            let window_bounds = if remembered.maximized {
+                WindowBounds::Maximized(bounds)
+            } else {
+                WindowBounds::Windowed(bounds)
+            };
+            let (min_width, min_height) = services::settings::MIN_SIZE;
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(640.), px(420.))),
+                window_bounds: Some(window_bounds),
+                window_min_size: Some(size(px(min_width), px(min_height))),
                 ..Default::default()
             };
             let opened = gpui::open_window(options, cx, |window, cx| {

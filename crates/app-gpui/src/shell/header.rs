@@ -79,8 +79,7 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         }
     });
 
-    // TODO(header): spinner "Working…" left of the pill while a background job runs (GPUI
-    // has no job list yet); the "Ctrl+K" hint shows even when the pill is under 200 px.
+    // TODO(header): the "Ctrl+K" hint shows even when the pill is under 200 px.
     div()
         .flex_none()
         .flex()
@@ -102,6 +101,7 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
                 .flex()
                 .items_center()
                 .gap(px(6.))
+                .children(crate::services::working(palette, cx))
                 .child(search_field(palette))
                 .child(div().w(px(0.)))
                 .children(buttons),
@@ -307,14 +307,22 @@ impl MenuState {
                     };
                     menu = entry_item(menu, glyph, text, keys, action, label.is_some(), cx);
                 }
-                // TODO(header): egui has "Preferences…" (GEAR) here; GPUI has no preferences.
                 let palette = Box::new(CommandPalette);
-                entry_item(
+                let menu = entry_item(
                     menu.separator(),
                     icons::COMMAND,
                     "Command palette".into(),
                     "Ctrl+K",
                     palette,
+                    true,
+                    cx,
+                );
+                entry_item(
+                    menu,
+                    icons::GEAR,
+                    "Preferences…".into(),
+                    "",
+                    Box::new(crate::services::Preferences),
                     true,
                     cx,
                 )
@@ -351,15 +359,8 @@ impl MenuState {
                     })
                 })
             })
-            // TODO(header): egui "About GodPDF" opens a dialog that has no GPUI port yet.
-            .submenu("Help", window, cx, |menu, _, cx| {
-                let palette = Palette::of(cx);
-                menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        entry(icons::QUESTION, "About GodPDF".into(), "", false, &palette)
-                    })
-                    .disabled(true),
-                )
+            .submenu("Help", window, cx, move |menu, _, cx| {
+                command(menu, "About GodPDF", has_doc, cx)
             })
     }
 }
@@ -478,6 +479,8 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Remove all comments" => (icons::ERASER, ""),
         "Flatten comments and forms" => (icons::STACK_SIMPLE, ""),
         "Compress" => (icons::ARROWS_IN, ""),
+        "About GodPDF" => (icons::QUESTION, ""),
+        "Updates" => (icons::ARROW_CIRCLE_UP, ""),
         _ => (icons::FILE, ""),
     }
 }

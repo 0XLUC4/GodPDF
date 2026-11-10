@@ -86,7 +86,7 @@ fn run(forward: bool, cx: &mut App) {
         }
         search.busy = true;
         let bytes = tab.session.bytes().to_vec();
-        let found = cx.background_executor().spawn(async move {
+        let found = crate::services::jobs::background(cx, async move {
             guarded(|| godpdf_core::search(&bytes, &query)).map(|hits| (query, hits))
         });
         cx.spawn(async move |this, cx| {

@@ -137,6 +137,8 @@ fn look(command: &Command) -> (&'static str, u32) {
         "Page colours…" => PALETTE,
         "Flatten comments and forms" => STACK_SIMPLE,
         "Compress" => ARROWS_IN,
+        "About GodPDF" => QUESTION,
+        "Updates" => ARROW_CIRCLE_UP,
         _ => COMMAND,
     };
     let tint = match (command.label, command.group) {
@@ -146,7 +148,7 @@ fn look(command: &Command) -> (&'static str, u32) {
         (_, Group::Organize) => GREEN,
         (_, Group::Combine) => PURPLE,
         (_, Group::Comment) => AMBER,
-        (_, Group::Protect | Group::Edit) => BLUE,
+        (_, Group::Protect | Group::Edit | Group::Help) => BLUE,
         (_, Group::File | Group::View) => TEAL,
         (_, Group::Document) => PINK,
     };

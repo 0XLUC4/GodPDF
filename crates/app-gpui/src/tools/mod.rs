@@ -8,21 +8,24 @@
 
 mod canvas;
 mod editor;
+mod fields;
 mod geom;
 mod quickbar;
+mod sign;
 mod stamp;
 
 use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
 
-use godpdf_core::{CharStyle, Color, Font, StampLabel};
+use godpdf_core::{CharStyle, Color, Font, NewField, StampLabel};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
 use crate::icons;
 
 pub use canvas::Canvas;
+pub use sign::place_in as place_signature;
 
 actions!(
     godpdf,
@@ -43,6 +46,8 @@ actions!(
         RedactTool,
         PictureTool,
         EraserTool,
+        SignTool,
+        FieldTool,
         DeleteSelection,
         Deselect,
         ToggleBold,
@@ -78,6 +83,10 @@ pub enum Tool {
     /// Mark areas to redact; nothing is removed until "Apply redactions".
     Redact,
     Picture,
+    /// Chosen from the signature panel, not shown in the bar.
+    Sign,
+    /// Chosen from the form panel, not shown in the bar.
+    Field,
     /// Click or drag over comments to remove them.
     Eraser,
 }
@@ -133,6 +142,8 @@ impl Tool {
             Self::Stamp => icons::STAMP,
             Self::Redact => icons::EYE_SLASH,
             Self::Picture => icons::IMAGE,
+            Self::Sign => icons::SIGNATURE,
+            Self::Field => icons::TEXTBOX,
             Self::Eraser => icons::ERASER,
         }
     }
@@ -154,6 +165,8 @@ impl Tool {
             Self::Stamp => "Stamp",
             Self::Redact => "Redact",
             Self::Picture => "Picture",
+            Self::Sign => "Sign",
+            Self::Field => "Form field",
             Self::Eraser => "Eraser",
         }
     }
@@ -176,7 +189,7 @@ impl Tool {
             Self::Redact => Some("X"),
             Self::Picture => Some("I"),
             Self::Eraser => Some("E"),
-            Self::Highlight => None,
+            Self::Highlight | Self::Sign | Self::Field => None,
         }
     }
 
@@ -197,6 +210,8 @@ impl Tool {
             Self::Stamp => Box::new(StampTool),
             Self::Redact => Box::new(RedactTool),
             Self::Picture => Box::new(PictureTool),
+            Self::Sign => Box::new(SignTool),
+            Self::Field => Box::new(FieldTool),
             Self::Eraser => Box::new(EraserTool),
         }
     }
@@ -224,6 +239,8 @@ impl Tool {
             Self::StrikeOut => "Drag over the text to strike through",
             Self::Stamp => "Pick a stamp, then click where it goes",
             Self::Redact => "Drag over what to remove; click a mark to drop it",
+            Self::Sign => "Click where your signature goes",
+            Self::Field => "Drag the box of the field, or click for one of standard size",
             Self::Hand => "Drag to move around",
             Self::Eraser => "Click or drag over comments to erase them",
             Self::Select => "Click a comment to select it, drag to move it",
@@ -389,6 +406,8 @@ pub struct ToolState {
     /// The stamp the stamp tool places, and whether it gets today's date.
     pub stamp: StampLabel,
     pub stamp_date: bool,
+    /// The kind of field the field tool adds (picked in the form panel).
+    pub field_kind: NewField,
     /// The document the viewer shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
     picture_card: Option<quickbar::PictureCard>,
@@ -404,6 +423,7 @@ impl Default for ToolState {
             markup: Tool::Highlight,
             stamp: StampLabel::Approved,
             stamp_date: false,
+            field_kind: NewField::Text,
             active: None,
             picture_card: None,
         }
@@ -491,6 +511,8 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &RedactTool, cx| set_tool(Tool::Redact, cx));
     cx.on_action(|_: &PictureTool, cx| set_tool(Tool::Picture, cx));
     cx.on_action(|_: &EraserTool, cx| set_tool(Tool::Eraser, cx));
+    cx.on_action(|_: &SignTool, cx| set_tool(Tool::Sign, cx));
+    cx.on_action(|_: &FieldTool, cx| set_tool(Tool::Field, cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));
     cx.on_action(|_: &Deselect, cx| with_active(cx, canvas::reset));
 }
@@ -535,6 +557,8 @@ mod tests {
         };
         let tools = [Tool::SHAPES.as_slice(), &Tool::MARKUP, &Tool::BAR].concat();
         assert!(tools.into_iter().all(reachable));
+        // As in egui: chosen from the signature and form panels.
+        assert!(!reachable(Tool::Sign) && !reachable(Tool::Field));
         assert_eq!(Tool::Underline.group(), Some(&Tool::MARKUP[..]));
         assert_eq!(Tool::Select.group(), None);
     }

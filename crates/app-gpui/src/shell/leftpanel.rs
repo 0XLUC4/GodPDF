@@ -393,14 +393,14 @@ const COMMENT: &[Row] = &[
         "Put a PNG or JPEG on the page, then move and resize it",
     ),
     row(
-        Missing,
+        Run(|| Box::new(crate::panels::Sign)),
         icons::SIGNATURE,
         AMBER,
         "Sign",
         "Draw your signature once, then click where it goes",
     ),
     row(
-        Missing,
+        Run(|| Box::new(crate::tools::FieldTool)),
         icons::TEXTBOX,
         AMBER,
         "Form field",

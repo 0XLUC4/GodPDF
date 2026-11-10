@@ -174,7 +174,7 @@ egui: `doc_panels` (Panel::right "rail") + `GodApp::rail`, `right_panel`.
   button, status label, 4 px, hits as 26 px selectable rows). Menus use Phosphor glyphs
   (`panels::menu_entry`).
 - Page box: drag right / up for later pages (1 per point), click to type (Enter or blur).
-- Left to do: Form / Signature views, bookmark tree collapse arrows (GPUI shows the whole
+- Left to do: bookmark tree collapse arrows (GPUI shows the whole
   tree flat, indented), drag to resize the panel.
 
 ### Banner: `src/shell/banner.rs`

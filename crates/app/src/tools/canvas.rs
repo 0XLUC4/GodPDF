@@ -11,14 +11,14 @@ use godpdf_core::{
 use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;
 use gpui::{
-    Action, AnyElement, App, Context, CursorStyle, Div, FillOptions, FontWeight, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, PathStyle, Pixels, Point, RenderImage,
-    StrokeOptions, Window, black, canvas, div, img, point, px, rgb, white,
+    Action, AnyElement, App, Context, CursorStyle, Div, FillOptions, FontWeight, HitboxBehavior,
+    Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, PathStyle, Pixels,
+    Point, RenderImage, StrokeOptions, Window, black, canvas, div, img, point, px, rgb, white,
 };
 use lyon::tessellation::{LineCap, LineJoin};
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, fields, hsla, richtext, sign, stamp, tool_state};
+use super::{Tool, current_tool, editor, fields, hsla, pointer, richtext, sign, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::{icons, text, toasts};
@@ -1196,7 +1196,7 @@ fn erase_content(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut 
         return;
     };
     let brush = tool_state(cx).brush;
-    let areas: Vec<Rect> = geom::brush_squares(points, brush)
+    let areas: Vec<Rect> = geom::brush_dabs(points, brush)
         .into_iter()
         .map(|square| square.to_pdf(&geom, displayed))
         .collect();
@@ -1508,9 +1508,9 @@ pub fn page_overlay(
     }) = gesture
         && *brushed == page
     {
-        // The squares core will take out, as they are.
-        let squares = geom::brush_squares(points, tool_state(cx).brush);
-        layer = layer.child(area(squares, with_alpha(black(), BRUSH_OPACITY), zoom));
+        // The bands core will take out, as they are.
+        let bands = geom::brush_dabs(points, tool_state(cx).brush);
+        layer = layer.child(area(bands, with_alpha(black(), BRUSH_OPACITY), zoom));
     }
     // A markup dragged over text: its look over the characters picked so far.
     let marking = matches!(gesture, Some(Gesture::Text)) && tool != Tool::Select;
@@ -1528,14 +1528,14 @@ pub fn page_overlay(
     if let Some(point) = pointer
         && tab.canvas.editor.is_none()
     {
-        // The page eraser takes out squares; the comment eraser reaches round the pointer.
-        let content = tool_state(cx).erase_content;
-        let side = if content {
+        let side = if tool_state(cx).erase_content {
             tool_state(cx).brush * zoom
         } else {
             ELEMENT_BRUSH
         };
-        layer = layer.child(brush_ring(point, side, !content, zoom, cx));
+        layer = layer
+            .child(brush_ring(point, side, zoom, cx))
+            .child(hide_pointer_here());
     }
     // Over the comments: a click on a form field fills it in.
     if tool == Tool::Select && tab.canvas.editor.is_none() {
@@ -1674,14 +1674,13 @@ fn markup(tool: Tool, lines: &[DRect], color: Hsla, zoom: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// The eraser's brush under the pointer: a circle (`round`) or a square `side` pixels wide
-/// centred on `point` (displayed points), a crisp outline in the text colour over a halo, so it
-/// shows on any page.
-fn brush_ring(point: (f32, f32), side: f32, round: bool, zoom: f32, cx: &App) -> Div {
+/// The eraser's brush under the pointer: a circle `side` pixels wide centred on `point`
+/// (displayed points), a crisp outline in the text colour over a halo, so it shows on any page.
+fn brush_ring(point: (f32, f32), side: f32, zoom: f32, cx: &App) -> Div {
     let palette = crate::theme::Palette::of(cx);
     let side = side.max(4.0).round();
     let outer = side + 2.0;
-    let radius = |size: f32| if round { size / 2.0 } else { 0.0 };
+    let radius = |size: f32| size / 2.0;
     div()
         .absolute()
         .left(px((point.0 * zoom - outer / 2.0).round()))
@@ -1698,6 +1697,22 @@ fn brush_ring(point: (f32, f32), side: f32, round: bool, zoom: f32, cx: &App) ->
                 .border_color(palette.text)
                 .bg(with_alpha(palette.text, 0.12)),
         )
+}
+
+/// The circle stands in for the system pointer: hidden while the pointer is really over this
+/// page, not over a menu or dialog on top, and the window is active.
+fn hide_pointer_here() -> AnyElement {
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        |_, hitbox, window, _| {
+            if hitbox.is_hovered(window) && window.is_window_active() {
+                pointer::hide_this_frame();
+            }
+        },
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }
 
 /// `squares` (displayed points) painted as one area, so their overlaps do not darken.

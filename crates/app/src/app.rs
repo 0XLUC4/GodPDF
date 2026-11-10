@@ -6,7 +6,7 @@ use godpdf_core::Session;
 use gpui::prelude::*;
 use gpui::{
     App, Context, Entity, ExternalPaths, FocusHandle, KeyBinding, PromptLevel, Window, actions,
-    div, px,
+    canvas, div, px,
 };
 
 use crate::doc::{DocTab, guarded};
@@ -491,5 +491,7 @@ impl Render for GodPdfApp {
             ))
             .children(text::overlay(active.as_ref(), cx))
             .children(services::overlay(window, cx))
+            // Painted after every page: hide or show the system pointer as they asked.
+            .child(canvas(|_, _, _| {}, |_, _, _, _| tools::pointer::apply()).absolute())
     }
 }

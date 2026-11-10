@@ -81,9 +81,9 @@ around the pointer.
   and the ghost stays until the page is rendered again (`DocTab::page_settled`).
 - Right click on the selection: Bring to front / forward, Send backward / to back
   (`reorder_annotation`; Ctrl+Shift+] / Ctrl+] / Ctrl+[ / Ctrl+Shift+[), Delete.
-- Eraser: a brush circle follows the pointer (`Canvas::pointer`). "Erase elements" removes
+- Eraser: a brush circle follows the pointer (`Canvas::pointer`) and stands in for it: the system pointer is hidden while over the page (`tools::pointer`, decided each frame, Windows only). "Erase elements" removes
   the comments its 14 px circle touches (the one it would take is tinted red); "Erase page
-  content" brushes the page (`ToolState::brush` points wide, the brushed area a soft grey) and
+  content" brushes the page (round dabs `ToolState::brush` points wide, each 8 rectangles, `geom::brush_dabs`, the brushed area a soft grey) and
   on release `erase_content` removes the text under the path and paints it white (one undo
   step "Erase").
 - Page text: with Select, Highlight, Underline and StrikeOut the canvas picks text where no

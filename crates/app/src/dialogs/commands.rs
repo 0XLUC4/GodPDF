@@ -365,7 +365,7 @@ pub static COMMANDS: &[Command] = &[
     command(
         "Search text",
         Document,
-        "Find words with per-page counts",
+        "Find words in the document, marked on the pages",
         || Box::new(crate::panels::Find),
     ),
     command(

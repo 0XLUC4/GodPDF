@@ -183,7 +183,7 @@ const ALL_TOOLS: &[Row] = &[
         icons::MAGNIFYING_GLASS,
         BLUE,
         "Search text",
-        "Find words with per-page counts",
+        "Find words in the document, marked on the pages",
     ),
     row(
         Run(|| Box::new(CommandPalette)),

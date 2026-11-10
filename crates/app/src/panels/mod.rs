@@ -1,24 +1,23 @@
 //! Right panel, opened from the icon rail (`shell/rail.rs`): comments, page
-//! thumbnails, bookmarks, text search, the form or the signature.
+//! thumbnails, bookmarks, the form or the signature. Text search is the find bar (`find/`).
 //!
-//! App-wide state is the [`PanelState`] global (open panel, search field, the tab shown).
-//! Per-document state is [`TabPanels`], a field of `DocTab` (thumbnail cache, search hits,
+//! App-wide state is the [`PanelState`] global (open panel, the tab shown).
+//! Per-document state is [`TabPanels`], a field of `DocTab` (thumbnail cache, find state,
 //! bookmark being renamed), so it goes away with its tab.
 
 mod bookmarks;
 mod comments;
 mod form;
-mod search;
 mod sign;
 mod thumbs;
 
+pub use crate::find::Find;
 pub use thumbs::{Pick, Thumbs, thumbnail, trim};
 
-use gpui::component::input::InputState;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, Global, Hsla, KeyBinding, SharedString, Subscription,
-    WeakEntity, Window, actions, div, px,
+    AnyElement, App, Context, Entity, Global, Hsla, KeyBinding, SharedString, WeakEntity, Window,
+    actions, div, px,
 };
 
 use crate::doc::DocTab;
@@ -30,9 +29,6 @@ actions!(
     [
         ShowPages,
         ShowBookmarks,
-        Find,
-        FindNext,
-        FindPrevious,
         AddBookmark,
         FillForm,
         Sign,
@@ -56,17 +52,15 @@ pub enum Panel {
     Comments,
     Pages,
     Bookmarks,
-    Search,
     Form,
     Sign,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 6] = [
+    pub const ALL: [Panel; 5] = [
         Panel::Comments,
         Panel::Pages,
         Panel::Bookmarks,
-        Panel::Search,
         Panel::Form,
         Panel::Sign,
     ];
@@ -76,7 +70,6 @@ impl Panel {
             Self::Comments => icons::CHAT_TEXT,
             Self::Pages => icons::FILES,
             Self::Bookmarks => icons::BOOKMARK_SIMPLE,
-            Self::Search => icons::MAGNIFYING_GLASS,
             Self::Form => icons::LIST_CHECKS,
             Self::Sign => icons::SIGNATURE,
         }
@@ -87,7 +80,6 @@ impl Panel {
             Self::Comments => "Comments",
             Self::Pages => "Pages",
             Self::Bookmarks => "Bookmarks",
-            Self::Search => "Search",
             Self::Form => "Form",
             Self::Sign => "Signature",
         }
@@ -99,12 +91,6 @@ pub struct PanelState {
     open: Option<Panel>,
     /// The document the sidebar shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
-    /// The search field, created the first time the search panel shows (it needs a window).
-    search_input: Option<(Entity<InputState>, Subscription)>,
-    /// Focus the search field on the next render (Ctrl+F has no window at hand).
-    focus_search: bool,
-    /// The document whose search text the field shows.
-    search_tab: Option<gpui::EntityId>,
     /// Panel width, dragged by its left edge.
     width: f32,
     /// Panel brought back by Toggle sidebar.
@@ -116,9 +102,6 @@ impl Default for PanelState {
         Self {
             open: Some(Panel::Pages),
             active: None,
-            search_input: None,
-            focus_search: false,
-            search_tab: None,
             width: PANEL_WIDTH,
             last: Panel::Pages,
         }
@@ -132,7 +115,7 @@ impl Global for PanelState {}
 pub struct TabPanels {
     comments: comments::Comments,
     thumbs: thumbs::Thumbs,
-    search: search::Search,
+    pub find: crate::find::FindState,
     bookmarks: bookmarks::Marks,
     form: form::FormState,
 }
@@ -175,20 +158,11 @@ fn with_active(cx: &mut App, update: impl FnOnce(&mut DocTab, &mut Context<DocTa
 /// Register panel actions and their key bindings.
 pub fn register(cx: &mut App) {
     cx.set_global(PanelState::default());
-    cx.bind_keys([
-        KeyBinding::new(secondary!("f"), Find, None),
-        KeyBinding::new(secondary!("d"), AddBookmark, None),
-        KeyBinding::new("f3", FindNext, None),
-        KeyBinding::new("shift-f3", FindPrevious, None),
-    ]);
+    cx.bind_keys([KeyBinding::new(secondary!("d"), AddBookmark, None)]);
     cx.on_action(|_: &ShowPages, cx| toggle(Panel::Pages, cx));
     cx.on_action(|_: &ShowBookmarks, cx| toggle(Panel::Bookmarks, cx));
     cx.on_action(|_: &FillForm, cx| show(Panel::Form, cx));
     cx.on_action(|_: &Sign, cx| show(Panel::Sign, cx));
-    cx.on_action(|_: &Find, cx| {
-        state(cx).focus_search = true;
-        show(Panel::Search, cx);
-    });
     // Hide the right panel, or bring back the last one.
     cx.on_action(|_: &ToggleSidebar, cx| {
         let state = state(cx);
@@ -198,19 +172,14 @@ pub fn register(cx: &mut App) {
         }
         cx.refresh_windows();
     });
-    cx.on_action(|_: &FindNext, cx| search::step(true, cx));
-    cx.on_action(|_: &FindPrevious, cx| search::step(false, cx));
     cx.on_action(|_: &AddBookmark, cx| {
         with_active(cx, bookmarks::add_for_current_page);
         show(Panel::Bookmarks, cx);
     });
 }
 
-/// Rail button clicked: toggle `panel`, focusing the search field on open.
+/// Rail button clicked: toggle `panel`.
 pub fn rail_click(panel: Panel, cx: &mut App) {
-    if panel == Panel::Search && open_panel(cx) != Some(Panel::Search) {
-        state(cx).focus_search = true;
-    }
     toggle(panel, cx);
 }
 
@@ -238,7 +207,6 @@ pub fn right(
         Panel::Comments => comments::render(&tab, cx),
         Panel::Pages => thumbs::render(&tab, window, cx),
         Panel::Bookmarks => bookmarks::render(&tab, window, cx),
-        Panel::Search => search::render(&tab, window, cx),
         Panel::Form => form::render(&tab, window, cx),
         Panel::Sign => sign::render(cx),
     };
@@ -289,11 +257,6 @@ pub fn right(
             .child(div().flex_1().min_h_0().flex().flex_col().child(content))
             .into_any_element(),
     )
-}
-
-/// Search hits marked over one page (called by the viewer for every visible page).
-pub fn page_overlay(tab: &mut DocTab, page: usize, cx: &mut Context<DocTab>) -> Option<AnyElement> {
-    search::page_overlay(tab, page, cx)
 }
 
 /// A plain label of the panel in a colour: body size, no padding.

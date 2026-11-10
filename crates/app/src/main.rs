@@ -22,6 +22,7 @@ mod dialogs;
 #[allow(dead_code)]
 mod doc;
 mod files;
+mod find;
 mod fonts;
 #[allow(dead_code)]
 mod geometry;

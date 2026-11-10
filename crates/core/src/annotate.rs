@@ -220,6 +220,30 @@ impl Picture {
         })
     }
 
+    /// The JPEG file of a picture kept as one (see [`Self::jpeg`]).
+    pub fn jpeg_bytes(&self) -> Option<&[u8]> {
+        match &self.pixels {
+            Pixels::Jpeg { bytes, .. } => Some(bytes),
+            Pixels::Rgb { .. } => None,
+        }
+    }
+
+    /// Red, green, blue, alpha rows, top row first; `None` for a JPEG ([`Self::jpeg_bytes`]).
+    /// A mask of the wrong size is taken as solid.
+    pub fn to_rgba(&self) -> Option<Vec<u8>> {
+        let Pixels::Rgb { rgb, alpha } = &self.pixels else {
+            return None;
+        };
+        let pixels = rgb.len() / 3;
+        let alpha = alpha.as_deref().filter(|alpha| alpha.len() == pixels);
+        let mut rgba = Vec::with_capacity(pixels * 4);
+        for (index, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
+            let opacity = alpha.map_or(255, |alpha| alpha[index]);
+            rgba.extend_from_slice(&[px[0], px[1], px[2], opacity]);
+        }
+        Some(rgba)
+    }
+
     /// The image object (and its soft mask) written into `doc`.
     fn write(&self, doc: &mut Document) -> ObjectId {
         let mut dict = dictionary! {
@@ -1456,6 +1480,65 @@ pub fn replace_annotation(
     entries[index] = annot_id.into();
     set_annots(&mut doc, page_id, entries)?;
     save(&mut doc)
+}
+
+/// Where [`reorder_annotation`] moves an annotation among the others of its page: those
+/// later in /Annots are drawn over the earlier ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZOrder {
+    /// Over all the others.
+    Front,
+    /// Over the next one.
+    Forward,
+    /// Under the previous one.
+    Backward,
+    /// Under all the others.
+    Back,
+}
+
+/// Move annotation `id` of `page` in the drawing order. Popups (never drawn over the page)
+/// are stepped over. `Error::InvalidArgument` if no such id, or when it is already there.
+/// An id `#<index>` (no /NM) changes with its place.
+pub fn reorder_annotation(pdf: &[u8], page: usize, id: &str, to: ZOrder) -> Result<Vec<u8>> {
+    let mut doc = load(pdf)?;
+    let page_id = page_id(&doc, page)?;
+    let mut entries = annots_entries(&doc, page_id)?;
+    let index = find_annotation(&doc, &entries, id)?;
+    let drawn: Vec<bool> = entries
+        .iter()
+        .map(|entry| {
+            deref(&doc, entry)
+                .and_then(|o| o.as_dict().ok())
+                .and_then(|d| d.get(b"Subtype").ok()?.as_name().ok())
+                != Some(b"Popup".as_slice())
+        })
+        .collect();
+    let target = z_target(&drawn, index, to);
+    if target == index {
+        let place = match to {
+            ZOrder::Front | ZOrder::Forward => "in front",
+            ZOrder::Back | ZOrder::Backward => "at the back",
+        };
+        return Err(Error::InvalidArgument(format!("already {place}")));
+    }
+    let moved = entries.remove(index);
+    entries.insert(target, moved);
+    set_annots(&mut doc, page_id, entries)?;
+    save(&mut doc)
+}
+
+/// The index the entry at `index` goes to, `drawn` telling which entries are drawn.
+fn z_target(drawn: &[bool], index: usize, to: ZOrder) -> usize {
+    let last = drawn.len().saturating_sub(1);
+    let next = (index + 1..drawn.len()).find(|&other| drawn[other]);
+    let previous = (0..index).rev().find(|&other| drawn[other]);
+    match to {
+        ZOrder::Front if next.is_some() => last,
+        ZOrder::Back if previous.is_some() => 0,
+        ZOrder::Forward => next.unwrap_or(index),
+        ZOrder::Backward => previous.unwrap_or(index),
+        ZOrder::Front | ZOrder::Back => index,
+    }
 }
 
 fn page_id(doc: &Document, page: usize) -> Result<ObjectId> {

@@ -308,8 +308,32 @@ pub static COMMANDS: &[Command] = &[
     command(
         "Eraser",
         Comment,
-        "Click or drag over comments to erase them",
+        "Erase comments, or brush page content away",
         || Box::new(tools::EraserTool),
+    ),
+    command(
+        "Bring to front",
+        Comment,
+        "Draw the selected comment over all the others",
+        || Box::new(tools::BringToFront),
+    ),
+    command(
+        "Bring forward",
+        Comment,
+        "Draw the selected comment over the next one",
+        || Box::new(tools::BringForward),
+    ),
+    command(
+        "Send backward",
+        Comment,
+        "Draw the selected comment under the previous one",
+        || Box::new(tools::SendBackward),
+    ),
+    command(
+        "Send to back",
+        Comment,
+        "Draw the selected comment under all the others",
+        || Box::new(tools::SendToBack),
     ),
     command(
         "Encrypt with password…",

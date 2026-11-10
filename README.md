@@ -1,51 +1,80 @@
-<p align="center"><img src="assets/logo.png" width="160" alt="GodPDF logo"></p>
+<p align="center">
+  <img src="assets/logo.png" width="128" alt="GodPDF logo">
+</p>
 
 <h1 align="center">GodPDF</h1>
-<p align="center">Every PDF tool. Local. Pure Rust.</p>
+
+<p align="center">
+  <b>Every PDF tool. Local. Pure Rust.</b><br>
+  View, edit, sign, organize and protect PDF files on your own machine.
+</p>
+
+<p align="center">
+  <a href="https://github.com/0XLUC4/GodPDF/releases/latest"><img src="https://img.shields.io/github/v/release/0XLUC4/GodPDF?label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="Platforms">
+  <img src="https://img.shields.io/badge/license-MIT%20or%20Apache--2.0-blue" alt="License">
+</p>
 
 <p align="center"><img src="docs/screenshot.png" alt="GodPDF with a document open" width="900"></p>
 
-A PDF workbench.
-No account, no cloud, no telemetry: your documents never leave your machine.
+No account, no cloud, no telemetry. Your documents never leave your computer.
 
 ## Download
 
-Windows: get `GodPDF-windows-x64.exe` from the [latest release](https://github.com/0XLUC4/GodPDF/releases/latest).
-It is a single file, nothing to install. It is not signed, so Windows SmartScreen may ask before running it.
-New versions come through the Updates button: it downloads one and restarts on it.
+| Platform | File |
+|----------|------|
+| Windows | `GodPDF-windows-x64.exe` |
+| Linux | `GodPDF-linux-x64.tar.gz` |
+| macOS | `GodPDF-macos-universal.zip` |
+
+Get them from the [latest release](https://github.com/0XLUC4/GodPDF/releases/latest).
+The Windows build is a single file with nothing to install. It is not signed, so SmartScreen may ask before the first run.
+New versions arrive through the Updates button, which downloads the update and restarts the app.
 
 ## Features
 
-- View: tabs, continuous scroll, zoom, thumbnails, bookmarks, search, two documents side by side, dark/light theme
-- Bookmarks: each shows its page and leads there in a click; add one for the page you read (`Ctrl+D`), rename, move, nest, point to another page, delete; one per page in a click
-- Contents page: a first page listing the bookmarks with dots and page numbers, each line a link
-- Large pages: plans in A3 to A0 stay sharp at any zoom
-- Organize: drag-and-drop reorder, rotate one page or all, delete, insert blank or from file, extract, split, reverse, remove blank pages
-- Layout: crop margins, change page size (A3, A4, A5, Letter, Legal), cut pages in half, 2 to 16 pages per sheet, booklet for printing, join into one long page
-- Colours: invert for night reading, greyscale, paper tint
-- Combine: merge any number of PDFs, images (JPEG, PNG) and text files; interleave two PDFs (fronts and backs of a scan)
-- Open a picture or a text file as a PDF
-- Stamp: page numbers (position, format, first number) and watermarks (size, opacity, angle, offset from the centre), upright on turned pages
-- Pictures: put a PNG or JPEG on a page from the tool bar (`I`), at the click or in a dragged box; move and resize it like a comment
-- Sign (Signature panel on the right): draw your signature once (it is kept), then click where it goes; move and resize it
-- Forms: click a field on the page to fill it in (text, check box, radio button, list), or use the Form panel on the right; number boxes get one character per cell; add text fields and check boxes
-- Recognize text (OCR): every page is read, words that are already text are left alone; scans become searchable and their words can be selected, in any language. On Windows the recognizer of the system is used (the languages installed there); elsewhere a model (12 MB) is downloaded on first use
-- Compare two PDFs: lines removed and added on each page, and pages that look different
-- Comment: highlight in fluo colors, sticky note, free text (Helvetica, Times or Courier; bold, italic, underline, subscript, superscript), rectangle, ink; comments can be moved, resized and erased
-- Edit the text of a page, line by line
-- Remove every link of a document, remove every comment, flatten comments and form fields into the page
-- Attached files: add, save, remove
-- Export pages as PNG or JPEG pictures
-- Compress: duplicated fonts and pictures shared, objects packed
-- Protect: open encrypted PDFs, add or remove a password, remove hidden data (properties, scripts, attached files)
-- Tabs: right-click to close the others, reopen the last closed (`Ctrl+Shift+T`), show the file in its folder
-- A file changed by another program is read again
-- Print, document properties, text extraction, undo/redo
-- Command palette (`Ctrl+K`): every tool by name; chosen with nothing open, a tool asks for a file and runs on it
+**Read**
+- Tabs, continuous scroll, zoom, fit width or page, dark and light themes
+- Recent files on the home screen with a preview of their first page
+- Find as in a browser (`Ctrl+F`): every match highlighted, jump from word to word
+- Thumbnails, bookmarks and comments panels, two documents side by side
+- Large plans (A3 to A0) stay sharp at any zoom
+
+**Comment and mark up**
+- Highlight, underline and strike out by selecting the text
+- Text boxes with fonts, bold, italic, underline, subscript and superscript, and a handle to change their width
+- Sticky notes, ink, rectangles, ellipses, lines and arrows, with a fill colour for shapes
+- Stamps: Approved, Draft, Confidential, Rejected, Final, with an optional date
+- Preset colours plus a picker with hex input and recent colours
+- Move, resize, bring to front or send to back, all in real time
+- Eraser for whole comments or for the page content itself
+
+**Edit**
+- Select and copy text with the pointer
+- Change the text of a page line by line
+- Put pictures on a page, move and resize them
+- Sign with a signature drawn once and kept
+- Fill in forms on the page, add text fields and check boxes
+- Redact: remove text, pictures and comments under the marked areas for good
+
+**Organize**
+- Page grid: reorder by drag and drop, rotate, delete, insert blank pages or other files, extract, split, reverse, remove blank pages
+- Combine PDFs, pictures and text files, interleave two scans
+- Crop, change page size, cut pages in half, 2 to 16 pages per sheet, booklets, join into one long page
+- Invert, greyscale or tint the paper
+
+**Protect and share**
+- Open encrypted files, add or remove a password, remove hidden data
+- Page numbers and watermarks
+- Compress, export pages as PNG or JPEG, print
+- Recognize the text of scans (OCR), compare two PDFs, extract the text
+- Attached files, document properties, undo and redo
+
+The command palette (`Ctrl+K`) finds every tool by name.
 
 ## Build
 
-Requires Rust 1.94+.
+Requires Rust 1.94 or newer.
 
 ```sh
 cargo run --release -p godpdf
@@ -54,20 +83,20 @@ cargo run --release -p godpdf
 Linux needs the GPUI system libraries:
 
 ```sh
-sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev   libvulkan-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev
+sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+  libvulkan-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev
 ```
 
-macOS needs Xcode (GPUI compiles its Metal shaders with it).
-There is no web build: GPUI is native only.
+macOS needs Xcode, which GPUI uses to compile its Metal shaders.
 
 ## Workspace
 
 | Crate | Role |
 |-------|------|
-| `crates/core` (`godpdf-core`) | Editing ops on PDF bytes via `lopdf`, undo/redo session |
-| `crates/render` (`godpdf-render`) | Page rasterization via `hayro` |
-| `crates/app` (`godpdf`) | Desktop app on [GPUI](https://gpui.rs) (Windows, Linux, macOS) |
+| `crates/core` (`godpdf-core`) | PDF editing on raw bytes with `lopdf`, undo and redo |
+| `crates/render` (`godpdf-render`) | Page rendering with `hayro` |
+| `crates/app` (`godpdf`) | Desktop app built with [GPUI](https://gpui.rs) |
 
 ## License
 
-MIT OR Apache-2.0
+Licensed under either of MIT or Apache-2.0, at your option.

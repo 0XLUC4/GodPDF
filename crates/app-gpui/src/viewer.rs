@@ -85,10 +85,16 @@ impl Render for DocTab {
             let error = self
                 .page_error(page)
                 .map(|err| format!("Page {}: {err}", page + 1));
-            let hits = crate::panels::page_overlay(self, page, cx);
-            let text_under = crate::text::page_underlay(self, page, window, cx);
-            let overlay = tools::page_overlay(self, page, rect, window, cx);
-            let text_over = crate::text::page_overlay(self, page, window, cx);
+            let (hits, text_under, overlay, text_over) = if self.companion {
+                (None, None, None, None)
+            } else {
+                (
+                    crate::panels::page_overlay(self, page, cx),
+                    crate::text::page_underlay(self, page, window, cx),
+                    tools::page_overlay(self, page, rect, window, cx),
+                    crate::text::page_overlay(self, page, window, cx),
+                )
+            };
             pages.push(
                 div()
                     .absolute()
@@ -116,7 +122,11 @@ impl Render for DocTab {
         }
         self.trim_cache(visible, window);
 
-        let quick_bar = tools::viewer_overlay(self, window, cx);
+        let quick_bar = if self.companion {
+            None
+        } else {
+            tools::viewer_overlay(self, window, cx)
+        };
         root.children(pages)
             .children(self.scrollbar(&palette, cx))
             .children(quick_bar)

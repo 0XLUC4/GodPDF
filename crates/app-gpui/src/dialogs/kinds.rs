@@ -164,7 +164,15 @@ pub fn build(
         .map_or(core::NewField::Text, |tools| tools.field_kind);
     let doc = tab.read(cx);
     let count = doc.page_count();
-    let all = ranges::format(&(0..count).collect::<Vec<_>>());
+    // egui `stamp_range`: the pages selected in the Organize grid, or all of them.
+    let all = ranges::format(&crate::organize::offered_pages(doc));
+    let extract = if doc.grid.on {
+        let mut pages = crate::organize::target_pages(doc);
+        pages.sort_unstable();
+        ranges::format(&pages)
+    } else {
+        ranges::format(&(0..count).collect::<Vec<_>>())
+    };
     let bytes_meta = (kind == Kind::Properties).then(|| {
         guarded(|| core::read_metadata(doc.session.bytes()))
             .map_err(|err| format!("Cannot read properties: {err}"))
@@ -220,7 +228,7 @@ pub fn build(
             form::choice("Sharpness", DPI.map(|dpi| format!("{dpi} dpi")), 1),
             text(PAGES, &all, PAGES_HINT),
         ],
-        Kind::Extract => vec![text(PAGES, &all, PAGES_HINT)],
+        Kind::Extract => vec![text(PAGES, &extract, PAGES_HINT)],
         Kind::Split => vec![
             form::choice("Split", ["Every N pages", "At pages"], 0),
             text("N", "1", ""),

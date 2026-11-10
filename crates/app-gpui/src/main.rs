@@ -26,6 +26,8 @@ mod fonts;
 #[allow(dead_code)]
 mod geometry;
 mod icons;
+mod import;
+mod organize;
 mod panels;
 mod shell;
 mod signature;

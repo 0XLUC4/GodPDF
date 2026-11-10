@@ -7,7 +7,7 @@ use gpui::{AnyElement, App, Window, div, px};
 use super::kinds::open_tab;
 use super::{DialogCancel, DialogConfirm, Open, card, close, state};
 use crate::doc::guarded;
-use crate::files::{self, PickedFile};
+use crate::files::PickedFile;
 use crate::theme::Palette;
 use crate::toasts;
 use crate::widgets::{accent_button, framed_button, small_icon_button};
@@ -17,18 +17,9 @@ pub struct Merge {
     pub error: Option<String>,
 }
 
-/// Ask for PDFs and read them; a file that cannot be read is said and left out.
+/// Ask for PDFs, pictures or text files, each made into a PDF.
 pub fn pick(cx: &mut App) -> Vec<PickedFile> {
-    files::pick_pdfs()
-        .iter()
-        .filter_map(|path| match files::read_file(path) {
-            Ok(file) => Some(file),
-            Err(err) => {
-                toasts::error(cx, err);
-                None
-            }
-        })
-        .collect()
+    crate::import::pick_as_pdfs(cx)
 }
 
 fn with_merge(cx: &mut App, change: impl FnOnce(&mut Merge)) {
@@ -123,7 +114,7 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
             div()
                 .pb(px(6.))
                 .text_color(palette.text_dim)
-                .child("PDFs are combined top to bottom, into a new tab."),
+                .child("PDFs, images and text files are combined top to bottom."),
         )
         .child(
             div()

@@ -126,7 +126,7 @@ egui: `GodApp::header_row`, `mode_tab`, `search_field`.
   opens the palette.
 - Menu entries: `header.rs::look` gives each command its egui icon and shortcut text (by label).
 - Left to do: spinner (no job list), hide the shortcut under 200 px, Preferences, About,
-  View > Side by side / Toggle sidebar / Organize pages.
+  View > Toggle sidebar.
 
 ### Left tools panel: `src/shell/leftpanel.rs`
 
@@ -143,9 +143,25 @@ egui: `doc_panels` (Panel::left "tools-panel") + `tools::panel`, rows `widgets::
 - Organize / Comment / Protect: `commands::in_group(group)` rows with `Cmd::icon`,
   `Cmd::tint`, `Cmd::short_label`; Organize adds "Combine files" (`STACK`, purple); Comment
   ends with 10 px and "Comments are listed in the panel on the right." 13 dim.
-- Not ported commands (Insert from file, Organize grid, Move
-  earlier / later, Remove blank pages, Sign, Form field) are listed as in egui; a click
-  shows the toast "Not available yet".
+- Commands not ported yet are listed as in egui; a click shows the toast "Not available
+  yet".
+
+### Organize grid and Side by side: `src/organize/`
+
+egui: `organize.rs` (`show`, `card`), `GodApp::companion`.
+
+- Grid (`grid.rs`) instead of the viewer while `DocTab::grid.on` (header Organize, the
+  "Organize" row, "Organize pages"). Tool bar: panel fill, margin 16 × 10, framed buttons
+  28 high (glyph + label, tooltip = description), a separator, Select all / Clear selection,
+  "k of n selected" dim. Cards 168 × 218, 14 apart, 12 in from the left, 16 from the top,
+  radius 10, `surface` (hover `hover`), 1 px `border` or 2 px `accent` when selected; page
+  fitted in 144 × 180 at 12 from the top on white; number 13 at 14 above the bottom
+  (`accent_text` when selected); earlier / later small arrows 8 in from the bottom corners
+  (on hover or when selected). Dropping on a card's left / right half puts the dragged
+  page (or its selection) before / after it, a 3 px accent line in the gap.
+- Side by side (`split.rs`): the right half, a `border` line on its left; a row (10 in): the
+  document picker (outline button, 80..240 wide), page box 38 × 26, "/ n" dim, the small
+  `X` "Close the second view" 6 from the right; then a read-only viewer.
 - Left to do: drag to resize.
 
 ### Right rail: `src/shell/rail.rs` (+ the panel it opens: `panels::right` in `src/panels/mod.rs`)

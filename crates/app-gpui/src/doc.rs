@@ -70,6 +70,10 @@ pub struct DocTab {
     pub panels: crate::panels::TabPanels,
     /// Page text: positions, selection, line being edited.
     pub text: crate::text::TabText,
+    /// Organize page grid: shown or not, selected pages, its thumbnails.
+    pub grid: crate::organize::Grid,
+    /// The second viewer of "Side by side": for reading only, no tools on it.
+    pub companion: bool,
 }
 
 impl DocTab {
@@ -89,6 +93,8 @@ impl DocTab {
             canvas: Default::default(),
             panels: Default::default(),
             text: Default::default(),
+            grid: Default::default(),
+            companion: false,
             view: ViewState {
                 zoom: 1.0,
                 scroll: (0.0, 0.0),
@@ -125,6 +131,8 @@ impl DocTab {
         self.in_flight.clear();
         self.page_errors.clear();
         self.geometries.clear();
+        // egui: callers set the selection again after an edit that keeps the pages.
+        self.grid.selection.clear();
         let old_count = self.page_count();
         let bytes = Arc::new(self.session.bytes().to_vec());
         let opened = catch_unwind(AssertUnwindSafe(|| {

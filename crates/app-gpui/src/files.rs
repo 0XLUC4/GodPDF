@@ -25,10 +25,14 @@ pub fn read_file(path: &Path) -> Result<PickedFile, String> {
     })
 }
 
-/// Ask for PDF files to open; empty when cancelled. Blocks until the dialog closes.
+/// What Open, Combine and Insert accept: pictures and text are made into PDFs (`import.rs`).
+const OPENABLE: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "txt"];
+
+/// Ask for files to open (PDFs, pictures, text); empty when cancelled. Blocks until the
+/// dialog closes.
 pub fn pick_pdfs() -> Vec<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("PDF document", &["pdf"])
+        .add_filter("PDFs, images and text", &OPENABLE)
         .pick_files()
         .unwrap_or_default()
 }

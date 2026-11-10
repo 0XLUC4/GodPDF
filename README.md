@@ -58,6 +58,7 @@ cargo run --release -p godpdf
 | `crates/core` (`godpdf-core`) | Editing ops on PDF bytes via `lopdf`, undo/redo session |
 | `crates/render` (`godpdf-render`) | Page rasterization via `hayro` |
 | `crates/app` (`godpdf`) | `egui`/`eframe` desktop app |
+| `crates/app-gpui` (`godpdf-gpui`) | GPUI desktop app (in progress, native only) |
 
 ## License
 

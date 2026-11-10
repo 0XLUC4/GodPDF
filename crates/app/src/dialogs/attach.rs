@@ -2,7 +2,7 @@
 
 use godpdf_core::{self as core, Attachment};
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Entity, WeakEntity, Window, div, px};
+use gpui::{AnyElement, App, Entity, WeakEntity, div, px};
 
 use super::{DialogCancel, Open, active_tab, card, close, plain, size_text, state};
 use crate::doc::{DocTab, guarded};
@@ -40,7 +40,7 @@ pub fn open(cx: &mut App) {
 }
 
 /// Show the files of the dialog's document as they are now.
-fn refresh(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) {
+fn refresh(tab: &Entity<DocTab>, cx: &mut App) {
     match read(tab, cx) {
         Ok(files) => {
             if let Some(Open::Attach(attach)) = &mut state(cx).open {
@@ -49,7 +49,7 @@ fn refresh(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) {
         }
         Err(err) => toasts::error(cx, err),
     }
-    window.refresh();
+    cx.refresh_windows();
 }
 
 fn dialog_tab(cx: &App) -> Option<Entity<DocTab>> {
@@ -60,9 +60,12 @@ fn dialog_tab(cx: &App) -> Option<Entity<DocTab>> {
 }
 
 /// "Attach files…": any files, each one undo step.
-fn add(window: &mut Window, cx: &mut App) {
+fn add(cx: &mut App) {
     let Some(tab) = dialog_tab(cx) else { return };
-    let picked = rfd::FileDialog::new().pick_files().unwrap_or_default();
+    files::pick_any(cx, move |picked, cx| attach_paths(&tab, picked, cx));
+}
+
+fn attach_paths(tab: &Entity<DocTab>, picked: Vec<std::path::PathBuf>, cx: &mut App) {
     for path in picked {
         let file = match files::read_file(&path) {
             Ok(file) => file,
@@ -82,7 +85,7 @@ fn add(window: &mut Window, cx: &mut App) {
             toasts::error(cx, plain(err));
         }
     }
-    refresh(&tab, window, cx);
+    refresh(tab, cx);
 }
 
 /// "Save a copy" of the file at `index`, where the user picks.
@@ -97,16 +100,18 @@ fn save(index: usize, cx: &mut App) {
         return;
     };
     let (name, bytes) = (file.name.clone(), file.bytes.clone());
-    let Some(target) = rfd::FileDialog::new().set_file_name(&name).save_file() else {
-        return;
-    };
-    match files::write_atomic(&target, &bytes) {
-        Ok(()) => toasts::success(cx, format!("Saved “{name}”")),
-        Err(err) => toasts::error(cx, err),
-    }
+    files::pick_save(
+        cx,
+        &name.clone(),
+        false,
+        move |target, cx| match files::write_atomic(&target, &bytes) {
+            Ok(()) => toasts::success(cx, format!("Saved “{name}”")),
+            Err(err) => toasts::error(cx, err),
+        },
+    );
 }
 
-fn remove(index: usize, window: &mut Window, cx: &mut App) {
+fn remove(index: usize, cx: &mut App) {
     let Some(tab) = dialog_tab(cx) else { return };
     let name = match &state(cx).open {
         Some(Open::Attach(attach)) => match attach.files.get(index) {
@@ -125,7 +130,7 @@ fn remove(index: usize, window: &mut Window, cx: &mut App) {
     if let Err(err) = result {
         toasts::error(cx, plain(err));
     }
-    refresh(&tab, window, cx);
+    refresh(&tab, cx);
 }
 
 pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
@@ -160,7 +165,7 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
             )
             .child(
                 small_icon_button(("attach-remove", index), icons::TRASH, "Remove", &palette)
-                    .on_click(move |_, window, cx| remove(index, window, cx)),
+                    .on_click(move |_, _, cx| remove(index, cx)),
             )
     });
     let accent = palette.accent;
@@ -202,7 +207,7 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
                     )
                     .bg(accent)
                     .hover(move |style| style.bg(accent))
-                    .on_click(|_, window, cx| add(window, cx)),
+                    .on_click(|_, _, cx| add(cx)),
                 )
                 .child(
                     framed_button("attach-close", "Close", true, &palette)

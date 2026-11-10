@@ -556,24 +556,31 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
 /// Ask for a PNG / JPEG and put it on `page`: at its own size from `from`, or fitted in the
 /// dragged box `from`-`to`. It is then selected, to be moved or resized.
 fn place_picture(
-    tab: &mut DocTab,
+    _tab: &mut DocTab,
     page: usize,
     from: (f32, f32),
     to: Option<(f32, f32)>,
     cx: &mut Context<DocTab>,
 ) {
-    // Blocks until the dialog closes, as opening a PDF does.
-    let Some(path) = rfd::FileDialog::new()
-        .add_filter("Picture", &["png", "jpg", "jpeg"])
-        .pick_file()
-    else {
-        return;
-    };
+    let this = cx.entity().downgrade();
+    crate::files::pick_file(cx, ("Picture", &["png", "jpg", "jpeg"]), move |path, cx| {
+        let _ = this.update(cx, |tab, cx| put_picture(tab, &path, page, from, to, cx));
+    });
+}
+
+fn put_picture(
+    tab: &mut DocTab,
+    path: &std::path::Path,
+    page: usize,
+    from: (f32, f32),
+    to: Option<(f32, f32)>,
+    cx: &mut Context<DocTab>,
+) {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let picture = std::fs::read(&path)
+    let picture = std::fs::read(path)
         .map_err(|err| err.to_string())
         .and_then(|bytes| decode_picture(&bytes));
     let picture = match picture {

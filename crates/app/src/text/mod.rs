@@ -313,13 +313,14 @@ fn recognize_text(cx: &mut App) {
 
 /// Pick another PDF and compare the document in front with it, in the background.
 fn compare_with(cx: &mut App) {
-    let Some(tab) = active_tab(cx) else { return };
-    let Some(path) = rfd::FileDialog::new()
-        .add_filter("PDF document", &["pdf"])
-        .pick_file()
-    else {
+    if active_tab(cx).is_none() {
         return;
-    };
+    }
+    crate::files::pick_file(cx, ("PDF document", &["pdf"]), compare_file);
+}
+
+fn compare_file(path: std::path::PathBuf, cx: &mut App) {
+    let Some(tab) = active_tab(cx) else { return };
     let file = match crate::files::read_file(&path) {
         Ok(file) => file,
         Err(err) => return toasts::error(cx, err),

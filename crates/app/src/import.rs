@@ -34,21 +34,24 @@ pub fn to_pdf(name: &str, bytes: Vec<u8>) -> Result<(String, Vec<u8>, bool), Str
 
 /// Ask for PDFs, pictures or text files and read them, each made into a PDF. What cannot be
 /// read or made into one is said in a toast and left out.
-pub fn pick_as_pdfs(cx: &mut gpui::App) -> Vec<PickedFile> {
-    files::pick_pdfs()
-        .iter()
-        .filter_map(|path| {
-            let file = files::read_file(path)
-                .and_then(|file| to_pdf(&file.name, file.bytes).map(|made| (file.path, made)));
-            match file {
-                Ok((path, (name, bytes, _))) => Some(PickedFile { name, path, bytes }),
-                Err(err) => {
-                    toasts::error(cx, err);
-                    None
+pub fn pick_as_pdfs(cx: &gpui::App, then: impl FnOnce(Vec<PickedFile>, &mut gpui::App) + 'static) {
+    files::pick_pdfs(cx, move |paths, cx| {
+        let picked = paths
+            .iter()
+            .filter_map(|path| {
+                let file = files::read_file(path)
+                    .and_then(|file| to_pdf(&file.name, file.bytes).map(|made| (file.path, made)));
+                match file {
+                    Ok((path, (name, bytes, _))) => Some(PickedFile { name, path, bytes }),
+                    Err(err) => {
+                        toasts::error(cx, err);
+                        None
+                    }
                 }
-            }
-        })
-        .collect()
+            })
+            .collect();
+        then(picked, cx);
+    });
 }
 
 /// A PNG on a page: what is see-through shows the white of the paper.

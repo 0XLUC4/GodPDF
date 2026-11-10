@@ -4,6 +4,9 @@ use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use gpui::App;
+use rfd::{AsyncFileDialog, FileHandle};
+
 /// A file read from disk.
 pub struct PickedFile {
     pub name: String,
@@ -28,30 +31,101 @@ pub fn read_file(path: &Path) -> Result<PickedFile, String> {
 /// What Open, Combine and Insert accept: pictures and text are made into PDFs (`import.rs`).
 const OPENABLE: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "txt"];
 
-/// Ask for files to open (PDFs, pictures, text); empty when cancelled. Blocks until the
-/// dialog closes.
-pub fn pick_pdfs() -> Vec<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("PDFs, images and text", &OPENABLE)
-        .pick_files()
-        .unwrap_or_default()
+/// Run a native dialog without blocking, then `then` with its answer. A blocking dialog runs a
+/// nested Windows message loop, where gpui tasks borrow the app again and abort the process.
+pub fn ask<T: 'static>(
+    cx: &App,
+    dialog: impl Future<Output = T> + 'static,
+    then: impl FnOnce(T, &mut App) + 'static,
+) {
+    cx.spawn(async move |cx| {
+        let answer = dialog.await;
+        cx.update(|cx| then(answer, cx));
+    })
+    .detach();
 }
 
-/// Write to `path` when given, otherwise ask where. `Ok(None)` when the user cancelled.
-pub fn save_pdf(name: &str, path: Option<&Path>, bytes: &[u8]) -> Result<Option<PathBuf>, String> {
-    let target = match path {
-        Some(path) => path.to_path_buf(),
-        None => match rfd::FileDialog::new()
-            .add_filter("PDF document", &["pdf"])
-            .set_file_name(pdf_name(name))
-            .save_file()
-        {
-            Some(path) => path,
-            None => return Ok(None),
+fn paths(handles: Option<Vec<FileHandle>>) -> Vec<PathBuf> {
+    handles
+        .unwrap_or_default()
+        .iter()
+        .map(|handle| handle.path().to_path_buf())
+        .collect()
+}
+
+/// Ask for files to open (PDFs, pictures, text); empty when cancelled.
+pub fn pick_pdfs(cx: &App, then: impl FnOnce(Vec<PathBuf>, &mut App) + 'static) {
+    let dialog = AsyncFileDialog::new()
+        .add_filter("PDFs, images and text", &OPENABLE)
+        .pick_files();
+    ask(cx, dialog, move |picked, cx| then(paths(picked), cx));
+}
+
+/// Ask for any files; empty when cancelled.
+pub fn pick_any(cx: &App, then: impl FnOnce(Vec<PathBuf>, &mut App) + 'static) {
+    let dialog = AsyncFileDialog::new().pick_files();
+    ask(cx, dialog, move |picked, cx| then(paths(picked), cx));
+}
+
+/// Ask for one file matching `filter` (`(label, extensions)`).
+pub fn pick_file(
+    cx: &App,
+    filter: (&str, &[&str]),
+    then: impl FnOnce(PathBuf, &mut App) + 'static,
+) {
+    let dialog = AsyncFileDialog::new()
+        .add_filter(filter.0, filter.1)
+        .pick_file();
+    ask(cx, dialog, move |picked, cx| {
+        if let Some(handle) = picked {
+            then(handle.path().to_path_buf(), cx);
+        }
+    });
+}
+
+/// Ask for a folder; nothing happens when cancelled.
+pub fn pick_folder(cx: &App, then: impl FnOnce(PathBuf, &mut App) + 'static) {
+    ask(
+        cx,
+        AsyncFileDialog::new().pick_folder(),
+        move |picked, cx| {
+            if let Some(handle) = picked {
+                then(handle.path().to_path_buf(), cx);
+            }
         },
-    };
-    write_atomic(&target, bytes)?;
-    Ok(Some(target))
+    );
+}
+
+/// Ask where to save `name` (`pdf` filter when `pdf`); nothing happens when cancelled.
+pub fn pick_save(cx: &App, name: &str, pdf: bool, then: impl FnOnce(PathBuf, &mut App) + 'static) {
+    let mut dialog = AsyncFileDialog::new();
+    if pdf {
+        dialog = dialog
+            .add_filter("PDF document", &["pdf"])
+            .set_file_name(pdf_name(name));
+    } else {
+        dialog = dialog.set_file_name(name);
+    }
+    ask(cx, dialog.save_file(), move |picked, cx| {
+        if let Some(handle) = picked {
+            then(handle.path().to_path_buf(), cx);
+        }
+    });
+}
+
+/// Ask where to save a new PDF and write it there; `done` gets the path once written.
+pub fn save_new_pdf(
+    cx: &App,
+    name: &str,
+    bytes: Vec<u8>,
+    done: impl FnOnce(PathBuf, &mut App) + 'static,
+) {
+    pick_save(cx, name, true, move |target, cx| {
+        match write_atomic(&target, &bytes) {
+            Ok(()) => done(target, cx),
+            Err(err) => crate::toasts::error(cx, err),
+        }
+    });
 }
 
 fn pdf_name(name: &str) -> String {

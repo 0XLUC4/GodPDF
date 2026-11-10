@@ -167,58 +167,87 @@ impl GodPdfApp {
     }
 
     fn open(&mut self, _: &Open, _: &mut Window, cx: &mut Context<Self>) {
-        for path in files::pick_pdfs() {
-            self.open_path(&path, cx);
+        let this = cx.entity().downgrade();
+        files::pick_pdfs(cx, move |paths, cx| {
+            let _ = this.update(cx, |app, cx| {
+                for path in paths {
+                    app.open_path(&path, cx);
+                }
+            });
+        });
+    }
+
+    /// Save tab `index` (asking where when it has no file or `save_as`), then `then` once
+    /// written.
+    pub fn save_tab(
+        &mut self,
+        index: usize,
+        save_as: bool,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        let Some(tab) = self.tabs.get(index).cloned() else {
+            return;
+        };
+        let doc = tab.read(cx);
+        // A password set in the Protect dialog encrypts what is written, not the session.
+        let bytes = match dialogs::bytes_to_save(tab.entity_id(), doc.session.bytes(), cx) {
+            Ok(bytes) => bytes.into_owned(),
+            Err(err) => return toasts::error(cx, err),
+        };
+        let (name, path) = (doc.session.name.clone(), doc.session.path.clone());
+        match path.filter(|_| !save_as) {
+            Some(path) => {
+                if self.write_tab(&tab, path, &bytes, cx) {
+                    then(self, cx);
+                }
+            }
+            None => {
+                let this = cx.entity().downgrade();
+                files::pick_save(cx, &name, true, move |path, cx| {
+                    let _ = this.update(cx, |app, cx| {
+                        if app.write_tab(&tab, path, &bytes, cx) {
+                            then(app, cx);
+                        }
+                    });
+                });
+            }
         }
     }
 
-    /// Returns true when written.
-    pub fn save_tab(&mut self, index: usize, save_as: bool, cx: &mut Context<Self>) -> bool {
-        let Some(tab) = self.tabs.get(index).cloned() else {
+    /// Write `bytes` to `path` as the file of `tab`. Returns true when written.
+    fn write_tab(
+        &mut self,
+        tab: &Entity<DocTab>,
+        path: PathBuf,
+        bytes: &[u8],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Err(err) = files::write_atomic(&path, bytes) {
+            toasts::error(cx, err);
             return false;
-        };
-        let saved = tab.update(cx, |tab, cx| {
-            let path = if save_as {
-                None
-            } else {
-                tab.session.path.clone()
-            };
-            // A password set in the Protect dialog encrypts what is written, not the session.
-            let bytes = dialogs::bytes_to_save(cx.entity_id(), tab.session.bytes(), cx)?;
-            let result = files::save_pdf(&tab.session.name, path.as_deref(), &bytes);
-            if let Ok(Some(path)) = &result {
-                if let Some(name) = path.file_name() {
-                    tab.session.name = name.to_string_lossy().into_owned();
-                }
-                tab.session.path = Some(path.clone());
-                tab.session.mark_saved();
-                cx.notify();
-            }
-            result.map(|path| path.map(|_| tab.title().to_owned()))
-        });
-        match saved {
-            Ok(Some(name)) => {
-                if let Some(path) = tab.read(cx).session.path.clone() {
-                    self.shell.remember_recent(&path);
-                    services::watch::saved(tab.entity_id(), &path, cx);
-                }
-                toasts::success(cx, format!("Saved “{name}”"));
-                true
-            }
-            Ok(None) => false,
-            Err(err) => {
-                toasts::error(cx, err);
-                false
-            }
         }
+        let name = tab.update(cx, |tab, cx| {
+            if let Some(name) = path.file_name() {
+                tab.session.name = name.to_string_lossy().into_owned();
+            }
+            tab.session.path = Some(path.clone());
+            tab.session.mark_saved();
+            cx.notify();
+            tab.title().to_owned()
+        });
+        self.shell.remember_recent(&path);
+        services::watch::saved(tab.entity_id(), &path, cx);
+        toasts::success(cx, format!("Saved “{name}”"));
+        true
     }
 
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
-        self.save_tab(self.active, false, cx);
+        self.save_tab(self.active, false, cx, |_, _| {});
     }
 
     fn save_as(&mut self, _: &SaveAs, _: &mut Window, cx: &mut Context<Self>) {
-        self.save_tab(self.active, true, cx);
+        self.save_tab(self.active, true, cx, |_, _| {});
     }
 
     fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -250,13 +279,16 @@ impl GodPdfApp {
                 let Some(index) = app.tabs.iter().position(|open| open.downgrade() == tab) else {
                     return;
                 };
-                let close = match choice {
-                    0 => app.save_tab(index, false, cx),
-                    1 => true,
-                    _ => false,
-                };
-                if close {
-                    app.remove_tab(index, cx);
+                match choice {
+                    0 => app.save_tab(index, false, cx, move |app, cx| {
+                        if let Some(index) =
+                            app.tabs.iter().position(|open| open.downgrade() == tab)
+                        {
+                            app.remove_tab(index, cx);
+                        }
+                    }),
+                    1 => app.remove_tab(index, cx),
+                    _ => {}
                 }
             });
         })

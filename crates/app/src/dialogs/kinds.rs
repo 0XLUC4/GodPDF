@@ -402,11 +402,9 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
                 name = format!("{} (selection).pdf", stem(doc.title()));
             }
             if secondary {
-                match crate::files::save_pdf(&name, None, &bytes) {
-                    Ok(Some(_)) => toasts::success(cx, "Pages exported"),
-                    Ok(None) => {}
-                    Err(err) => toasts::error(cx, err),
-                }
+                crate::files::save_new_pdf(cx, &name, bytes, |_, cx| {
+                    toasts::success(cx, "Pages exported");
+                });
             } else {
                 open_tab(name, bytes, cx);
             }

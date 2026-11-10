@@ -375,14 +375,11 @@ fn extract(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
         .trim_end_matches(".pdf")
         .trim_end_matches(".PDF");
     let name = format!("{stem} - page {}.pdf", page + 1);
-    let extracted =
-        crate::doc::guarded(|| godpdf_core::extract_pages(tab.session.bytes(), &[page]))
-            .map_err(|err| err.to_string())
-            .and_then(|bytes| files::save_pdf(&name, None, &bytes));
-    match extracted {
-        Ok(Some(path)) => toasts::success(cx, format!("Page saved to {}", path.display())),
-        Ok(None) => {}
-        Err(err) => toasts::error(cx, err),
+    match crate::doc::guarded(|| godpdf_core::extract_pages(tab.session.bytes(), &[page])) {
+        Ok(bytes) => files::save_new_pdf(cx, &name, bytes, |path, cx| {
+            toasts::success(cx, format!("Page saved to {}", path.display()));
+        }),
+        Err(err) => toasts::error(cx, err.to_string()),
     }
 }
 

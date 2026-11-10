@@ -116,14 +116,17 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &Interleave, cx| {
         let Some(tab) = front(cx) else { return };
         // shortcut: only the first file picked is used, take several if asked for.
-        if let Some(file) = import::pick_as_pdfs(cx).into_iter().next() {
-            state(cx).interleave = Some(InterleaveDialog {
-                tab: tab.downgrade(),
-                file,
-                reverse: false,
-            });
-            cx.refresh_windows();
-        }
+        let tab = tab.downgrade();
+        import::pick_as_pdfs(cx, move |picked, cx| {
+            if let Some(file) = picked.into_iter().next() {
+                state(cx).interleave = Some(InterleaveDialog {
+                    tab,
+                    file,
+                    reverse: false,
+                });
+                cx.refresh_windows();
+            }
+        });
     });
     cx.on_action(|_: &SplitView, cx| split::toggle(cx));
 }
@@ -254,7 +257,12 @@ fn apply_order(
 /// Ask for files and put their pages at `at` in `tab`, each its own undo step.
 /// Pictures and text become pages too.
 pub fn insert_files(tab: &WeakEntity<DocTab>, at: usize, cx: &mut App) {
-    for file in import::pick_as_pdfs(cx) {
+    let tab = tab.clone();
+    import::pick_as_pdfs(cx, move |picked, cx| insert_picked(&tab, at, picked, cx));
+}
+
+fn insert_picked(tab: &WeakEntity<DocTab>, at: usize, picked: Vec<PickedFile>, cx: &mut App) {
+    for file in picked {
         let mut bytes = file.bytes;
         if core::is_encrypted(&bytes) {
             // Owner-password-only files open with an empty password.

@@ -27,14 +27,9 @@ pub fn export_images(
     });
     cx.spawn(async move |cx| {
         let result = rendered.await;
-        cx.update(|cx| {
-            match result.and_then(|files| save_files(&files).map(|f| f.map(|f| (files.len(), f)))) {
-                Ok(Some((count, folder))) => {
-                    toasts::success(cx, format!("Saved {count} pictures to {folder}"));
-                }
-                Ok(None) => {}
-                Err(err) => toasts::error(cx, err),
-            }
+        cx.update(|cx| match result {
+            Ok(files) => save_files(files, "pictures", cx),
+            Err(err) => toasts::error(cx, err),
         });
     })
     .detach();
@@ -69,13 +64,7 @@ pub fn split(
                     .enumerate()
                     .map(|(index, bytes)| (part_name(&base, index + 1), bytes))
                     .collect();
-                match save_files(&files) {
-                    Ok(Some(folder)) => {
-                        toasts::success(cx, format!("Saved {} files to {folder}", files.len()));
-                    }
-                    Ok(None) => {}
-                    Err(err) => toasts::error(cx, err),
-                }
+                save_files(files, "files", cx);
             }
             Ok(parts) => {
                 let count = parts.len();
@@ -124,16 +113,21 @@ fn render_images(
         .collect()
 }
 
-/// Ask for a folder and write each `(name, bytes)` there, never over an existing file.
-/// Returns the folder, `None` if cancelled.
-fn save_files(files: &[(String, Vec<u8>)]) -> Result<Option<String>, String> {
-    let Some(folder) = rfd::FileDialog::new().pick_folder() else {
-        return Ok(None);
-    };
-    for (name, bytes) in files {
-        write_atomic(&free_path(&folder, name), bytes)?;
-    }
-    Ok(Some(folder.display().to_string()))
+/// Ask for a folder and write each `(name, bytes)` there, never over an existing file;
+/// "Saved N `what` to folder" once done.
+fn save_files(files: Vec<(String, Vec<u8>)>, what: &'static str, cx: &mut App) {
+    crate::files::pick_folder(cx, move |folder, cx| {
+        let written = files
+            .iter()
+            .try_for_each(|(name, bytes)| write_atomic(&free_path(&folder, name), bytes));
+        match written {
+            Ok(()) => toasts::success(
+                cx,
+                format!("Saved {} {what} to {}", files.len(), folder.display()),
+            ),
+            Err(err) => toasts::error(cx, err),
+        }
+    });
 }
 
 /// `report.pdf` + 2 -> `report_part2.pdf`.

@@ -1,7 +1,7 @@
 //! Combine files: a list of PDFs to put one after the other into a new tab.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Window, div, px};
+use gpui::{AnyElement, App, div, px};
 
 use super::kinds::open_tab;
 use super::{DialogCancel, DialogConfirm, Open, card, close, state};
@@ -17,8 +17,8 @@ pub struct Merge {
 }
 
 /// Ask for PDFs, pictures or text files, each made into a PDF.
-pub fn pick(cx: &mut App) -> Vec<PickedFile> {
-    crate::import::pick_as_pdfs(cx)
+pub fn pick(cx: &App, then: impl FnOnce(Vec<PickedFile>, &mut App) + 'static) {
+    crate::import::pick_as_pdfs(cx, then);
 }
 
 fn with_merge(cx: &mut App, change: impl FnOnce(&mut Merge)) {
@@ -27,10 +27,11 @@ fn with_merge(cx: &mut App, change: impl FnOnce(&mut Merge)) {
     }
 }
 
-fn add_files(window: &mut Window, cx: &mut App) {
-    let picked = pick(cx);
-    with_merge(cx, |merge| merge.files.extend(picked));
-    window.refresh();
+fn add_files(cx: &mut App) {
+    pick(cx, |picked, cx| {
+        with_merge(cx, |merge| merge.files.extend(picked));
+        cx.refresh_windows();
+    });
 }
 
 /// Merge into a new tab. `Err` keeps the dialog open.
@@ -142,7 +143,7 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
                 )
                 .child(
                     framed_button("merge-add", "Add files…", true, &palette)
-                        .on_click(|_, window, cx| add_files(window, cx)),
+                        .on_click(|_, _, cx| add_files(cx)),
                 )
                 .child(
                     framed_button("merge-cancel", "Cancel", true, &palette)

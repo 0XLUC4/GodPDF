@@ -385,7 +385,7 @@ pub fn new_field(page: usize, rect: core::Rect, cx: &mut App) {
 
 /// The document in front first, then the files picked.
 fn open_merge(cx: &mut App) {
-    let mut files: Vec<crate::files::PickedFile> = active_tab(cx)
+    let files: Vec<crate::files::PickedFile> = active_tab(cx)
         .map(|tab| {
             let doc = tab.read(cx);
             crate::files::PickedFile {
@@ -397,10 +397,13 @@ fn open_merge(cx: &mut App) {
         .into_iter()
         .collect();
     if files.is_empty() {
-        files = merge::pick(cx);
-        if files.is_empty() {
-            return;
-        }
+        merge::pick(cx, |files, cx| {
+            if !files.is_empty() {
+                state(cx).open = Some(Open::Merge(Merge { files, error: None }));
+                cx.refresh_windows();
+            }
+        });
+        return;
     }
     state(cx).open = Some(Open::Merge(Merge { files, error: None }));
     cx.refresh_windows();

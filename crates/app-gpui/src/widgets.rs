@@ -3,7 +3,7 @@
 
 use gpui::component::tooltip::Tooltip;
 use gpui::prelude::*;
-use gpui::{Action, App, Div, ElementId, Hsla, SharedString, Stateful, div, px};
+use gpui::{Action, App, BoxShadow, Div, ElementId, Hsla, SharedString, Stateful, div, px};
 
 use crate::fonts;
 use crate::theme::{self, Palette};
@@ -27,7 +27,6 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         .text_size(px(size))
         .line_height(px(size))
         .text_color(color)
-        .child(glyph)
 }
 
 /// Glyph then label with egui's `with_icon` gap (two spaces of the label's font, ~`size`/2).
@@ -47,10 +46,39 @@ pub fn with_icon(
         .child(label.into())
 }
 
-/// Attach a hover tooltip, like egui's `on_hover_text`.
+/// Attach a hover tooltip, like egui's `on_hover_text`: an egui popup frame (panel fill,
+/// border, radius 9, margin 8, popup shadow) around body text.
 pub fn tooltip(element: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
     let text = text.into();
-    element.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+    element.tooltip(move |window, cx| {
+        let palette = Palette::of(cx);
+        Tooltip::new(text.clone())
+            .bg(palette.panel)
+            .border_color(palette.border)
+            .rounded(px(theme::MENU_RADIUS))
+            .p(px(theme::MENU_MARGIN))
+            .text_size(px(fonts::BODY))
+            .text_color(palette.text)
+            .shadow(popup_shadow(&palette))
+            .build(window, cx)
+    })
+}
+
+/// An egui `Shadow { offset: [0, y], blur, spread: 0 }` of black at `alpha` (0..1). GPUI's
+/// blur radius is a gaussian deviation, about half of egui's blur width.
+pub fn shadow(y: f32, blur: f32, alpha: f32) -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: gpui::hsla(0., 0., 0., alpha),
+        offset: gpui::point(px(0.), px(y)),
+        blur_radius: px(blur / 2.0),
+        spread_radius: px(0.),
+        inset: false,
+    }]
+}
+
+/// egui `popup_shadow`: menus, tooltips, toasts, the command palette.
+pub fn popup_shadow(palette: &Palette) -> Vec<BoxShadow> {
+    shadow(6.0, 16.0, palette.shadow_alpha * 0.75)
 }
 
 /// egui `icon_widget`: square, frameless until hovered (hover fill, radius 7), glyph in the
@@ -191,6 +219,56 @@ pub fn button(
         .child(label.into())
 }
 
+/// A framed egui button (`ui.button`): surface fill, 1 px border, radius 7, padding 10×5,
+/// height 26; hover fill. `enabled = false` dims the label and drops the hover.
+pub fn framed_button(
+    id: impl Into<ElementId>,
+    label: impl IntoElement,
+    enabled: bool,
+    palette: &Palette,
+) -> Stateful<Div> {
+    let hover = palette.hover;
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .gap(px(fonts::BODY * 0.5))
+        .px(px(theme::BUTTON_PADDING.0))
+        .h(px(theme::INTERACT_HEIGHT))
+        .rounded(px(theme::RADIUS))
+        .bg(palette.surface)
+        .border_1()
+        .border_color(palette.border)
+        .text_size(px(fonts::BODY))
+        .text_color(if enabled {
+            palette.text
+        } else {
+            palette.disabled()
+        })
+        .when(enabled, |button| {
+            button.cursor_pointer().hover(move |style| style.bg(hover))
+        })
+        .child(label)
+}
+
+/// egui's filled button of a dialog's main action (`dialogs::primary_button`): a
+/// [`framed_button`] in the accent colour.
+pub fn accent_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    enabled: bool,
+    palette: &Palette,
+) -> Stateful<Div> {
+    let accent = palette.accent;
+    framed_button(id, label.into(), enabled, palette)
+        .bg(accent)
+        .text_color(palette.on_accent)
+        .when(!enabled, |button| button.opacity(0.5))
+        .hover(move |style| style.bg(accent))
+}
+
 /// Click handler that dispatches `action`, so a button runs the same handler as its shortcut.
 pub fn dispatch(
     action: impl Action + Clone,
@@ -199,6 +277,7 @@ pub fn dispatch(
 }
 
 /// The filled button of a screen's main action.
+#[allow(dead_code)] // dialogs moved to `accent_button`; kept for the welcome screen.
 pub fn primary_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,

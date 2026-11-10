@@ -61,7 +61,13 @@ use theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
 
 /// egui `tools::ALL_TOOLS`, with each command's icon and tint (`Cmd::icon`, `Cmd::tint`).
 const ALL_TOOLS: &[Row] = &[
-    row(Run(|| Box::new(SaveAs)), icons::EXPORT, TEAL, "Export a PDF", ""),
+    row(
+        Run(|| Box::new(SaveAs)),
+        icons::EXPORT,
+        TEAL,
+        "Export a PDF",
+        "",
+    ),
     row(
         Run(|| Box::new(MergeFiles)),
         icons::STACK,
@@ -471,11 +477,12 @@ pub fn render(
                     .pt(px(6.))
                     .flex()
                     .child(
-                        widgets::button("view-more", more, palette)
-                            .on_click(cx.listener(|app, _, _, cx| {
+                        widgets::button("view-more", more, palette).on_click(cx.listener(
+                            |app, _, _, cx| {
                                 app.shell.tools_expanded = !app.shell.tools_expanded;
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     )
                     .into_any_element(),
             );

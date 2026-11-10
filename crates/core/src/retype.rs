@@ -25,7 +25,7 @@ const SLACK: f32 = 1.5;
 /// A transformation, as PDF writes it: `[a b c d e f]`.
 pub(crate) type Matrix = [f32; 6];
 /// A standard font, bold or not, slanted or not.
-type Face = (Font, bool, bool);
+pub(crate) type Face = (Font, bool, bool);
 pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// `first`, then `second`.
@@ -431,7 +431,11 @@ fn take_out(
 }
 
 /// Have `page` know the font the new words are written with. Returns its name there.
-fn add_font(doc: &mut Document, page: ObjectId, (font, bold, italic): Face) -> Result<String> {
+pub(crate) fn add_font(
+    doc: &mut Document,
+    page: ObjectId,
+    (font, bold, italic): Face,
+) -> Result<String> {
     let name = format!("{FONT}{}", font.resource(bold, italic));
     let font = doc.add_object(dictionary! {
         "Type" => "Font",
@@ -591,11 +595,12 @@ fn rewrite(
 /// A font of a page: how wide its letters are, and the standard font closest to it.
 pub(crate) struct PageFont {
     pub(crate) widths: Widths,
-    face: Face,
+    pub(crate) face: Face,
+    pub(crate) unicode: crate::runedit::Unicode,
 }
 
 /// The font a composite font takes its letters from.
-fn descendant<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<&'a Dictionary> {
+pub(crate) fn descendant<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<&'a Dictionary> {
     font.get(b"DescendantFonts")
         .ok()
         .and_then(|list| deref(doc, list))
@@ -809,7 +814,15 @@ pub(crate) fn page_fonts(doc: &Document, page: ObjectId) -> HashMap<Vec<u8>, Pag
             let font = deref(doc, font)?.as_dict().ok()?;
             let widths = Widths::read(doc, font);
             let face = face(doc, font);
-            Some((name.clone(), PageFont { widths, face }))
+            let unicode = crate::runedit::Unicode::read(doc, font);
+            Some((
+                name.clone(),
+                PageFont {
+                    widths,
+                    face,
+                    unicode,
+                },
+            ))
         })
         .collect()
 }

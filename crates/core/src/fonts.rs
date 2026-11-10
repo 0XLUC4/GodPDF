@@ -1,6 +1,6 @@
 use crate::helvetica::win_ansi;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Font {
     #[default]
     Helvetica,

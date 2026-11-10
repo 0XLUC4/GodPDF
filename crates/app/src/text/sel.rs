@@ -109,6 +109,27 @@ pub fn line_of(chars: &[TextChar], index: usize) -> RangeInclusive<usize> {
     first..=last
 }
 
+/// A gap wider than this, in ems, parts two runs of a line: the cells of a table, columns.
+const RUN_GAP: f32 = 1.0;
+
+/// The run of text `index` is in: its line, cut where a gap wider than [`RUN_GAP`] parts it.
+pub fn run_of(chars: &[TextChar], index: usize) -> RangeInclusive<usize> {
+    let line = line_of(chars, index);
+    let parted = |at: usize| {
+        let (prev, next) = (&chars[at - 1], &chars[at]);
+        next.x0 - prev.x1 > RUN_GAP * (next.y1 - next.y0).max(prev.y1 - prev.y0)
+    };
+    let mut first = index.clamp(*line.start(), *line.end());
+    let mut last = first;
+    while first > *line.start() && !parted(first) {
+        first -= 1;
+    }
+    while last < *line.end() && !parted(last + 1) {
+        last += 1;
+    }
+    first..=last
+}
+
 /// One band per line covered by `range`.
 pub fn bands(chars: &[TextChar], range: RangeInclusive<usize>) -> Vec<[f32; 4]> {
     let Some(selected) = chars.get(range) else {
@@ -272,6 +293,42 @@ e"
             ..sel
         };
         assert_eq!(back.range(), Some(3..=4));
+    }
+
+    #[test]
+    fn a_line_parts_into_runs_at_wide_gaps() {
+        let ch = |text: &str, x0: f32| TextChar {
+            text: text.into(),
+            x0,
+            y0: 0.0,
+            x1: x0 + 6.0,
+            y1: 12.0,
+        };
+        // A table row: "to bid" | "bid" | "x"; spaces written or only a gap under one em.
+        let chars = vec![
+            ch("t", 0.0),
+            ch("o", 6.0),
+            ch("b", 16.0),
+            ch("i", 22.0),
+            ch("d", 28.0),
+            ch("b", 100.0),
+            ch(" ", 106.0),
+            ch("d", 112.0),
+            ch("x", 131.0),
+        ];
+        assert_eq!(run_of(&chars, 0), 0..=4);
+        assert_eq!(run_of(&chars, 4), 0..=4);
+        assert_eq!(run_of(&chars, 6), 5..=7);
+        assert_eq!(run_of(&chars, 8), 8..=8);
+        assert_eq!(text(&chars, run_of(&chars, 2)), "to bid");
+        // Another line is never part of it.
+        let mut two = chars.clone();
+        two.push(TextChar {
+            y0: 20.0,
+            y1: 32.0,
+            ..ch("z", 0.0)
+        });
+        assert_eq!(run_of(&two, 9), 9..=9);
     }
 
     #[test]

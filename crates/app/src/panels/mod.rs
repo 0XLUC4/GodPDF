@@ -128,6 +128,13 @@ pub fn open_panel(cx: &App) -> Option<Panel> {
     cx.try_global::<PanelState>().and_then(|state| state.open)
 }
 
+/// Width of the right panel, `None` when it is closed.
+pub fn open_width(cx: &App) -> Option<f32> {
+    cx.try_global::<PanelState>()
+        .filter(|state| state.open.is_some())
+        .map(|state| state.width)
+}
+
 /// Show `panel`, or hide the sidebar when it is already shown.
 pub fn toggle(panel: Panel, cx: &mut App) {
     let state = state(cx);

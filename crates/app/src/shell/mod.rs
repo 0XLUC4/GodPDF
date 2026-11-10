@@ -87,7 +87,6 @@ impl Mode {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Banner {
     Encrypted,
-    Unsaved,
 }
 
 /// What the chrome shows.
@@ -154,13 +153,12 @@ impl GodPdfApp {
         cx.notify();
     }
 
-    /// Switch the header mode.
+    /// Switch the header mode (from the home tab, back to the document in that mode).
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
-        if !self.doc_view() {
-            self.shell.home = self.tabs.is_empty();
-            cx.notify();
+        if self.tabs.is_empty() {
             return;
         }
+        self.shell.home = false;
         self.shell.mode = mode;
         if mode != Mode::Read {
             self.shell.show_tools = true;
@@ -172,6 +170,23 @@ impl GodPdfApp {
             panels::show(panels::Panel::Comments, cx);
         }
         cx.notify();
+    }
+}
+
+/// Narrowest canvas kept: side panels are left out (right first) below it.
+const CANVAS_MIN: f32 = 360.0;
+/// Width of the right rail.
+const RAIL_WIDTH: f32 = 52.0;
+
+/// Which side panels fit a `window` wide body next to a canvas of at least `CANVAS_MIN`:
+/// `(tools, right)` given their widths when shown. Render-time only, nothing is saved.
+fn fit_panels(window: f32, tools: Option<f32>, right: Option<f32>) -> (bool, bool) {
+    let room = window - RAIL_WIDTH - CANVAS_MIN;
+    let (tools, right) = (tools.unwrap_or(0.0), right.unwrap_or(0.0));
+    if tools + right <= room {
+        (true, true)
+    } else {
+        (tools <= room, false)
     }
 }
 
@@ -187,31 +202,40 @@ pub fn render(
         crate::organize::sync_mode(&mut app.shell.mode, tab, cx);
     }
     let tab_row = tabrow::render(app, &palette, window, cx);
-    let header = header::render(app, &palette, cx);
+    let header = header::render(app, &palette, window, cx);
     let body = match active.filter(|_| app.doc_view()) {
-        Some(tab) => div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .children(leftpanel::render(app, &palette, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .children(crate::toasts::bar(&palette, cx))
-                    .children(banner::render(app, tab, &palette, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(crate::organize::center(app, tab, window, cx)),
-                    ),
-            )
-            .children(panels::right(Some(tab), window, cx))
-            .child(rail::render(tab, &palette, cx))
-            .into_any_element(),
+        Some(tab) => {
+            let tools = leftpanel::render(app, &palette, cx);
+            let right = panels::right(Some(tab), window, cx);
+            let (show_tools, show_right) = fit_panels(
+                f32::from(window.viewport_size().width),
+                tools.as_ref().map(|_| app.shell.tools_width),
+                right.as_ref().and_then(|_| panels::open_width(cx)),
+            );
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .children(tools.filter(|_| show_tools))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .children(crate::toasts::bar(&palette, cx))
+                        .children(banner::render(app, tab, &palette, cx))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .child(crate::organize::center(app, tab, window, cx)),
+                        ),
+                )
+                .children(right.filter(|_| show_right))
+                .child(rail::render(tab, &palette, cx))
+                .into_any_element()
+        }
         None => div()
             .flex_1()
             .min_h_0()
@@ -229,4 +253,18 @@ pub fn render(
         .child(header)
         .child(body)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_panels;
+
+    #[test]
+    fn side_panels_give_way_to_the_canvas_right_first() {
+        assert_eq!(fit_panels(1280.0, Some(280.0), Some(320.0)), (true, true));
+        assert_eq!(fit_panels(900.0, Some(280.0), Some(320.0)), (true, false));
+        assert_eq!(fit_panels(640.0, Some(280.0), Some(320.0)), (false, false));
+        assert_eq!(fit_panels(640.0, None, Some(220.0)), (true, true));
+        assert_eq!(fit_panels(700.0, None, Some(320.0)), (true, false));
+    }
 }

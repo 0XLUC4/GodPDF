@@ -157,7 +157,8 @@ pub fn rail_button(
 }
 
 /// Full-width list row: 20 px glyph in `tint` centered 20 px from the left,
-/// label (14) at 42 px, optional dimmed description (13) under it; hover fill radius 8.
+/// label (14) at 42 px, optional dimmed description (13) under it; hover fill radius 8,
+/// `selected` while pressed.
 /// Height 40, or 52 with a description.
 pub fn tool_row(
     id: impl Into<ElementId>,
@@ -167,7 +168,7 @@ pub fn tool_row(
     description: Option<SharedString>,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let hover = palette.hover;
+    let (hover, pressed) = (palette.hover, palette.selected);
     let height = if description.is_some() { 52.0 } else { 40.0 };
     div()
         .id(id)
@@ -180,6 +181,7 @@ pub fn tool_row(
         .rounded(px(8.))
         .cursor_pointer()
         .hover(move |style| style.bg(hover))
+        .active(move |style| style.bg(pressed))
         .child(div().w(px(32.)).flex_none().child(icon(glyph, 20.0, tint)))
         .child(
             div()
@@ -202,19 +204,21 @@ pub fn tool_row(
 }
 
 /// A ghost text button: transparent, `hover` fill on hover, `selected` while pressed;
-/// height 28, padding 12, radius 6. Add `.on_click(..)`, e.g. [`dispatch`].
+/// height 28, padding 12, radius 6. Add `.on_click(..)`, e.g. [`dispatch`]. An empty
+/// `label` adds nothing, so a custom child is not pushed right by the 6 px gap.
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     palette: &Palette,
 ) -> Stateful<Div> {
     let (hover, pressed) = (palette.hover, palette.selected);
+    let label: SharedString = label.into();
     base_button(id)
         .text_color(palette.text)
         .cursor_pointer()
         .hover(move |style| style.bg(hover))
         .active(move |style| style.bg(pressed))
-        .child(label.into())
+        .when(!label.is_empty(), |button| button.child(label))
 }
 
 /// Shape shared by the text buttons: height 28, padding 12, radius 6, body text, no border.

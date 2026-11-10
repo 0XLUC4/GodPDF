@@ -137,9 +137,11 @@ is left.
   document, all but All tools) `text_dim` at 50 %; hover fill (not active) 8 px in from top
   and bottom, radius 6; active underline 2 px at the bottom, 11 px in from each side, radius
   1, `text`. Pointer cursor when enabled.
-- Right, right to left with spacing 6: `PRINTER` "Print… (Ctrl+P)", `EXPORT` "Save a copy…
+- Right, right to left with spacing 6: `PRINTER` "Print… (Ctrl+P)", `FLOPPY_DISK_BACK` "Save As…
   (Ctrl+Shift+S)", `FLOPPY_DISK` "Save (Ctrl+S)", `INFO` "Document properties" (disabled
   without a document), 6 px, the search pill, then a spinner "Working…" while a job runs.
+  Under 900 px wide the pill is a `MAGNIFYING_GLASS` icon button; the mode tabs are clipped
+  before the right buttons.
 - Search pill: width `available - 40` clamped 140..300, height 32, radius 16, fill `bg`, 1 px
   `border` (`text_dim` when hovered), `MAGNIFYING_GLASS` 16 dim 10 px in, "Find
   tools and commands" 14 dim at 34 px (ellipsis), shortcut "Ctrl+K" 12 dim 14 px from the
@@ -210,9 +212,10 @@ Rows are `widgets::tool_row`.
 ### Banner: `src/shell/banner.rs`
 
 Over the canvas only (between the side panels). Fill `bg`, at least 36 high, padding 16 left
-/ 8 right, hairline under it. Glyph 16 dim (`LOCK` encrypted on save / `INFO` unsaved),
-text 13, right: a secondary button ("Remove password" / "Save") and small `X` "Dismiss" (per
-document and kind).
+/ 8 right, hairline under it. Glyph 16 dim (`LOCK` encrypted on save),
+text 13, right: a secondary button ("Remove password") and small `X` "Dismiss" (per
+document). No unsaved banner: it would push the page down on the first edit; the tab's `*`
+and Save say it.
 
 ### Notifications: `src/toasts.rs`
 

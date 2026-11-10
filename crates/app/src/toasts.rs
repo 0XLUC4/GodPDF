@@ -65,7 +65,8 @@ pub fn bar(palette: &Palette, cx: &App) -> Option<AnyElement> {
             .pl(px(16.))
             .pr(px(8.))
             .py(px(4.))
-            .bg(palette.error.opacity(0.1))
+            // Opaque: the tint over `bg`, whatever sits behind the bar.
+            .bg(palette.bg.blend(palette.error.opacity(0.1)))
             .border_b_1()
             .border_color(palette.error.opacity(0.25))
             .text_size(px(fonts::BODY))

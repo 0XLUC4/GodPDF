@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
@@ -45,10 +45,18 @@ enum Preview {
     Unreadable,
 }
 
+/// How long the modified times of the recent files are trusted before they are read again.
+const STAT_EVERY: Duration = Duration::from_secs(2);
+
 /// First-page previews of the recent files, by path and the modified time they show.
 #[derive(Default)]
 struct Previews {
     cards: HashMap<PathBuf, (SystemTime, Preview)>,
+    /// Modified time of each recent file (`None` = not found), read off the UI thread.
+    times: HashMap<PathBuf, Option<SystemTime>>,
+    /// When `times` was last read, and whether a read is running.
+    read_at: Option<Instant>,
+    reading: bool,
     /// Images dropped from the cache; their GPU textures are freed on the next render.
     evicted: Vec<Arc<RenderImage>>,
 }
@@ -82,13 +90,47 @@ fn render_first_page(path: &Path, max_px: u32) -> Preview {
     }
 }
 
-/// The modified time of each recent file (`None` = not found); previews of files gone from
-/// the list or changed on disk are dropped, missing ones start rendering.
+/// Read the modified times of `recent` in the background when they are older than
+/// [`STAT_EVERY`] (a file on a sleeping network drive can take seconds to answer).
+fn refresh_times(recent: &[PathBuf], cx: &mut Context<GodPdfApp>) {
+    let previews = cx.default_global::<Previews>();
+    if previews.reading || previews.read_at.is_some_and(|at| at.elapsed() < STAT_EVERY) {
+        return;
+    }
+    previews.reading = true;
+    let paths = recent.to_vec();
+    let read = cx.background_executor().spawn(async move {
+        paths
+            .into_iter()
+            .map(|path| {
+                let time = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                (path, time)
+            })
+            .collect::<HashMap<_, _>>()
+    });
+    cx.spawn(async move |this, cx| {
+        let times = read.await;
+        let _ = this.update(cx, |_, cx| {
+            let previews = cx.default_global::<Previews>();
+            previews.times = times;
+            previews.read_at = Some(Instant::now());
+            previews.reading = false;
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+/// Whether each recent file exists (true until first looked at); previews of files gone
+/// from the list or changed on disk are dropped, missing ones start rendering.
 fn sync_previews(
     recent: &[PathBuf],
     window: &mut Window,
     cx: &mut Context<GodPdfApp>,
-) -> Vec<Option<SystemTime>> {
+) -> Vec<bool> {
+    refresh_times(recent, cx);
     let max_px = (PREVIEW.1 * window.scale_factor()).round() as u32;
     let previews = cx.default_global::<Previews>();
     for image in previews.evicted.drain(..) {
@@ -105,15 +147,15 @@ fn sync_previews(
         previews.forget(&path);
     }
 
-    let mut modified = Vec::with_capacity(recent.len());
+    let mut exists = Vec::with_capacity(recent.len());
     for path in recent {
-        // shortcut: one stat per file per frame, fine for 8 local files; cache it if a slow
-        // (network) drive makes the welcome screen lag.
-        let time = std::fs::metadata(path)
-            .and_then(|meta| meta.modified())
-            .ok();
-        modified.push(time);
         let previews = cx.default_global::<Previews>();
+        let Some(&time) = previews.times.get(path) else {
+            // Not looked at yet (just opened): shown as there, without a preview.
+            exists.push(true);
+            continue;
+        };
+        exists.push(time.is_some());
         let Some(time) = time else {
             previews.forget(path);
             continue;
@@ -149,7 +191,7 @@ fn sync_previews(
         })
         .detach();
     }
-    modified
+    exists
 }
 
 pub fn render(
@@ -159,7 +201,7 @@ pub fn render(
     cx: &mut Context<GodPdfApp>,
 ) -> AnyElement {
     let recent = app.shell.recent.clone();
-    let modified = sync_previews(&recent, window, cx);
+    let exists = sync_previews(&recent, window, cx);
     if recent.is_empty() {
         return div()
             .flex_1()
@@ -172,9 +214,9 @@ pub fn render(
     }
     let items: Vec<AnyElement> = recent
         .iter()
-        .zip(modified)
+        .zip(exists)
         .enumerate()
-        .map(|(index, (path, time))| item(index, path, time.is_some(), palette, cx))
+        .map(|(index, (path, exists))| item(index, path, exists, palette, cx))
         .collect();
     div()
         .id("welcome")
@@ -351,4 +393,11 @@ fn item(
             )
         })
         .into_any_element()
+}
+
+/// The recent file `path` was last seen missing (from the times the home screen reads).
+pub fn is_missing(path: &Path, cx: &gpui::App) -> bool {
+    cx.try_global::<Previews>()
+        .and_then(|previews| previews.times.get(path))
+        .is_some_and(Option::is_none)
 }

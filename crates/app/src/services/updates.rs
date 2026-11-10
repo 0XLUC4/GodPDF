@@ -3,6 +3,7 @@
 //! file and restarts on the new one.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use gpui::{App, Global};
 
@@ -97,7 +98,11 @@ pub fn check(cx: &mut App) {
         cx.update(|cx| {
             cx.default_global::<Updates>().state = match result {
                 Ok(releases) => State::Ready(releases),
-                Err(err) => State::Failed(err),
+                // The detail goes to the log; the 256 px card says what to do.
+                Err(err) => {
+                    eprintln!("{}: update check failed: {err}", crate::APP_NAME);
+                    State::Failed("Check your connection and try again.".to_owned())
+                }
             };
             cx.refresh_windows();
         });
@@ -106,10 +111,14 @@ pub fn check(cx: &mut App) {
 }
 
 /// Download `url` over the program, then quit (asking about unsaved work) to restart on it.
-/// A failure is a toast.
+/// A failure shows in the error bar. Already installed (the quit was cancelled): quit again.
 pub fn install(url: String, cx: &mut App) {
     let updates = cx.default_global::<Updates>();
-    if matches!(updates.install, Install::Downloading) || updates.restart.is_some() {
+    if updates.restart.is_some() {
+        quit(cx);
+        return;
+    }
+    if matches!(updates.install, Install::Downloading) {
         return;
     }
     updates.install = Install::Downloading;
@@ -125,14 +134,7 @@ pub fn install(url: String, cx: &mut App) {
                 Ok(program) => {
                     updates.restart = Some(program);
                     updates.open = false;
-                    // Through the Quit action: unsaved documents are asked about first.
-                    if let Some(window) =
-                        cx.active_window().or_else(|| cx.windows().first().copied())
-                    {
-                        let _ = window.update(cx, |_, window, cx| {
-                            window.dispatch_action(Box::new(crate::app::Quit), cx)
-                        });
-                    }
+                    quit(cx);
                 }
                 Err(err) => crate::toasts::error(cx, err),
             }
@@ -140,6 +142,15 @@ pub fn install(url: String, cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// Quit through the Quit action, so unsaved documents are asked about first.
+fn quit(cx: &mut App) {
+    if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
+        let _ = window.update(cx, |_, window, cx| {
+            window.dispatch_action(Box::new(crate::app::Quit), cx)
+        });
+    }
 }
 
 /// The app is quitting: start the new program when an update was installed.
@@ -155,8 +166,19 @@ fn user_agent() -> &'static str {
     concat!("GodPDF/", env!("CARGO_PKG_VERSION"))
 }
 
+/// An HTTP client that gives up: 15 s to connect, `total` for the whole call (a captive
+/// portal or a stalled link must not leave "Checking…" spinning forever).
+fn agent(total: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_global(Some(total))
+        .build()
+        .into()
+}
+
 fn fetch() -> Result<Vec<Release>, String> {
-    let body = ureq::get(RELEASES_API)
+    let body = agent(Duration::from_secs(20))
+        .get(RELEASES_API)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", user_agent())
         .call()
@@ -183,7 +205,8 @@ fn replace_program(url: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|err| format!("Cannot find GodPDF: {err}"))?;
     let new = exe.with_extension("new.exe");
     let old = old_program(&exe);
-    let mut response = ureq::get(url)
+    let mut response = agent(Duration::from_secs(10 * 60))
+        .get(url)
         .header("User-Agent", user_agent())
         .call()
         .map_err(|err| format!("Cannot download the update: {err}"))?;

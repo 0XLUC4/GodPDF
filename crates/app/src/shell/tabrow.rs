@@ -50,7 +50,7 @@ impl GodPdfApp {
         self.active = self.tabs.iter().position(|tab| *tab == kept).unwrap_or(0);
         self.shell.home = false;
         if unsaved > 0 {
-            toasts::info(
+            toasts::error(
                 cx,
                 format!("{unsaved} document(s) with unsaved changes stay open"),
             );
@@ -72,7 +72,7 @@ pub fn render(
             content()
                 .w_full()
                 .justify_center()
-                .child(icon(icons::HOUSE, 16.0, palette.text)),
+                .child(icon(icons::HOUSE, 17.0, palette.text)),
         )
         .on_click(cx.listener(|app, _, _, cx| {
             if !app.tabs.is_empty() {
@@ -82,13 +82,7 @@ pub fn render(
         }));
     let home = widgets::tooltip(home, "Home");
 
-    // Share what is left between the tabs; names shrink before anything overflows (the
-    // row width less margins 8 + 8, the 2 px lead and the home tab with its spacing).
-    let available = f32::from(window.viewport_size().width) - 16.0 - 2.0 - 40.0 - 2.0;
-    let reserved = 2.0 * ICON_BUTTON + 100.0;
-    let chrome = 12.0 + 16.0 + 8.0 + 8.0 + SMALL_ICON_BUTTON + 22.0;
-    let per_tab = (available - reserved) / app.tabs.len().max(1) as f32;
-    let text_max = (per_tab - chrome).clamp(40.0, TAB_TEXT_MAX);
+    let text_max = tab_text_max(f32::from(window.viewport_size().width), app.tabs.len());
 
     let state = TabMenu {
         app: cx.weak_entity(),
@@ -133,6 +127,7 @@ pub fn render(
     };
     let right = div()
         .ml_auto()
+        .flex_none()
         .flex()
         .items_center()
         .gap(px(2.))
@@ -143,6 +138,13 @@ pub fn render(
         )
         .child(widgets::icon_button("theme", glyph, tip, palette).on_click(dispatch(ToggleTheme)));
 
+    // Tabs past the room left are clipped, never the buttons on the right.
+    let tabs = div()
+        .flex()
+        .min_w_0()
+        .overflow_hidden()
+        .gap(px(2.))
+        .children(tabs);
     div()
         .id("tab-row")
         .flex_none()
@@ -156,11 +158,26 @@ pub fn render(
         .bg(palette.surface)
         .text_size(px(fonts::BODY))
         .child(home)
-        .children(tabs)
-        .child(div().w(px(6. - 2.)))
+        .child(tabs)
+        .child(div().flex_none().w(px(6. - 2.)))
         .child(open)
         .child(right)
         .into_any_element()
+}
+
+/// Width of "+ Open": padding 12 + 12, `PLUS` 14, gap 7, "Open" at 14 (about 33).
+const OPEN_WIDTH: f32 = 78.0;
+
+/// Widest name a tab may show so `count` tabs fit a `viewport` wide row: the row less its
+/// margins 8 + 8, the 2 px lead, the home tab with its gap, the 4 px spacer, "+ Open" and the
+/// three icon buttons with their gaps, then 2 px per tab and the tab chrome
+/// (12 + 16 + 8 + 14 + 8 + 22 + 8). Clamped to 40..=`TAB_TEXT_MAX`.
+fn tab_text_max(viewport: f32, count: usize) -> f32 {
+    let available = viewport - 16.0 - 2.0 - 40.0 - 2.0;
+    let reserved = 4.0 + 2.0 + OPEN_WIDTH + 2.0 + 3.0 * ICON_BUTTON + 2.0 * 2.0;
+    let chrome = 12.0 + 16.0 + 8.0 + 14.0 + 8.0 + SMALL_ICON_BUTTON + 8.0;
+    let per_tab = (available - reserved) / count.max(1) as f32 - 2.0;
+    (per_tab - chrome).clamp(40.0, TAB_TEXT_MAX)
 }
 
 /// What the right-click menu of a tab needs.
@@ -357,4 +374,18 @@ fn doc_tab(
             cx.listener(move |app, _, window, cx| app.request_close(index, window, cx)),
         );
     widgets::tooltip(tab, tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TAB_TEXT_MAX, tab_text_max};
+
+    #[test]
+    fn names_shrink_with_more_tabs_but_stay_readable() {
+        assert_eq!(tab_text_max(1280.0, 1), TAB_TEXT_MAX);
+        let six = tab_text_max(1280.0, 6);
+        assert!(six < TAB_TEXT_MAX && six > 40.0);
+        assert!(tab_text_max(1280.0, 7) < six);
+        assert_eq!(tab_text_max(640.0, 20), 40.0);
+    }
 }

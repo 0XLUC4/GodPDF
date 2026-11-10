@@ -19,8 +19,15 @@ use crate::{fonts, icons};
 /// Search pill: `available - 40` clamped to 140..=300.
 const SEARCH_MAX: f32 = 300.0;
 const SEARCH_MIN: f32 = 140.0;
+/// Narrower windows get a magnifier button instead of the pill, so the right buttons stay.
+const SEARCH_PILL_FROM: f32 = 900.0;
 
-pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -> AnyElement {
+pub fn render(
+    app: &GodPdfApp,
+    palette: &Palette,
+    window: &Window,
+    cx: &mut Context<GodPdfApp>,
+) -> AnyElement {
     let doc_view = app.doc_view();
     let undo_redo = app.active_tab().map_or((None, None), |tab| {
         let session = &tab.read(cx).session;
@@ -33,7 +40,13 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         doc_view,
         has_doc: !app.tabs.is_empty(),
         undo_redo,
-        recent: app.shell.recent.clone(),
+        recent: app
+            .shell
+            .recent
+            .iter()
+            .map(|path| (path.clone(), !super::welcome::is_missing(path, cx)))
+            .collect(),
+        reopen: !app.shell.closed.is_empty(),
     };
     let menu = Button::new("menu")
         .ghost()
@@ -62,7 +75,11 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
     let buttons = [
         (icons::INFO, "Document properties", "properties"),
         (icons::FLOPPY_DISK, "Save (Ctrl+S)", "save"),
-        (icons::EXPORT, "Save a copy… (Ctrl+Shift+S)", "save-as"),
+        (
+            icons::FLOPPY_DISK_BACK,
+            "Save As… (Ctrl+Shift+S)",
+            "save-as",
+        ),
         (icons::PRINTER, "Print… (Ctrl+P)", "print"),
     ]
     .map(|(glyph, tip, id)| {
@@ -79,6 +96,18 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         }
     });
 
+    let search = if f32::from(window.viewport_size().width) < SEARCH_PILL_FROM {
+        widgets::icon_button(
+            "search-button",
+            icons::MAGNIFYING_GLASS,
+            "Command palette (Ctrl+K)",
+            palette,
+        )
+        .on_click(dispatch(CommandPalette))
+    } else {
+        search_field(palette)
+    };
+
     // TODO(header): the "Ctrl+K" hint shows even when the pill is under 200 px.
     div()
         .flex_none()
@@ -92,17 +121,25 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         .text_size(px(fonts::BODY))
         .child(menu)
         // Item spacing 8 after the Menu button, then 14.
-        .child(div().w(px(8. + 14.)))
-        .child(div().flex().gap(px(2.)).children(tabs))
+        .child(div().flex_none().w(px(8. + 14.)))
+        // On a narrow window the mode tabs are clipped, never the buttons on the right.
+        .child(
+            div()
+                .flex()
+                .min_w_0()
+                .overflow_hidden()
+                .gap(px(2.))
+                .children(tabs),
+        )
         .child(
             div()
                 .ml_auto()
-                .pl(px(40.))
+                .pl(px(16.))
                 .flex()
                 .items_center()
                 .gap(px(6.))
                 .children(crate::services::working(palette, cx))
-                .child(search_field(palette))
+                .child(search)
                 .child(div().w(px(0.)))
                 .children(buttons),
         )
@@ -216,7 +253,10 @@ struct MenuState {
     has_doc: bool,
     /// Labels of the undo / redo steps of the document in front.
     undo_redo: (Option<SharedString>, Option<SharedString>),
-    recent: Vec<PathBuf>,
+    /// Recent files, and whether each was last seen on disk.
+    recent: Vec<(PathBuf, bool)>,
+    /// A closed tab can be opened again.
+    reopen: bool,
 }
 
 impl MenuState {
@@ -241,6 +281,7 @@ impl MenuState {
         let has_doc = self.has_doc;
         let (undo, redo) = self.undo_redo.clone();
         let recent = self.recent.clone();
+        let reopen = self.reopen;
         let app = self.app.clone();
         menu.min_w(px(200.))
             .item(toggle)
@@ -253,14 +294,15 @@ impl MenuState {
                     if recent.is_empty() {
                         return menu.label("Nothing yet");
                     }
-                    let text = Palette::of(cx).text;
-                    recent.iter().fold(menu, |menu, path| {
-                        let (app, path) = (app.clone(), path.clone());
-                        let label: SharedString = path.display().to_string().into();
+                    let palette = Palette::of(cx);
+                    recent.iter().fold(menu, |menu, (path, exists)| {
+                        let (app, path, exists) = (app.clone(), path.clone(), *exists);
+                        let (name, folder) = name_and_folder(&path);
                         menu.item(
                             PopupMenuItem::element(move |_, _| {
-                                div().text_color(text).child(label.clone())
+                                recent_entry(name.clone(), folder.clone(), exists, &palette)
                             })
+                            .disabled(!exists)
                             .on_click(move |_, _, cx| {
                                 let _ = app.update(cx, |app, cx| app.open_path(&path, cx));
                             }),
@@ -268,18 +310,23 @@ impl MenuState {
                     })
                 });
                 let mut menu = command(menu, "Merge PDFs…", has_doc, cx).separator();
-                for label in ["Save", "Save As…", "Print…", "Export pages…"] {
+                for label in [
+                    "Save",
+                    "Save As…",
+                    "Print…",
+                    "Export pages…",
+                    "Export as images…",
+                ] {
                     menu = command(menu, label, has_doc, cx);
                 }
                 let menu = command(menu.separator(), "Close tab", has_doc, cx);
-                let reopen = Box::new(ReopenTab);
                 let menu = entry_item(
                     menu,
                     icons::CLOCK_COUNTER_CLOCKWISE,
                     "Reopen closed tab".into(),
                     "Ctrl+Shift+T",
+                    Box::new(ReopenTab),
                     reopen,
-                    true,
                     cx,
                 );
                 command(menu, "Quit", has_doc, cx)
@@ -352,6 +399,7 @@ impl MenuState {
                 })
             })
             .submenu("Help", window, cx, move |menu, _, cx| {
+                let menu = command(menu, "Updates", has_doc, cx);
                 command(menu, "About GodPDF", has_doc, cx)
             })
     }
@@ -391,6 +439,46 @@ fn entry_item(
             .action(action)
             .disabled(!enabled),
     )
+}
+
+/// File name and its folder, for a recent file entry.
+fn name_and_folder(path: &std::path::Path) -> (SharedString, SharedString) {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let folder = path
+        .parent()
+        .map(|folder| folder.display().to_string())
+        .unwrap_or_default();
+    (name.into(), folder.into())
+}
+
+/// A recent file entry: `FILE_PDF`, the name, then its folder dimmed, cut with "…" at 360.
+fn recent_entry(name: SharedString, folder: SharedString, exists: bool, palette: &Palette) -> Div {
+    let (color, dim) = if exists {
+        (palette.text, palette.text_dim)
+    } else {
+        (palette.disabled(), palette.disabled())
+    };
+    div()
+        .max_w(px(360.))
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(7.))
+        .text_size(px(fonts::BODY))
+        .child(icon(icons::FILE_PDF, fonts::BODY, color))
+        .child(div().flex_none().text_color(color).child(name))
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(dim)
+                .child(folder),
+        )
 }
 
 /// A menu entry with a shortcut: glyph and label
@@ -433,7 +521,7 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Zoom in" => (icons::MAGNIFYING_GLASS_PLUS, "Ctrl++"),
         "Zoom out" => (icons::MAGNIFYING_GLASS_MINUS, "Ctrl+-"),
         "Fit width" => (icons::ARROWS_OUT_LINE_HORIZONTAL, "Ctrl+0"),
-        "Fit page" => (icons::CORNERS_OUT, ""),
+        "Fit page" => (icons::FRAME_CORNERS, ""),
         "Toggle sidebar" => (icons::SIDEBAR_SIMPLE, ""),
         "Export pages…" => (icons::EXPORT, ""),
         "Reopen closed tab" => (icons::CLOCK_COUNTER_CLOCKWISE, "Ctrl+Shift+T"),
@@ -464,7 +552,7 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Crop pages…" => (icons::CROP, ""),
         "Change page size…" => (icons::RESIZE, ""),
         "Cut pages in half…" => (icons::SQUARE_SPLIT_HORIZONTAL, ""),
-        "Pages per sheet…" => (icons::SQUARES_FOUR, ""),
+        "Pages per sheet…" => (icons::GRID_FOUR, ""),
         "Make a booklet" => (icons::BOOK_OPEN, ""),
         "Join into one long page" => (icons::ROWS, ""),
         "Number pages…" => (icons::LIST_NUMBERS, ""),
@@ -478,6 +566,10 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Ink" => (icons::PENCIL_SIMPLE, "D"),
         "Picture" => (icons::IMAGE, "I"),
         "Eraser" => (icons::ERASER, "E"),
+        "Bring to front" => (icons::ARROW_CIRCLE_UP, ""),
+        "Bring forward" => (icons::ARROW_UP, ""),
+        "Send backward" => (icons::ARROW_DOWN, ""),
+        "Send to back" => (icons::STACK_SIMPLE, ""),
         "Encrypt with password…" => (icons::LOCK, ""),
         "Remove password" => (icons::LOCK_OPEN, ""),
         "Remove hidden data" => (icons::BROOM, ""),

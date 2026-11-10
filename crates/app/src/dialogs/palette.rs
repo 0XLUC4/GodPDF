@@ -120,7 +120,7 @@ fn look(command: &Command) -> (&'static str, u32) {
         "Crop pages…" => CROP,
         "Change page size…" => RESIZE,
         "Cut pages in half…" => SQUARE_SPLIT_HORIZONTAL,
-        "Pages per sheet…" => SQUARES_FOUR,
+        "Pages per sheet…" => GRID_FOUR,
         "Make a booklet" => BOOK_OPEN,
         "Join into one long page" => ROWS,
         "Number pages…" => LIST_NUMBERS,

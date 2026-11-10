@@ -1,12 +1,13 @@
 //! Info banner over the canvas: fill `bg`, 36 high, padding 16 / 8, a `border` line under
 //! it. Glyph 16 dim + text (13), then on the right a secondary button and a small dismiss
-//! cross. Dismissed per document.
+//! cross. Dismissed per document. Unsaved changes show in the tab (`*`) only: a banner
+//! appearing on the first edit would push the page down mid-stroke.
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, Entity, div, px};
 
 use super::Banner;
-use crate::app::{GodPdfApp, Save};
+use crate::app::GodPdfApp;
 use crate::dialogs::{self, RemovePassword};
 use crate::doc::DocTab;
 use crate::theme::{self, Palette};
@@ -20,30 +21,13 @@ pub fn render(
     cx: &mut Context<GodPdfApp>,
 ) -> Option<AnyElement> {
     let id = tab.entity_id();
-    let kind = if dialogs::has_password(id, cx) {
-        Banner::Encrypted
-    } else if tab.read(cx).is_dirty() {
-        Banner::Unsaved
-    } else {
-        return None;
-    };
-    let key = (id, kind);
-    if app.shell.dismissed.contains(&key) {
+    let key = (id, Banner::Encrypted);
+    if !dialogs::has_password(id, cx) || app.shell.dismissed.contains(&key) {
         return None;
     }
-    let (glyph, text, label) = match kind {
-        Banner::Encrypted => (
-            icons::LOCK,
-            "This document will be saved with a password.",
-            "Remove password",
-        ),
-        Banner::Unsaved => (icons::INFO, "This document has unsaved changes.", "Save"),
-    };
-    let action = widgets::framed_button("banner-action", label, true, palette);
-    let action = match kind {
-        Banner::Encrypted => action.on_click(dispatch(RemovePassword)),
-        Banner::Unsaved => action.on_click(dispatch(Save)),
-    };
+    let (glyph, text) = (icons::LOCK, "This document will be saved with a password.");
+    let action = widgets::framed_button("banner-action", "Remove password", true, palette)
+        .on_click(dispatch(RemovePassword));
     Some(
         div()
             .flex_none()

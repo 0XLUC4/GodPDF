@@ -243,6 +243,19 @@ pub(super) fn report(result: Result<(), String>, cx: &mut App) {
     }
 }
 
+impl Canvas {
+    /// Text is being typed in a free text box or a form field (not yet in the document).
+    pub fn typing(&self) -> bool {
+        self.editor.is_some() || self.fields.typing()
+    }
+
+    /// Forget the selection and the move ghost: they name annotations of older bytes.
+    pub fn forget_selection(&mut self) {
+        self.selected = None;
+        self.ghost = None;
+    }
+}
+
 /// Leave whatever is going on: finish the text being typed, drop gesture and selection.
 pub fn reset(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     editor::commit(tab, cx);

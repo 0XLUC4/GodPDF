@@ -41,6 +41,13 @@ pub struct Fields {
     edit: Option<FieldEdit>,
 }
 
+impl Fields {
+    /// A text field is being typed in.
+    pub(super) fn typing(&self) -> bool {
+        self.edit.is_some()
+    }
+}
+
 /// A text field being typed in. `rect` is in displayed points.
 struct FieldEdit {
     page: usize,

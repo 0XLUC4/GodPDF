@@ -248,7 +248,15 @@ active one tinted blue (`theme::BLUE` glyph on blue at 16 %); groups Select Hand
 Highlight Ink Rectangle Picture Stamp | Redact Eraser | undo `ARROW_U_UP_LEFT` / redo
 `ARROW_U_UP_RIGHT`, split by 1 px dividers 20 wide. Tooltips carry the shortcut.
 Style card 8 px to its right, top-aligned, same card; columns one button wide, 4 apart, each
-under a 9 px `text_dim` heading 14 high (Type, Colour / Stroke, Fill, Size / Width). Colours
+under a 12 px `text_dim` glyph 14 high whose tooltip names it (Type `SHAPES`, Colour `DROP` /
+Stroke `PEN`, Fill `PAINT_BUCKET`, Size `TEXT_AA` / Width `RULER`). Cards carry no titles nor
+hints: icon controls with tooltips, numbers (sizes, counts, mm fields) stay visible. Eraser:
+`STACK` comments / `ERASER` page content toggles, then the brush stepper (+, size, -) for the
+page. Stamp: the labels (rows 32 high, 4 columns wide), `CALENDAR_CHECK` date toggle. Redact
+(only once areas are marked): count, `CHECK` apply (red), `X` clear. Picture: one glyph per
+field (`ARROWS_HORIZONTAL` W, `ARROWS_VERTICAL` H, `ARROW_LINE_RIGHT` X, `ARROW_LINE_DOWN` Y; mm
+in the tooltip), `LINK_SIMPLE` keep proportions, `ARROWS_OUT_SIMPLE` original size. Note,
+Picture, Sign and Field show no card. Colours
 are dots 18 in a 26 ring, 2 apart: 2 px `text_dim` stroke with a 2 px gap on the current one,
 `border` on hover. Only light colours (and No fill) get a 1 px `border` outline. Circles get
 exactly half their side as radius (`circle_radius`). The Fill column opens with No fill: a white dot with a red slash.
@@ -259,7 +267,7 @@ for both): padding 10, gap 10, title + `X`; saturation / value square 192 × 128
 192 × 12 (six gradient segments of 32), radius 6, knobs 14 with a 2 px white ring; preview
 chip 40 × 26 and a hex field (`#RRGGBB`, `RRGGBB`, `#RGB`); "Recent" (9 dim) and the last 6
 custom colours (settings `recent_colors`). A colour is applied on release, Enter or a click
-(one undo step). Text cards (stamp, redact, picture) pad 10. Tool glyphs: Select `CURSOR`,
+(one undo step). Tool glyphs: Select `CURSOR`,
 Hand `HAND`, Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`,
 Rectangle `SQUARE`, Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
 

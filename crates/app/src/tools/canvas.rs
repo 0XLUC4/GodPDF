@@ -11,16 +11,16 @@ use godpdf_core::{
 use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;
 use gpui::{
-    Action, AnyElement, App, Context, CursorStyle, Div, FontWeight, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Pixels, Point, RenderImage, Window,
-    black, canvas, div, img, point, px, rgb, white,
+    Action, AnyElement, App, Context, CursorStyle, Div, FillOptions, FontWeight, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, PathStyle, Pixels, Point, RenderImage,
+    Window, black, canvas, div, img, point, px, rgb, white,
 };
 
 use super::geom::{self, DRect};
 use super::{Tool, current_tool, editor, fields, hsla, richtext, sign, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
-use crate::{icons, toasts};
+use crate::{icons, text, toasts};
 
 /// Screen pixels around an annotation that still count as hitting it.
 const HIT_SLOP: f32 = 3.0;
@@ -33,8 +33,10 @@ const PREVIEW_OPACITY: f32 = 0.4;
 const TINY: f32 = 3.0;
 /// Outline of an area marked for redaction.
 const REDACT_RED: u32 = 0xD92D20;
-/// Opacity of the page eraser's brush path.
-const BRUSH_OPACITY: f32 = 0.35;
+/// Opacity of the area the page eraser has brushed so far.
+const BRUSH_OPACITY: f32 = 0.2;
+/// Side of the brush circle of the comment eraser, in screen pixels.
+const ELEMENT_BRUSH: f32 = 14.0;
 
 /// The annotation selected on a page.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +78,8 @@ enum Gesture {
         page: usize,
         points: Vec<(f32, f32)>,
     },
+    /// Select or a text markup dragged over page text (the selection is in `DocTab::text`).
+    Text,
 }
 
 /// An annotation shown away from where the page picture has it: while it is moved or
@@ -100,7 +104,7 @@ impl Gesture {
             | Self::Move { page, .. }
             | Self::Resize { page, .. }
             | Self::Brush { page, .. } => Some(*page),
-            Self::Pan { .. } | Self::Erase { .. } => None,
+            Self::Pan { .. } | Self::Erase { .. } | Self::Text => None,
         }
     }
 }
@@ -123,6 +127,8 @@ pub struct Canvas {
     pub(super) fields: fields::Fields,
     /// The pixels of the picture last hovered, selected or moved, drawn while it is moved.
     picture: Option<PictureImage>,
+    /// Where the eraser's brush circle is drawn: page and displayed point of the pointer.
+    pointer: Option<(usize, (f32, f32))>,
 }
 
 /// A picture annotation decoded once to be drawn at the pointer, image `None` while decoding.
@@ -322,6 +328,11 @@ fn on_down(
         Tool::Stamp => place_stamp(tab, page, point, cx),
         Tool::Sign => sign::click(tab, page, point, cx),
         Tool::Redact if unmark_at(tab, page, point) => {}
+        Tool::Highlight | Tool::Underline | Tool::StrikeOut
+            if text::select_from(tab, page, point, event.click_count) =>
+        {
+            tab.canvas.gesture = Some(Gesture::Text);
+        }
         Tool::Highlight
         | Tool::Underline
         | Tool::StrikeOut
@@ -396,8 +407,13 @@ fn select_down(
         id: item.id.clone(),
     });
     let Some(item) = hit else {
+        // Annotations come first; then the page text under the pointer.
+        if text::select_from(tab, page, point, clicks) {
+            tab.canvas.gesture = Some(Gesture::Text);
+        }
         return;
     };
+    text::clear_selection(tab);
     if clicks >= 2 && item.is_text() {
         editor::open_text(tab, page, point, false, window, cx);
     } else if clicks >= 2 && item.is_note() {
@@ -522,13 +538,34 @@ fn picture_pixels(picture: &Picture) -> Result<RenderImage, String> {
 }
 
 fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Context<DocTab>) {
+    let tool = current_tool(cx);
+    if tool == Tool::Eraser {
+        tab.canvas.pointer = page_point(tab, page, event.position).map(|point| (page, point));
+        cx.notify();
+    }
     let Some(gesture) = &tab.canvas.gesture else {
         lift_hovered(tab, page, event.position, cx);
+        if text::picks_text(tool)
+            && let Some(point) = page_point(tab, page, event.position)
+            && text::hover(tab, page, point)
+        {
+            cx.notify();
+        }
         return;
     };
     // The button went up somewhere we did not hear about.
     if !event.dragging() {
         finish(tab, cx);
+        return;
+    }
+    if matches!(gesture, Gesture::Text) {
+        // Measured from the page the selection is on, wherever the pointer is.
+        if let Some(point) =
+            text::selection_page(tab).and_then(|at| page_point(tab, at, event.position))
+        {
+            text::select_to(tab, point);
+        }
+        cx.notify();
         return;
     }
     let gesture_page = gesture.page();
@@ -595,7 +632,7 @@ fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Conte
                 points.push(point);
             }
         }
-        None => return,
+        Some(Gesture::Text) | None => return,
     }
     if let Some(delta) = pan {
         tab.scroll_by(delta);
@@ -616,6 +653,7 @@ fn finish(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     };
     match gesture {
         Gesture::Draw { page, points } => commit_draw(tab, page, &points, cx),
+        Gesture::Text if current_tool(cx) != Tool::Select => commit_markup(tab, cx),
         Gesture::Brush { page, points } => erase_content(tab, page, &points, cx),
         Gesture::Move { offset, .. } if offset.0.hypot(offset.1) < geom::MIN_MOVE => {}
         Gesture::Move { .. } | Gesture::Resize { .. } => {
@@ -731,9 +769,30 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
             tab.canvas.redactions.push((page, rect));
             return;
         }
-        Tool::Highlight => ("Highlight", Annotation::Highlight { rect, color }),
-        Tool::Underline => ("Underline", Annotation::Underline { rect, color }),
-        Tool::StrikeOut => ("Strikethrough", Annotation::StrikeOut { rect, color }),
+        Tool::Highlight => (
+            "Highlight",
+            Annotation::Highlight {
+                rect,
+                color,
+                quads: Vec::new(),
+            },
+        ),
+        Tool::Underline => (
+            "Underline",
+            Annotation::Underline {
+                rect,
+                color,
+                quads: Vec::new(),
+            },
+        ),
+        Tool::StrikeOut => (
+            "Strikethrough",
+            Annotation::StrikeOut {
+                rect,
+                color,
+                quads: Vec::new(),
+            },
+        ),
         Tool::Rectangle => (
             "Rectangle",
             Annotation::Square {
@@ -776,6 +835,46 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
             fields::new_field(tab, page, first, last, tiny, cx);
             return;
         }
+        _ => return,
+    };
+    let result = tab.apply(label, |pdf| {
+        godpdf_core::add_annotation(pdf, page, &annotation)
+    });
+    report(result, cx);
+}
+
+/// A text markup over the characters selected by the drag: one quad per line (one undo step).
+fn commit_markup(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+    let selected = text::selected_lines(tab);
+    text::clear_selection(tab);
+    let Some((page, lines)) = selected else {
+        return;
+    };
+    let Some((geom, displayed)) = page_frame(tab, page) else {
+        return;
+    };
+    let quads: Vec<Rect> = lines
+        .iter()
+        .map(|&[x0, y0, x1, y1]| DRect { x0, y0, x1, y1 }.to_pdf(&geom, displayed))
+        .collect();
+    let Some(&first) = quads.first() else {
+        return;
+    };
+    let rect = quads.iter().fold(first, |all, quad| Rect {
+        x0: all.x0.min(quad.x0),
+        y0: all.y0.min(quad.y0),
+        x1: all.x1.max(quad.x1),
+        y1: all.y1.max(quad.y1),
+    });
+    let tool = current_tool(cx);
+    let color = tool_state(cx).styles.of(tool).color;
+    let (label, annotation) = match tool {
+        Tool::Highlight => ("Highlight", Annotation::Highlight { rect, color, quads }),
+        Tool::Underline => ("Underline", Annotation::Underline { rect, color, quads }),
+        Tool::StrikeOut => (
+            "Strikethrough",
+            Annotation::StrikeOut { rect, color, quads },
+        ),
         _ => return,
     };
     let result = tab.apply(label, |pdf| {
@@ -977,8 +1076,7 @@ fn erase_at(
     let Some(items) = items(tab, page, cx) else {
         return false;
     };
-    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
-    let Some(index) = geom::hit_test(&rects, point, HIT_SLOP / tab.view.zoom) else {
+    let Some(index) = under_brush(&items, point, tab.view.zoom) else {
         return false;
     };
     let id = &items[index].id;
@@ -991,6 +1089,12 @@ fn erase_at(
     let erased = result.is_ok();
     report(result, cx);
     erased
+}
+
+/// The annotation the comment eraser's circle at `point` touches (the topmost).
+fn under_brush(items: &[Item], point: (f32, f32), zoom: f32) -> Option<usize> {
+    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
+    geom::hit_test(&rects, point, ELEMENT_BRUSH / 2.0 / zoom)
 }
 
 /// Take out the page content under the brush path `points` (one undo step).
@@ -1047,12 +1151,15 @@ fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
     Hsla { a: alpha, ..color }
 }
 
-fn cursor(tool: Tool, gesture: Option<&Gesture>) -> CursorStyle {
+/// The page's cursor; `over_text` when the pointer is on page text.
+fn cursor(tool: Tool, gesture: Option<&Gesture>, over_text: bool) -> CursorStyle {
     match (tool, gesture) {
         (_, Some(Gesture::Pan { .. } | Gesture::Move { .. })) => grab(true),
         (_, Some(Gesture::Resize { corner, text, .. })) => corner_cursor(*corner, *text),
+        (_, Some(Gesture::Text)) => CursorStyle::IBeam,
         (Tool::Hand, _) => grab(false),
         (Tool::Text, _) => CursorStyle::IBeam,
+        (tool, None) if over_text && text::picks_text(tool) => CursorStyle::IBeam,
         (Tool::Select, _) => CursorStyle::Arrow,
         _ => CursorStyle::Crosshair,
     }
@@ -1134,11 +1241,18 @@ pub fn page_overlay(
     tab.canvas.ghost = settled;
     let gesture = tab.canvas.gesture.as_ref();
     let mut layer = div()
+        .id(("canvas-page", page))
         .absolute()
         .top_0()
         .left_0()
         .size_full()
-        .cursor(cursor(tool, gesture))
+        .cursor(cursor(tool, gesture, text::over_text(tab)))
+        .on_hover(cx.listener(move |tab, hovered: &bool, _, cx| {
+            if !hovered && tab.canvas.pointer.is_some_and(|(at, _)| at == page) {
+                tab.canvas.pointer = None;
+                cx.notify();
+            }
+        }))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |tab, event, window, cx| on_down(tab, page, event, window, cx)),
@@ -1168,7 +1282,7 @@ pub fn page_overlay(
     // Hover feedback and cursors come from boxes over each annotation.
     // The page eraser brushes the page itself: no comment boxes then.
     let erasing_comments = tool == Tool::Eraser && !tool_state(cx).erase_content;
-    if gesture.is_none() && (tool == Tool::Select || erasing_comments) {
+    if gesture.is_none() && tool == Tool::Select {
         let selected_id = tab
             .canvas
             .selected
@@ -1179,19 +1293,27 @@ pub fn page_overlay(
             if Some(&item.id) == selected_id.as_ref() {
                 continue;
             }
-            let hover = boxed(item.rect, zoom, 1.0);
-            layer = layer.child(if tool == Tool::Eraser {
-                hover.hover(|style| style.border_1().border_dashed().border_color(black()))
-            } else {
-                hover
+            layer = layer.child(
+                boxed(item.rect, zoom, 1.0)
                     .cursor(if item.movable() {
                         grab(false)
                     } else {
                         CursorStyle::PointingHand
                     })
-                    .hover(move |style| style.border_1().border_color(hover_grey))
-            });
+                    .hover(move |style| style.border_1().border_color(hover_grey)),
+            );
         }
+    }
+    // The comment eraser tints what its circle would take.
+    let pointer = tab
+        .canvas
+        .pointer
+        .filter(|(at, _)| *at == page && tool == Tool::Eraser)
+        .map(|(_, point)| point);
+    if erasing_comments
+        && let Some(index) = pointer.and_then(|point| under_brush(&items, point, zoom))
+    {
+        layer = layer.child(boxed(items[index].rect, zoom, 1.0).bg(with_alpha(red, 0.18)));
     }
 
     // The selection, where the gesture in progress puts it.
@@ -1254,13 +1376,39 @@ pub fn page_overlay(
         && *brushed == page
     {
         let brush = tool_state(cx).brush;
-        // A click is a dot: a path needs two points.
-        let mut path = points.clone();
-        if path.len() == 1 {
-            path.push((path[0].0 + 0.01, path[0].1));
-        }
-        let tint = with_alpha(rgb(REDACT_RED).into(), BRUSH_OPACITY);
-        layer = layer.child(strokes(vec![path], brush, tint, None, zoom));
+        let centres = geom::brush_squares(points, brush)
+            .iter()
+            .map(|square| ((square.x0 + square.x1) / 2.0, (square.y0 + square.y1) / 2.0))
+            .collect();
+        layer = layer.child(discs(
+            centres,
+            brush / 2.0,
+            with_alpha(black(), BRUSH_OPACITY),
+            zoom,
+        ));
+    }
+    // A markup dragged over text: its look over the characters picked so far.
+    let marking = matches!(gesture, Some(Gesture::Text)) && tool != Tool::Select;
+    if marking
+        && let Some((at, bands)) = text::selected_lines(tab)
+        && at == page
+    {
+        let color = hsla(tool_state(cx).styles.of(tool).color);
+        let lines: Vec<DRect> = bands
+            .iter()
+            .map(|&[x0, y0, x1, y1]| DRect { x0, y0, x1, y1 })
+            .collect();
+        layer = layer.child(markup(tool, &lines, color, zoom));
+    }
+    if let Some(point) = pointer
+        && tab.canvas.editor.is_none()
+    {
+        let side = if tool_state(cx).erase_content {
+            tool_state(cx).brush * zoom
+        } else {
+            ELEMENT_BRUSH
+        };
+        layer = layer.child(brush_ring(point, side, zoom, cx));
     }
     // Over the comments: a click on a form field fills it in.
     if tool == Tool::Select && tab.canvas.editor.is_none() {
@@ -1380,6 +1528,77 @@ fn shape(
     Some(element)
 }
 
+/// A text markup over `lines` (displayed points), one box or bar per line.
+fn markup(tool: Tool, lines: &[DRect], color: Hsla, zoom: f32) -> AnyElement {
+    div()
+        .absolute()
+        .inset_0()
+        .children(lines.iter().filter_map(|line| {
+            shape(
+                tool,
+                &[(line.x0, line.y0), (line.x1, line.y1)],
+                color,
+                0.0,
+                None,
+                zoom,
+            )
+        }))
+        .into_any_element()
+}
+
+/// The eraser's brush under the pointer: a circle `side` pixels wide centred on `point`
+/// (displayed points), a crisp outline in the text colour over a halo, so it shows on any page.
+fn brush_ring(point: (f32, f32), side: f32, zoom: f32, cx: &App) -> Div {
+    let palette = crate::theme::Palette::of(cx);
+    let side = side.max(4.0).round();
+    let outer = side + 2.0;
+    div()
+        .absolute()
+        .left(px(point.0 * zoom - outer / 2.0))
+        .top(px(point.1 * zoom - outer / 2.0))
+        .size(px(outer))
+        .rounded(px(outer / 2.0))
+        .border_1()
+        .border_color(with_alpha(palette.bg, 0.8))
+        .child(
+            div()
+                .size(px(side))
+                .rounded(px(side / 2.0))
+                .border(px(1.5))
+                .border_color(palette.text)
+                .bg(with_alpha(palette.text, 0.12)),
+        )
+}
+
+/// Discs of `radius` points around `centres` (displayed points), painted as one area so their
+/// overlaps do not darken.
+fn discs(centres: Vec<(f32, f32)>, radius: f32, color: Hsla, zoom: f32) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let mut area = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
+            for &(x, y) in &centres {
+                let circle: Vec<Point<Pixels>> = (0..32)
+                    .map(|step| {
+                        let angle = step as f32 / 32.0 * std::f32::consts::TAU;
+                        let (dx, dy) = (radius * angle.cos(), radius * angle.sin());
+                        bounds.origin + point(px((x + dx) * zoom), px((y + dy) * zoom))
+                    })
+                    .collect();
+                area.add_polygon(&circle, true);
+            }
+            if let Ok(area) = area.build() {
+                window.paint_path(area, color);
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
 /// A ghost over its page: the page without the annotation (once rendered; until then the
 /// page as it is, the original showing under the stand-in), then the annotation where it is
 /// now: drawn anew (text, vector kinds, stamps), pictures from their own pixels at whole
@@ -1425,14 +1644,23 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec
                     .into_any_element(),
             )
         }
-        Annotation::Highlight { color, .. } => {
-            shape(Tool::Highlight, &corners, hsla(*color), 0.0, None, zoom)
-        }
-        Annotation::Underline { color, .. } => {
-            shape(Tool::Underline, &corners, hsla(*color), 0.0, None, zoom)
-        }
-        Annotation::StrikeOut { color, .. } => {
-            shape(Tool::StrikeOut, &corners, hsla(*color), 0.0, None, zoom)
+        Annotation::Highlight { color, quads, .. }
+        | Annotation::Underline { color, quads, .. }
+        | Annotation::StrikeOut { color, quads, .. } => {
+            let tool = match &ghost.annotation {
+                Annotation::Highlight { .. } => Tool::Highlight,
+                Annotation::Underline { .. } => Tool::Underline,
+                _ => Tool::StrikeOut,
+            };
+            let lines: Vec<DRect> = if quads.is_empty() {
+                vec![ghost.dst]
+            } else {
+                quads
+                    .iter()
+                    .map(|quad| DRect::from_pdf(&geom, displayed, quad))
+                    .collect()
+            };
+            Some(markup(tool, &lines, hsla(*color), zoom))
         }
         Annotation::Square {
             color, width, fill, ..

@@ -81,9 +81,16 @@ around the pointer.
   and the ghost stays until the page is rendered again (`DocTab::page_settled`).
 - Right click on the selection: Bring to front / forward, Send backward / to back
   (`reorder_annotation`; Ctrl+Shift+] / Ctrl+] / Ctrl+[ / Ctrl+Shift+[), Delete.
-- Eraser: "Erase elements" removes the comments it touches; "Erase page content" brushes
-  the page (`ToolState::brush` points wide) and on release `erase_content` removes the
-  text under the path and paints it white (one undo step "Erase").
+- Eraser: a brush circle follows the pointer (`Canvas::pointer`). "Erase elements" removes
+  the comments its 14 px circle touches (the one it would take is tinted red); "Erase page
+  content" brushes the page (`ToolState::brush` points wide, the brushed area a soft grey) and
+  on release `erase_content` removes the text under the path and paints it white (one undo
+  step "Erase").
+- Page text: with Select, Highlight, Underline and StrikeOut the canvas picks text where no
+  annotation is hit (`text::select_from` / `select_to`, `Gesture::Text`; I-beam over text):
+  drag by character in reading order, double click a word, triple click a line, Ctrl+A the
+  page, Ctrl+C copies. A markup drag over text writes one annotation with one quad per line;
+  off text it draws the old rectangle.
 - Keys: V H T N D R I E, O L A (ellipse, line, arrow), U K (underline, strikeout), S stamp, X redact pick a tool, Delete / Backspace delete the selection, Esc drops it,
   all in the context `GodPdf && !Input` so they never fire while typing. In a text box
   (context `TextBox`): Ctrl+B / I / U, Ctrl+Enter writes it, Esc cancels.

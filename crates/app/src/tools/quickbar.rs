@@ -5,7 +5,6 @@
 use godpdf_core::{Annotation, CharStyle, Color, Font, StampLabel};
 use gpui::component::Sizable;
 use gpui::component::button::Button;
-use gpui::component::checkbox::Checkbox;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui::prelude::*;
@@ -40,10 +39,9 @@ const CARD_RADIUS: f32 = BUTTON_RADIUS + PAD;
 /// Between the bar and the cards beside it, and between the style card's columns.
 const CARD_GAP: f32 = 8.0;
 const COLUMN_GAP: f32 = 4.0;
-const LABEL_WIDTH: f32 = 44.0;
-const FIELD_WIDTH: f32 = 100.0;
-/// Stamp and redact cards.
-const HINT_CARD_WIDTH: f32 = 190.0;
+/// Picture card: the glyph naming a field, and the field.
+const LABEL_WIDTH: f32 = 20.0;
+const FIELD_WIDTH: f32 = 96.0;
 
 /// The fields of the picture card (created once, reused for every picture).
 pub struct PictureCard {
@@ -206,7 +204,7 @@ fn apply(tab: &mut DocTab, change: Change, window: &mut Window, cx: &mut Context
 fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation {
     let color = style.color;
     match annotation.clone() {
-        Annotation::Highlight { rect, .. } => Annotation::Highlight { rect, color },
+        Annotation::Highlight { rect, quads, .. } => Annotation::Highlight { rect, color, quads },
         Annotation::Square { rect, .. } => Annotation::Square {
             rect,
             color,
@@ -228,8 +226,8 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
             width: style.width,
             arrow,
         },
-        Annotation::Underline { rect, .. } => Annotation::Underline { rect, color },
-        Annotation::StrikeOut { rect, .. } => Annotation::StrikeOut { rect, color },
+        Annotation::Underline { rect, quads, .. } => Annotation::Underline { rect, color, quads },
+        Annotation::StrikeOut { rect, quads, .. } => Annotation::StrikeOut { rect, color, quads },
         Annotation::Ink { strokes, .. } => Annotation::Ink {
             strokes,
             color,
@@ -436,11 +434,8 @@ fn style_card(
     let (kind, style, formats) = match target(tab, cx) {
         Target::Tool(tool) => match tool_kind(tool) {
             Some(kind) => (kind, tool_state(cx).styles.of(tool), None),
-            None if matches!(tool, Tool::Note | Tool::Picture | Tool::Sign | Tool::Field) => {
-                return Some(hint_card(tool.hint(), palette));
-            }
             None if tool == Tool::Stamp => return Some(stamp_card(palette, cx)),
-            None if tool == Tool::Redact => return Some(redact_card(tab, palette, cx)),
+            None if tool == Tool::Redact => return redact_card(tab, palette, cx),
             None if tool == Tool::Eraser => return Some(eraser_card(palette, cx)),
             None => return None,
         },
@@ -470,14 +465,12 @@ fn style_card(
             Column::Stroke => (Some(style.color), "swatch"),
             Column::Fill => (style.fill, "fill"),
         };
-        let mut swatches = column_of(
-            match (column, kind) {
-                (Column::Fill, _) => "Fill",
-                (Column::Stroke, Kind::Shape) => "Stroke",
-                (Column::Stroke, _) => "Colour",
-            },
-            palette,
-        );
+        let (glyph, name) = match (column, kind) {
+            (Column::Fill, _) => (icons::PAINT_BUCKET, "Fill"),
+            (Column::Stroke, Kind::Shape) => (icons::PEN, "Stroke"),
+            (Column::Stroke, _) => (icons::DROP, "Colour"),
+        };
+        let mut swatches = column_of(id, glyph, name, palette);
         if column == Column::Fill {
             swatches = swatches.child(widgets::tooltip(
                 swatch("fill-none", None, style.fill.is_none(), palette)
@@ -526,8 +519,11 @@ fn style_card(
     };
     let colors = swatch_column(Column::Stroke);
     let fills = (kind == Kind::Shape).then(|| swatch_column(Column::Fill));
-    let mut controls =
-        column_of(if kind == Kind::Text { "Size" } else { "Width" }, palette).gap(px(4.));
+    let mut controls = match kind {
+        Kind::Text => column_of("size", icons::TEXT_AA, "Size", palette),
+        _ => column_of("width", icons::RULER, "Width", palette),
+    }
+    .gap(px(4.));
     match kind {
         Kind::Text => {
             controls = stepper(
@@ -576,7 +572,7 @@ fn style_card(
         Kind::Fill => {}
     }
     let group = group.map(|(tool, group)| {
-        let mut column = column_of("Type", palette);
+        let mut column = column_of("type", icons::SHAPES, "Type", palette);
         for &member in group {
             column = column.child(widgets::tooltip(
                 icon_button(
@@ -629,40 +625,63 @@ fn style_card(
     )
 }
 
-/// A column of the style card, one button wide, under its 9 px `text_dim` heading.
-fn column_of(heading: &'static str, palette: &Palette) -> Div {
+/// A column of the style card, one button wide, under its 12 px `text_dim` glyph (14 high)
+/// whose tooltip names it.
+fn column_of(id: &str, glyph: &'static str, name: &'static str, palette: &Palette) -> Div {
     div()
         .flex()
         .flex_col()
         .items_center()
         .gap(px(2.))
         .w(px(BUTTON))
-        .child(
+        .child(widgets::tooltip(
             div()
+                .id(SharedString::from(format!("heading-{id}")))
                 .h(px(14.))
-                .text_size(px(9.))
-                .line_height(px(14.))
-                .text_color(palette.text_dim)
-                .child(heading),
-        )
+                .flex()
+                .items_center()
+                .child(widgets::icon(glyph, 12.0, palette.text_dim)),
+            name,
+        ))
 }
 
-/// Card title: body text (Ubuntu Light has no bold).
-fn card_title(text: &'static str) -> Div {
-    div().text_size(px(fonts::BODY)).child(text)
+/// An icon toggle of a card with its tooltip; `on` gets the accent tint.
+fn toggle(
+    id: &'static str,
+    glyph: &'static str,
+    tip: &'static str,
+    on: bool,
+    palette: &Palette,
+    click: impl Fn(&mut App) + 'static,
+) -> Stateful<Div> {
+    widgets::tooltip(
+        icon_button(id, widgets::glyph(glyph), on, true, palette).on_click(move |_, _, cx| {
+            click(cx);
+            cx.refresh_windows();
+        }),
+        tip,
+    )
 }
 
-/// The column of a text card (padding 10, item spacing 6).
-fn text_card(palette: &Palette) -> Div {
-    card(palette)
-        .p(px(10.))
-        .flex()
-        .flex_col()
-        .gap(px(6.))
-        .text_size(px(fonts::BODY))
+/// A small 9 px number of a card (a size, a count), with its tooltip.
+fn value_label(
+    id: &'static str,
+    value: String,
+    tip: &'static str,
+    palette: &Palette,
+) -> Stateful<Div> {
+    widgets::tooltip(
+        div()
+            .id(id)
+            .text_size(px(9.))
+            .line_height(px(14.))
+            .text_color(palette.text)
+            .child(value),
+        tip,
+    )
 }
 
-/// The stamp tool's preset picker: one row per label, in the stamp's colour, and the date.
+/// The stamp tool's preset picker/// The stamp tool's preset picker: one row per label, in the stamp's colour, and the date.
 fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
     let state = tool_state(cx);
     let (current, dated) = (state.stamp, state.stamp_date);
@@ -672,7 +691,7 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
         list = list.child(
             div()
                 .id(SharedString::from(format!("stamp-{label:?}")))
-                .h(px(28.))
+                .h(px(BUTTON))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -692,98 +711,92 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
                 }),
         );
     }
-    text_card(palette)
-        .w(px(HINT_CARD_WIDTH))
-        .child(card_title("Stamp"))
+    card(palette)
+        .w(px(card_width(4)))
+        .flex()
+        .flex_col()
+        .gap(px(BAR_GAP))
+        .text_size(px(fonts::BODY))
         .child(list)
-        .child(
-            Checkbox::new("stamp-date")
-                .label("Add today's date")
-                .checked(dated)
-                .on_click(|checked: &bool, _, cx: &mut App| {
-                    tool_state(cx).stamp_date = *checked;
-                    cx.refresh_windows();
-                }),
-        )
-        .child(div().text_color(palette.text_dim).child(Tool::Stamp.hint()))
+        .child(toggle(
+            "stamp-date",
+            icons::CALENDAR_CHECK,
+            "Add today's date",
+            dated,
+            palette,
+            move |cx| tool_state(cx).stamp_date = !dated,
+        ))
         .into_any_element()
 }
 
-/// The redact tool's card: how many areas are marked, clear them, or apply them for good
-/// after a warning.
-fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
+/// The redact tool's card once areas are marked: their count, apply them for good after a
+/// warning, or clear them.
+fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> Option<AnyElement> {
     let count = tab.canvas.redactions.len();
-    let mut actions = div().flex().flex_col().gap(px(4.));
-    if count > 0 {
-        actions = actions
-            .child(
-                widgets::accent_button("redact-apply", "Apply redactions…", true, palette)
-                    .on_click(
-                        cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)),
-                    ),
-            )
-            .child(
-                widgets::framed_button("redact-clear", "Clear marks", true, palette).on_click(
-                    cx.listener(|tab, _: &ClickEvent, _, cx| {
-                        tab.canvas.redactions.clear();
-                        cx.notify();
-                    }),
-                ),
-            );
+    if count == 0 {
+        return None;
     }
-    text_card(palette)
-        .w(px(HINT_CARD_WIDTH))
-        .child(card_title("Redact"))
-        .child(
-            div()
-                .text_color(palette.text_dim)
-                .child(Tool::Redact.hint()),
-        )
-        .child(div().child(match count {
-            0 => "No area marked".to_owned(),
-            1 => "1 area marked".to_owned(),
-            count => format!("{count} areas marked"),
-        }))
-        .child(actions)
-        .into_any_element()
+    let apply = icon_button(
+        "redact-apply",
+        widgets::glyph(icons::CHECK),
+        false,
+        true,
+        palette,
+    )
+    .text_color(theme::hex(theme::RED))
+    .on_click(cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)));
+    let clear = icon_button(
+        "redact-clear",
+        widgets::glyph(icons::X),
+        false,
+        true,
+        palette,
+    )
+    .on_click(cx.listener(|tab, _: &ClickEvent, _, cx| {
+        tab.canvas.redactions.clear();
+        cx.notify();
+    }));
+    Some(
+        card(palette)
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(2.))
+            .child(value_label(
+                "redact-count",
+                count.to_string(),
+                "Areas marked",
+                palette,
+            ))
+            .child(widgets::tooltip(apply, "Apply redactions…"))
+            .child(widgets::tooltip(clear, "Clear marks"))
+            .into_any_element(),
+    )
 }
 
 /// Smallest and largest page eraser brush, and its step, in points.
 const BRUSH_RANGE: (f32, f32, f32) = (4.0, 64.0, 4.0);
 
-/// The eraser's card: what it erases (a two-option toggle), and the brush size for the page.
+/// The eraser's card: what it erases (two icon toggles), and the page brush size.
 fn eraser_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
     let state = tool_state(cx);
     let (content, brush) = (state.erase_content, state.brush);
-    let option = |id: &'static str, glyph: &'static str, label: &'static str, on: bool| {
-        let hover = palette.hover;
-        div()
-            .id(id)
-            .h(px(28.))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .when(on == content, |row| row.bg(palette.selected))
-            .when(on != content, |row| row.hover(move |style| style.bg(hover)))
-            .child(widgets::with_icon(glyph, label, fonts::BODY, palette.text))
-            .on_click(move |_, _, cx: &mut App| {
-                tool_state(cx).erase_content = on;
-                cx.refresh_windows();
-            })
+    let mode = |id, glyph, tip, on: bool| {
+        toggle(id, glyph, tip, on == content, palette, move |cx| {
+            tool_state(cx).erase_content = on;
+        })
     };
-    let toggle = div()
+    let modes = div()
         .flex()
         .flex_col()
-        .gap(px(2.))
-        .child(option(
+        .gap(px(BAR_GAP))
+        .child(mode(
             "erase-elements",
             icons::STACK,
-            "Erase elements",
+            "Erase comments",
             false,
         ))
-        .child(option(
+        .child(mode(
             "erase-content",
             icons::ERASER,
             "Erase page content",
@@ -803,39 +816,34 @@ fn eraser_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
     };
     let size = div()
         .flex()
+        .flex_col()
         .items_center()
-        .gap(px(6.))
-        .child(div().flex_1().child("Brush"))
-        .child(step(
-            "brush-smaller",
-            icons::MINUS,
-            "Smaller brush",
-            -BRUSH_RANGE.2,
-        ))
-        .child(
-            div()
-                .w(px(36.))
-                .flex()
-                .justify_center()
-                .child(format!("{brush:.0} pt")),
-        )
+        .gap(px(4.))
+        .w(px(BUTTON))
         .child(step(
             "brush-larger",
             icons::PLUS,
             "Larger brush",
             BRUSH_RANGE.2,
+        ))
+        .child(value_label(
+            "brush-size",
+            format!("{brush:.0}"),
+            "Brush size (points)",
+            palette,
+        ))
+        .child(step(
+            "brush-smaller",
+            icons::MINUS,
+            "Smaller brush",
+            -BRUSH_RANGE.2,
         ));
-    let hint = if content {
-        "Drag over the page: text under the brush is removed, the rest painted white"
-    } else {
-        "Click or drag over comments to erase them"
-    };
-    text_card(palette)
-        .w(px(HINT_CARD_WIDTH))
-        .child(card_title("Eraser"))
-        .child(toggle)
+    card(palette)
+        .flex()
+        .items_start()
+        .gap(px(COLUMN_GAP))
+        .child(modes)
         .when(content, |card| card.child(size))
-        .child(div().text_color(palette.text_dim).child(hint))
         .into_any_element()
 }
 
@@ -1019,21 +1027,6 @@ where
         ))
 }
 
-/// A card one button wide with an info glyph; the hint is its tooltip.
-fn hint_card(text: &'static str, palette: &Palette) -> AnyElement {
-    card(palette)
-        .child(widgets::tooltip(
-            div()
-                .id("tool-hint")
-                .w(px(BUTTON))
-                .flex()
-                .justify_center()
-                .child(widgets::icon(icons::INFO, fonts::BODY, palette.text_dim)),
-            text,
-        ))
-        .into_any_element()
-}
-
 /// Font menu: "Aa" in the current font on a framed button; the menu lists every font
 /// in its own face.
 fn font_menu(current: Font, palette: &Palette) -> AnyElement {
@@ -1198,18 +1191,32 @@ fn picture_card(
     // Grid spacing 8 × 6.
     let mut rows = div().flex().flex_col().gap(px(6.));
     for (field, state) in &fields {
+        let (glyph, tip) = match field {
+            PictureField::Width => (icons::ARROWS_HORIZONTAL, "Width (mm)"),
+            PictureField::Height => (icons::ARROWS_VERTICAL, "Height (mm)"),
+            PictureField::X => (icons::ARROW_LINE_RIGHT, "X from the page's left edge (mm)"),
+            PictureField::Y => (icons::ARROW_LINE_DOWN, "Y from the page's top edge (mm)"),
+        };
         rows = rows.child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .child(div().w(px(LABEL_WIDTH)).flex_none().child(field.label()))
+                .child(widgets::tooltip(
+                    div()
+                        .id(SharedString::from(format!("picture-{}", field.label())))
+                        .w(px(LABEL_WIDTH))
+                        .flex_none()
+                        .flex()
+                        .justify_center()
+                        .child(widgets::icon(glyph, 16.0, palette.text_dim)),
+                    tip,
+                ))
                 .child(
-                    div().w(px(FIELD_WIDTH)).flex_none().child(
-                        Input::new(state)
-                            .small()
-                            .suffix(div().text_xs().text_color(palette.text_dim).child("mm")),
-                    ),
+                    div()
+                        .w(px(FIELD_WIDTH))
+                        .flex_none()
+                        .child(Input::new(state).small()),
                 ),
         );
     }
@@ -1219,14 +1226,10 @@ fn picture_card(
         x1: rect.x0 + natural.0,
         y1: rect.y0 + natural.1,
     };
-    let original_size = widgets::framed_button(
+    let original_size = icon_button(
         "picture-original-size",
-        widgets::with_icon(
-            icons::ARROWS_OUT_SIMPLE,
-            "Original size",
-            fonts::BODY,
-            palette.text,
-        ),
+        widgets::glyph(icons::ARROWS_OUT_SIMPLE),
+        false,
         true,
         palette,
     )
@@ -1234,26 +1237,29 @@ fn picture_card(
         set_picture_rect(tab, page, &id, original, cx);
         cx.notify();
     }));
+    let buttons = div()
+        .flex()
+        .gap(px(BAR_GAP))
+        .child(toggle(
+            "picture-keep-ratio",
+            icons::LINK_SIMPLE,
+            "Keep proportions",
+            keep,
+            palette,
+            move |cx| tool_state(cx).keep_ratio = !keep,
+        ))
+        .child(widgets::tooltip(
+            original_size,
+            "Original size (96 pixels to the inch)",
+        ));
     Some(
-        text_card(palette)
-            .items_start()
-            .child(card_title("Picture size"))
+        card(palette)
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .text_size(px(fonts::BODY))
             .child(rows)
-            .child(
-                div()
-                    .text_color(palette.text_dim)
-                    .child("X and Y from the page's top-left corner"),
-            )
-            .child(
-                Checkbox::new("picture-keep-ratio")
-                    .label("Keep proportions")
-                    .checked(keep)
-                    .on_click(|checked: &bool, _, cx: &mut App| {
-                        tool_state(cx).keep_ratio = *checked;
-                        cx.refresh_windows();
-                    }),
-            )
-            .child(widgets::tooltip(original_size, "96 pixels to the inch"))
+            .child(buttons)
             .into_any_element(),
     )
 }

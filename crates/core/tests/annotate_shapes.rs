@@ -134,6 +134,7 @@ fn underline_and_strike_out_carry_quad_points() {
             Annotation::Underline {
                 rect: RECT,
                 color: RED,
+                quads: Vec::new(),
             },
             "Underline",
             "Underline",
@@ -142,6 +143,7 @@ fn underline_and_strike_out_carry_quad_points() {
             Annotation::StrikeOut {
                 rect: RECT,
                 color: RED,
+                quads: Vec::new(),
             },
             "StrikeOut",
             "Strikethrough",
@@ -157,6 +159,71 @@ fn underline_and_strike_out_carry_quad_points() {
             dict.get(b"QuadPoints").unwrap().as_array().unwrap().len(),
             8
         );
+    }
+}
+
+fn quads_of(annotation: &Annotation) -> Vec<Rect> {
+    match annotation {
+        Annotation::Highlight { quads, .. }
+        | Annotation::Underline { quads, .. }
+        | Annotation::StrikeOut { quads, .. } => quads.clone(),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn text_markup_keeps_one_quad_per_line() {
+    let lines = vec![
+        Rect {
+            x0: 150.0,
+            y0: 140.0,
+            x1: 220.0,
+            y1: 160.0,
+        },
+        Rect {
+            x0: 100.0,
+            y0: 100.0,
+            x1: 180.0,
+            y1: 120.0,
+        },
+    ];
+    let kinds = [
+        Annotation::Highlight {
+            rect: RECT,
+            color: RED,
+            quads: lines.clone(),
+        },
+        Annotation::Underline {
+            rect: RECT,
+            color: RED,
+            quads: lines.clone(),
+        },
+        Annotation::StrikeOut {
+            rect: RECT,
+            color: RED,
+            quads: lines.clone(),
+        },
+    ];
+    for annotation in kinds {
+        let (pdf, rect, back) = round_trip(&annotation);
+        assert_eq!(back, annotation);
+        assert_eq!(rect, RECT, "/Rect is the box around the lines");
+        let (dict, appearance) = written(&pdf);
+        let quads = dict.get(b"QuadPoints").unwrap().as_array().unwrap();
+        assert_eq!(quads.len(), 16);
+        assert_eq!(appearance.matches(" re").count(), 2, "{appearance}");
+        // Moving moves every line; resizing scales them with the box.
+        let quads = quads_of(&back.translated(10.0, -5.0));
+        assert_eq!(quads[1], lines[1].translated(10.0, -5.0));
+        let to = Rect {
+            x0: 100.0,
+            y0: 100.0,
+            x1: 340.0,
+            y1: 160.0,
+        };
+        let quads = quads_of(&back.fitted(RECT, to));
+        assert_eq!((quads[0].x0, quads[0].x1), (200.0, 340.0));
+        assert_eq!((quads[1].x0, quads[1].x1), (100.0, 260.0));
     }
 }
 

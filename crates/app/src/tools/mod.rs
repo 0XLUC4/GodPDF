@@ -231,30 +231,6 @@ impl Tool {
             None => self.label().to_owned(),
         }
     }
-
-    /// One-line hint shown in the style card of tools without styles.
-    fn hint(self) -> &'static str {
-        match self {
-            Self::Note => "Click where the sticky note goes",
-            Self::Picture => "Click where the picture goes, or drag the box it fills",
-            Self::Text => "Click on the page to type",
-            Self::Highlight => "Drag over the area to highlight",
-            Self::Ink => "Draw freehand on the page",
-            Self::Rectangle => "Drag to draw a rectangle",
-            Self::Ellipse => "Drag to draw an ellipse",
-            Self::Line => "Drag to draw a line",
-            Self::Arrow => "Drag to draw an arrow",
-            Self::Underline => "Drag over the text to underline",
-            Self::StrikeOut => "Drag over the text to strike through",
-            Self::Stamp => "Pick a stamp, then click where it goes",
-            Self::Redact => "Drag over what to remove; click a mark to drop it",
-            Self::Sign => "Click where your signature goes",
-            Self::Field => "Drag the box of the field, or click for one of standard size",
-            Self::Hand => "Drag to move around",
-            Self::Eraser => "Click or drag over comments to erase them, or brush page content away",
-            Self::Select => "Click a comment to select it, drag to move it",
-        }
-    }
 }
 
 /// Style of new comments of one kind.

@@ -41,14 +41,15 @@ actions!(
         RecognizeText,
         CompareWith,
         CopyText,
+        SelectAllText,
         EscapeText
     ]
 );
 
 /// Same context as the single-key tool shortcuts: never while typing in a field.
 const KEYS: &str = "GodPdf && !Input";
-/// Fill of selected page text (black at alpha 56, the UI stays monochrome).
-const SELECTION_ALPHA: f32 = 56.0 / 255.0;
+/// Fill of selected page text: the active blue, translucent.
+const SELECTION_ALPHA: f32 = 0.3;
 
 #[derive(Default)]
 pub struct TextState {
@@ -84,8 +85,8 @@ pub struct TabText {
     generation: u64,
     chars: HashMap<usize, Arc<Vec<TextChar>>>,
     sel: Option<TextSel>,
-    /// A selection drag is going on.
-    dragging: bool,
+    /// The pointer is over page text (for the I-beam of the text tools).
+    over: bool,
     /// Edit-text mode: the line under the pointer (page, band in displayed points).
     hover: Option<(usize, [f32; 4])>,
     line: Option<lineedit::LineEdit>,
@@ -148,6 +149,7 @@ pub fn register(cx: &mut App) {
     // first and passes on to theirs.
     cx.bind_keys([
         KeyBinding::new(secondary!("c"), CopyText, Some(KEYS)),
+        KeyBinding::new(secondary!("a"), SelectAllText, Some(KEYS)),
         KeyBinding::new("escape", EscapeText, Some(KEYS)),
     ]);
     cx.on_action(|_: &EditText, cx| toggle_edit_text(cx));
@@ -155,6 +157,17 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &RecognizeText, cx| recognize_text(cx));
     cx.on_action(|_: &CompareWith, cx| compare_with(cx));
     cx.on_action(|_: &CopyText, cx| copy_text(cx));
+    cx.on_action(|_: &SelectAllText, cx| {
+        with_active(cx, |tab, _| {
+            let page = tab.view.current_page;
+            let count = chars(tab, page).len();
+            tab.text.sel = Some(TextSel {
+                page,
+                anchor: 0,
+                head: count,
+            });
+        });
+    });
     cx.on_action(|_: &EscapeText, cx| escape(cx));
     // Picking a tool ends the editing of the page's words.
     cx.observe_global::<ToolState>(|cx| {
@@ -210,7 +223,7 @@ fn copy_text(cx: &mut App) {
     let copied = tab.update(cx, |tab, _| {
         let sel = tab.text.sel.clone()?;
         let chars = chars(tab, sel.page);
-        Some(sel::text(&chars, sel.range()))
+        Some(sel::text(&chars, sel.range()?))
     });
     if let Some(text) = copied.filter(|text| !text.is_empty()) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -351,42 +364,70 @@ fn show_page(page: usize, cx: &mut App) {
     with_active(cx, |tab, _| tab.scroll_to_page(page));
 }
 
-fn select_down(tab: &mut DocTab, page: usize, event: &MouseDownEvent) {
-    // The tools layer above saw the click first: on a comment, it selected that.
-    let on_comment = tab.canvas.selected.is_some();
-    let Some(point) = page_point(tab, page, event.position) else {
-        return;
-    };
-    let chars = chars(tab, page);
-    tab.text.sel = sel::char_near(&chars, point)
-        .filter(|_| !on_comment)
-        .map(|index| TextSel {
-            page,
-            anchor: index,
-            head: index,
-        });
-    tab.text.dragging = tab.text.sel.is_some();
+/// True for the tools that pick page text: Select and the text markups.
+pub(crate) fn picks_text(tool: Tool) -> bool {
+    matches!(
+        tool,
+        Tool::Select | Tool::Highlight | Tool::Underline | Tool::StrikeOut
+    )
 }
 
-fn select_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Context<DocTab>) {
-    if !tab.text.dragging {
-        return;
-    }
-    if !event.dragging() {
-        tab.text.dragging = false;
-        return;
-    }
-    let Some(point) = page_point(tab, page, event.position) else {
+/// Note whether `point` (displayed points of `page`) is on text; true when that changed.
+pub(crate) fn hover(tab: &mut DocTab, page: usize, point: (f32, f32)) -> bool {
+    let over = sel::char_near(&chars(tab, page), point).is_some();
+    std::mem::replace(&mut tab.text.over, over) != over
+}
+
+/// The pointer was last seen over page text.
+pub(crate) fn over_text(tab: &DocTab) -> bool {
+    tab.text.over
+}
+
+/// Start selecting at `point` when it is on text: a caret (a drag selects from it), the word
+/// on a double click, the line on a triple one. Any older selection goes; false off text.
+pub(crate) fn select_from(tab: &mut DocTab, page: usize, point: (f32, f32), clicks: usize) -> bool {
+    let chars = chars(tab, page);
+    let carets = |range: std::ops::RangeInclusive<usize>| (*range.start(), *range.end() + 1);
+    tab.text.sel = sel::char_near(&chars, point).map(|index| {
+        let (anchor, head) = match clicks {
+            0 | 1 => {
+                // A plain click is an empty selection at the caret.
+                let caret = sel::caret(&chars, point).unwrap_or(index);
+                (caret, caret)
+            }
+            2 => carets(sel::word_of(&chars, index)),
+            _ => carets(sel::line_of(&chars, index)),
+        };
+        TextSel { page, anchor, head }
+    });
+    tab.text.sel.is_some()
+}
+
+/// Move the end of the selection being dragged to `point` (displayed points of its page).
+pub(crate) fn select_to(tab: &mut DocTab, point: (f32, f32)) {
+    let Some(page) = selection_page(tab) else {
         return;
     };
-    let chars = chars(tab, page);
-    let head = sel::nearest(&chars, point);
-    if let (Some(sel), Some(head)) = (tab.text.sel.as_mut().filter(|sel| sel.page == page), head)
-        && sel.head != head
-    {
+    let head = sel::caret(&chars(tab, page), point);
+    if let (Some(sel), Some(head)) = (tab.text.sel.as_mut(), head) {
         sel.head = head;
-        cx.notify();
     }
+}
+
+/// The selected text as one box per line, in displayed points of its page.
+pub(crate) fn selected_lines(tab: &mut DocTab) -> Option<(usize, Vec<[f32; 4]>)> {
+    let sel = tab.text.sel.clone()?;
+    let range = sel.range()?;
+    Some((sel.page, sel::bands(&chars(tab, sel.page), range)))
+}
+
+/// The page the text selection is on.
+pub(crate) fn selection_page(tab: &DocTab) -> Option<usize> {
+    tab.text.sel.as_ref().map(|sel| sel.page)
+}
+
+pub(crate) fn clear_selection(tab: &mut DocTab) {
+    tab.text.sel = None;
 }
 
 fn band_div(band: [f32; 4], zoom: f32, grow: f32) -> gpui::Div {
@@ -398,7 +439,8 @@ fn band_div(band: [f32; 4], zoom: f32, grow: f32) -> gpui::Div {
         .h(px((band[3] - band[1]) * zoom + 2.0 * grow))
 }
 
-/// Under the tools of `page`: the selected text, and the Select tool's drag over text.
+/// Under the tools of `page`: the selected text (with the Select tool; the markup tools
+/// preview their own look over it).
 pub fn page_underlay(
     tab: &mut DocTab,
     page: usize,
@@ -408,32 +450,19 @@ pub fn page_underlay(
     if editing_text(cx) || tool(cx) != Tool::Select {
         return None;
     }
-    sync(tab);
     let zoom = tab.view.zoom;
-    let bands = match tab.text.sel.clone().filter(|sel| sel.page == page) {
-        Some(sel) => sel::bands(&chars(tab, page), sel.range()),
-        None => Vec::new(),
+    let bands = match selected_lines(tab) {
+        Some((at, bands)) if at == page => bands,
+        _ => return None,
     };
     let fill = Hsla {
         a: SELECTION_ALPHA,
-        ..gpui::black()
+        ..Hsla::from(gpui::rgb(crate::theme::BLUE))
     };
     Some(
         div()
             .absolute()
             .inset_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |tab, event, _, cx| {
-                    select_down(tab, page, event);
-                    cx.notify();
-                }),
-            )
-            .on_mouse_move(cx.listener(move |tab, event, _, cx| select_move(tab, page, event, cx)))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|tab, _, _, _| tab.text.dragging = false),
-            )
             .children(
                 bands
                     .into_iter()

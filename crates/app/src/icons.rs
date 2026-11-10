@@ -117,3 +117,17 @@ pub const LINE_SEGMENT: &str = "\u{E6D2}";
 pub const ARROW_UP_RIGHT: &str = "\u{E092}";
 pub const TEXT_STRIKETHROUGH: &str = "\u{E5C2}";
 pub const EYE_SLASH: &str = "\u{E224}";
+
+// Quick bar cards: column headings and card controls.
+pub const ARROWS_HORIZONTAL: &str = "\u{EB06}";
+pub const ARROWS_VERTICAL: &str = "\u{EB04}";
+pub const ARROW_LINE_DOWN: &str = "\u{E05C}";
+pub const ARROW_LINE_RIGHT: &str = "\u{E064}";
+pub const CALENDAR_CHECK: &str = "\u{E712}";
+pub const CHECK: &str = "\u{E182}";
+pub const DROP: &str = "\u{E210}";
+pub const LINK_SIMPLE: &str = "\u{E2E6}";
+pub const PAINT_BUCKET: &str = "\u{E392}";
+pub const PEN: &str = "\u{E3AA}";
+pub const RULER: &str = "\u{E6B8}";
+pub const SHAPES: &str = "\u{EC5E}";

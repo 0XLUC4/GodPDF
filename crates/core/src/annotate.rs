@@ -28,9 +28,11 @@ pub struct Color {
 /// Annotation kinds. Each is written with an appearance stream (/AP) so every viewer shows it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Annotation {
+    /// Translucent fill over `quads` (one rectangle per text line; empty means `rect`).
     Highlight {
         rect: Rect,
         color: Color,
+        quads: Vec<Rect>,
     },
     Note {
         rect: Rect,
@@ -78,15 +80,17 @@ pub enum Annotation {
         width: f32,
         arrow: bool,
     },
-    /// Line under the text covered by `rect`.
+    /// Line under the text covered by `quads` (one per text line; empty means `rect`).
     Underline {
         rect: Rect,
         color: Color,
+        quads: Vec<Rect>,
     },
-    /// Line through the middle of the text covered by `rect`.
+    /// Line through the middle of the text covered by `quads` (empty means `rect`).
     StrikeOut {
         rect: Rect,
         color: Color,
+        quads: Vec<Rect>,
     },
     /// Rubber stamp: `label` in a coloured frame, with an optional second line (a date).
     Stamp {
@@ -346,14 +350,19 @@ impl Annotation {
     pub fn translated(&self, dx: f32, dy: f32) -> Self {
         let mut moved = self.clone();
         match &mut moved {
-            Self::Highlight { rect, .. }
-            | Self::Note { rect, .. }
+            Self::Highlight { rect, quads, .. }
+            | Self::Underline { rect, quads, .. }
+            | Self::StrikeOut { rect, quads, .. } => {
+                *rect = rect.translated(dx, dy);
+                for quad in quads {
+                    *quad = quad.translated(dx, dy);
+                }
+            }
+            Self::Note { rect, .. }
             | Self::FreeText { rect, .. }
             | Self::Square { rect, .. }
             | Self::Image { rect, .. }
             | Self::Circle { rect, .. }
-            | Self::Underline { rect, .. }
-            | Self::StrikeOut { rect, .. }
             | Self::Stamp { rect, .. } => *rect = rect.translated(dx, dy),
             Self::Ink { strokes, .. } => {
                 for point in strokes.iter_mut().flatten() {
@@ -375,13 +384,20 @@ impl Annotation {
     pub fn fitted(&self, from: Rect, to: Rect) -> Self {
         let mut fitted = self.clone();
         match &mut fitted {
-            Self::Highlight { rect, .. }
-            | Self::Note { rect, .. }
+            Self::Highlight { rect, quads, .. }
+            | Self::Underline { rect, quads, .. }
+            | Self::StrikeOut { rect, quads, .. } => {
+                *rect = to;
+                for quad in quads {
+                    let (x0, y0) = fit_point((quad.x0, quad.y0), from, to);
+                    let (x1, y1) = fit_point((quad.x1, quad.y1), from, to);
+                    *quad = Rect { x0, y0, x1, y1 };
+                }
+            }
+            Self::Note { rect, .. }
             | Self::Square { rect, .. }
             | Self::Image { rect, .. }
             | Self::Circle { rect, .. }
-            | Self::Underline { rect, .. }
-            | Self::StrikeOut { rect, .. }
             | Self::Stamp { rect, .. } => {
                 *rect = to;
             }
@@ -635,7 +651,9 @@ struct Parts {
 
 fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
     match annotation {
-        Annotation::Highlight { rect, color } => Ok(highlight(normalized(*rect)?, *color)),
+        Annotation::Highlight { rect, color, quads } => {
+            Ok(highlight(&text_lines(*rect, quads)?, *color))
+        }
         Annotation::Note { rect, text } => Ok(note(normalized(*rect)?, text)),
         Annotation::FreeText {
             rect,
@@ -681,15 +699,15 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             width,
             arrow,
         } => line(*start, *end, *color, *width, *arrow),
-        Annotation::Underline { rect, color } => Ok(text_line(
+        Annotation::Underline { rect, color, quads } => Ok(text_line(
             "Underline",
-            normalized(*rect)?,
+            &text_lines(*rect, quads)?,
             *color,
             UNDERLINE_AT,
         )),
-        Annotation::StrikeOut { rect, color } => Ok(text_line(
+        Annotation::StrikeOut { rect, color, quads } => Ok(text_line(
             "StrikeOut",
-            normalized(*rect)?,
+            &text_lines(*rect, quads)?,
             *color,
             STRIKE_OUT_AT,
         )),
@@ -769,53 +787,99 @@ fn annotation_dict(
     dict
 }
 
-/// Translucent filled rectangle, multiplied onto the page.
-fn highlight(rect: Rect, color: Color) -> Parts {
+/// The line boxes of a text markup: `quads`, or `rect` alone when there are none.
+fn text_lines(rect: Rect, quads: &[Rect]) -> Result<Vec<Rect>> {
+    if quads.is_empty() {
+        return Ok(vec![normalized(rect)?]);
+    }
+    quads.iter().map(|quad| normalized(*quad)).collect()
+}
+
+/// The box around all `lines` (not empty).
+fn union(lines: &[Rect]) -> Rect {
+    lines.iter().fold(lines[0], |all, line| Rect {
+        x0: all.x0.min(line.x0),
+        y0: all.y0.min(line.y0),
+        x1: all.x1.max(line.x1),
+        y1: all.y1.max(line.y1),
+    })
+}
+
+/// Translucent filled rectangles (one per line), multiplied onto the page.
+fn highlight(lines: &[Rect], color: Color) -> Parts {
     let gstate = dictionary! {
         "Type" => "ExtGState",
         "BM" => "Multiply",
         "ca" => HIGHLIGHT_OPACITY,
         "CA" => HIGHLIGHT_OPACITY,
     };
+    let boxes: Vec<String> = lines.iter().map(|line| rect_ops(*line) + " re").collect();
     Parts {
         subtype: "Highlight",
-        rect,
+        rect: union(lines),
         color: Some(color),
-        extra: dictionary! { "QuadPoints" => quad_points(rect) },
-        appearance: format!("/GS0 gs {} rg {} re f", rgb(color), rect_ops(rect)),
+        extra: dictionary! { "QuadPoints" => quad_points(lines) },
+        appearance: format!("/GS0 gs {} rg {} f", rgb(color), boxes.join(" ")),
         resources: dictionary! { "ExtGState" => dictionary! { "GS0" => gstate } },
     }
 }
 
-/// /QuadPoints of one text line: top-left, top-right, bottom-left, bottom-right.
-fn quad_points(rect: Rect) -> Vec<Object> {
-    let Rect { x0, y0, x1, y1 } = rect;
-    [x0, y1, x1, y1, x0, y0, x1, y0]
-        .into_iter()
+/// /QuadPoints, per text line: top-left, top-right, bottom-left, bottom-right.
+fn quad_points(lines: &[Rect]) -> Vec<Object> {
+    lines
+        .iter()
+        .flat_map(|&Rect { x0, y0, x1, y1 }| [x0, y1, x1, y1, x0, y0, x1, y0])
         .map(Object::from)
         .collect()
+}
+
+/// The line boxes of /QuadPoints when there are several (a single one is the /Rect).
+fn read_quads(doc: &Document, dict: &Dictionary) -> Vec<Rect> {
+    let values = numbers(doc, dict, b"QuadPoints").unwrap_or_default();
+    let quads: Vec<Rect> = values
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|quad| {
+            let xs = || quad.iter().step_by(2).copied();
+            let ys = || quad.iter().skip(1).step_by(2).copied();
+            Rect {
+                x0: xs().fold(f32::INFINITY, f32::min),
+                y0: ys().fold(f32::INFINITY, f32::min),
+                x1: xs().fold(f32::NEG_INFINITY, f32::max),
+                y1: ys().fold(f32::NEG_INFINITY, f32::max),
+            }
+        })
+        .collect();
+    if quads.len() > 1 { quads } else { Vec::new() }
 }
 
 /// Where the bar of an underline and of a strike-out sits, in heights of the text box.
 const UNDERLINE_AT: f32 = 0.1;
 const STRIKE_OUT_AT: f32 = 0.5;
 
-/// A thin bar across the text box at `at` of its height (underline, strike-out).
-fn text_line(subtype: &'static str, rect: Rect, color: Color, at: f32) -> Parts {
-    let height = rect.y1 - rect.y0;
-    let thickness = (height / 14.0).max(0.5);
-    let middle = rect.y0 + height * at;
-    let bar = Rect {
-        y0: middle - thickness / 2.0,
-        y1: middle + thickness / 2.0,
-        ..rect
-    };
+/// A thin bar across each line box at `at` of its height (underline, strike-out).
+fn text_line(subtype: &'static str, lines: &[Rect], color: Color, at: f32) -> Parts {
+    let bars: Vec<String> = lines
+        .iter()
+        .map(|&line| {
+            let height = line.y1 - line.y0;
+            let thickness = (height / 14.0).max(0.5);
+            let middle = line.y0 + height * at;
+            let bar = Rect {
+                y0: middle - thickness / 2.0,
+                y1: middle + thickness / 2.0,
+                ..line
+            };
+            rect_ops(bar) + " re"
+        })
+        .collect();
     Parts {
         subtype,
-        rect,
+        rect: union(lines),
         color: Some(color),
-        extra: dictionary! { "QuadPoints" => quad_points(rect) },
-        appearance: format!("{} rg {} re f", rgb(color), rect_ops(bar)),
+        extra: dictionary! { "QuadPoints" => quad_points(lines) },
+        appearance: format!("{} rg {} f", rgb(color), bars.join(" ")),
         resources: Dictionary::new(),
     }
 }
@@ -1683,6 +1747,7 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
         b"Highlight" => Some(Annotation::Highlight {
             rect: read_rect(doc, dict)?,
             color: read_color(doc, dict)?,
+            quads: read_quads(doc, dict),
         }),
         b"Text" => Some(Annotation::Note {
             rect: read_rect(doc, dict)?,
@@ -1757,10 +1822,12 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
         b"Underline" => Some(Annotation::Underline {
             rect: read_rect(doc, dict)?,
             color: read_color(doc, dict)?,
+            quads: read_quads(doc, dict),
         }),
         b"StrikeOut" => Some(Annotation::StrikeOut {
             rect: read_rect(doc, dict)?,
             color: read_color(doc, dict)?,
+            quads: read_quads(doc, dict),
         }),
         _ => None,
     }

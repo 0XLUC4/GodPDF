@@ -27,6 +27,7 @@ fn all_kinds() -> Vec<Annotation> {
                 g: 1.0,
                 b: 0.0,
             },
+            quads: Vec::new(),
         },
         Annotation::Note {
             rect: Rect {

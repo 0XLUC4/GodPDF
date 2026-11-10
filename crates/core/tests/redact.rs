@@ -93,10 +93,15 @@ fn annotations_in_the_area_are_removed() {
         g: 1.0,
         b: 0.0,
     };
-    let inside = Annotation::Highlight { rect: WORD, color };
+    let inside = Annotation::Highlight {
+        rect: WORD,
+        color,
+        quads: Vec::new(),
+    };
     let outside = Annotation::Highlight {
         rect: WORD.translated(0.0, -300.0),
         color,
+        quads: Vec::new(),
     };
     let pdf = add_annotation(&make_pdf(1, None), 0, &inside).unwrap();
     let pdf = add_annotation(&pdf, 0, &outside).unwrap();
@@ -221,7 +226,16 @@ fn erasing_page_content_keeps_images_and_comments_under_white() {
         g: 1.0,
         b: 0.0,
     };
-    let pdf = add_annotation(&pdf, 0, &Annotation::Highlight { rect: WORD, color }).unwrap();
+    let pdf = add_annotation(
+        &pdf,
+        0,
+        &Annotation::Highlight {
+            rect: WORD,
+            color,
+            quads: Vec::new(),
+        },
+    )
+    .unwrap();
     let erased = godpdf_core::erase_content(&pdf, 0, &[WORD]).unwrap();
     assert!(!text(&erased).contains("Page"), "{}", text(&erased));
     assert_eq!(

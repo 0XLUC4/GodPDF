@@ -187,6 +187,7 @@ fn highlighted() -> Vec<u8> {
             g: 1.0,
             b: 0.0,
         },
+        quads: Vec::new(),
     };
     add_annotation(&make_pdf(1, None), 0, &highlight).unwrap()
 }

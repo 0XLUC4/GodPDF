@@ -141,6 +141,7 @@ fn free_text_round_trip_replace_remove() {
         &Annotation::Highlight {
             rect: RECT,
             color: BLUE,
+            quads: Vec::new(),
         },
     )
     .unwrap();
@@ -318,6 +319,7 @@ fn annotations_change_drawing_order() {
     let note = |x: f32| Annotation::Highlight {
         rect: RECT.translated(x, 0.0),
         color: BLUE,
+        quads: Vec::new(),
     };
     let mut pdf = make_pdf(1, None);
     for x in [0.0, 10.0, 20.0] {
@@ -361,6 +363,7 @@ fn reordering_steps_over_popups() {
         let highlight = Annotation::Highlight {
             rect: RECT.translated(x, 0.0),
             color: BLUE,
+            quads: Vec::new(),
         };
         pdf = add_annotation(&pdf, 0, &highlight).unwrap();
     }

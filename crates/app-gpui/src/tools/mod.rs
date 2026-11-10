@@ -16,7 +16,7 @@ use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
 
-use godpdf_core::{CharStyle, Color, Font, StampLabel};
+use godpdf_core::{CharStyle, Color, Font, Script, StampLabel};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
@@ -330,24 +330,42 @@ pub enum Format {
     Bold,
     Italic,
     Underline,
+    Sub,
+    Super,
 }
 
 impl Format {
-    pub const ALL: [Format; 3] = [Format::Bold, Format::Italic, Format::Underline];
+    pub const ALL: [Format; 5] = [
+        Format::Bold,
+        Format::Italic,
+        Format::Underline,
+        Format::Sub,
+        Format::Super,
+    ];
 
     pub fn is_on(self, style: CharStyle) -> bool {
         match self {
             Self::Bold => style.bold,
             Self::Italic => style.italic,
             Self::Underline => style.underline,
+            Self::Sub => style.script == Script::Sub,
+            Self::Super => style.script == Script::Super,
         }
     }
 
+    /// Subscript and superscript exclude each other; turning one off leaves the other.
     pub fn set(self, style: &mut CharStyle, on: bool) {
         match self {
             Self::Bold => style.bold = on,
             Self::Italic => style.italic = on,
             Self::Underline => style.underline = on,
+            Self::Sub | Self::Super if !on => {
+                if self.is_on(*style) {
+                    style.script = Script::Normal;
+                }
+            }
+            Self::Sub => style.script = Script::Sub,
+            Self::Super => style.script = Script::Super,
         }
     }
 }
@@ -557,5 +575,14 @@ mod tests {
         toggle_all(&mut mixed, 2, Format::Bold);
         assert!(common_style(&mixed, 2).bold);
         assert_eq!(common_style(&[], 0), CharStyle::default());
+        // Superscript replaces subscript; turning superscript off then leaves it normal.
+        let mut style = CharStyle::default();
+        Format::Sub.set(&mut style, true);
+        Format::Super.set(&mut style, true);
+        assert!(Format::Super.is_on(style) && !Format::Sub.is_on(style));
+        Format::Sub.set(&mut style, false);
+        assert!(Format::Super.is_on(style));
+        Format::Super.set(&mut style, false);
+        assert_eq!(style, CharStyle::default());
     }
 }

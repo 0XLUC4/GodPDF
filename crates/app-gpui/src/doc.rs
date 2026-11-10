@@ -35,6 +35,37 @@ pub struct CachedPage {
     generation: u64,
 }
 
+/// A sharp picture of the part on screen of a page too large to be drawn whole at the zoom
+/// in use (egui `Detail`): drawn over the page, which is then as large as it can be.
+struct Detail {
+    image: Arc<RenderImage>,
+    scale: f32,
+    generation: u64,
+    /// The part of the page it shows (left, top, right, bottom), displayed points.
+    region: [f32; 4],
+}
+
+/// The part of a page of `size` points to render at `scale` around `visible` (both
+/// left, top, right, bottom in displayed points): what shows plus some room around it so a
+/// little scrolling needs no new picture, on whole pixels, at most [`MAX_TEXTURE_SIDE`] a side.
+pub fn detail_region(visible: [f32; 4], size: (f32, f32), scale: f32) -> [f32; 4] {
+    let [left, top, right, bottom] = visible;
+    let reach = MAX_TEXTURE_SIDE / scale;
+    let grow = |low: f32, high: f32, extent: f32| {
+        let room = (reach - (high - low)).max(0.0).min(high - low) / 2.0;
+        let low = ((low - room) * scale).floor() / scale;
+        let high = ((high + room) * scale).ceil() / scale;
+        (low.max(0.0), high.min(extent))
+    };
+    let (left, right) = grow(left, right, size.0);
+    let (top, bottom) = grow(top, bottom, size.1);
+    [left, top, right, bottom]
+}
+
+fn contains(outer: [f32; 4], inner: [f32; 4]) -> bool {
+    outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]
+}
+
 /// Where the viewer is in the document. Sizes in logical pixels.
 pub struct ViewState {
     pub zoom: f32,
@@ -58,6 +89,9 @@ pub struct DocTab {
     pages: HashMap<usize, CachedPage>,
     page_errors: HashMap<usize, String>,
     in_flight: HashSet<usize>,
+    /// Sharp parts of pages too large to render whole, and those being rendered.
+    details: HashMap<usize, Detail>,
+    details_in_flight: HashSet<usize>,
     /// Images evicted from the cache; their GPU textures are freed on the next paint.
     evicted: Vec<Arc<RenderImage>>,
     geometries: HashMap<usize, PageGeometry>,
@@ -81,6 +115,8 @@ impl DocTab {
             pages: HashMap::new(),
             page_errors: HashMap::new(),
             in_flight: HashSet::new(),
+            details: HashMap::new(),
+            details_in_flight: HashSet::new(),
             evicted: Vec::new(),
             geometries: HashMap::new(),
             thumb_drag: None,
@@ -120,6 +156,7 @@ impl DocTab {
     pub fn reload(&mut self) {
         self.generation += 1;
         self.in_flight.clear();
+        self.details_in_flight.clear();
         self.page_errors.clear();
         self.geometries.clear();
         let old_count = self.page_count();
@@ -150,6 +187,8 @@ impl DocTab {
         if self.page_count() != old_count {
             self.evicted
                 .extend(self.pages.drain().map(|(_, cached)| cached.image));
+            self.evicted
+                .extend(self.details.drain().map(|(_, detail)| detail.image));
         }
         self.view.current_page = self
             .view
@@ -311,6 +350,85 @@ impl DocTab {
             .map(|cached| Arc::clone(&cached.image))
     }
 
+    /// The sharp part of `page` on screen when it is too large to be drawn whole at `scale`:
+    /// its image and the part of the page it shows. `visible` (left, top, right, bottom in
+    /// displayed points) is what shows. May be stale, as page images.
+    pub fn page_detail(
+        &mut self,
+        page: usize,
+        scale: f32,
+        visible: [f32; 4],
+        cx: &mut Context<Self>,
+    ) -> Option<(Arc<RenderImage>, [f32; 4])> {
+        let &(width, height) = self.page_sizes.get(page)?;
+        let whole = MAX_TEXTURE_SIDE / width.max(height).max(1.0);
+        let shows = visible[2] > visible[0] && visible[3] > visible[1];
+        if scale <= whole * (1.0 + SCALE_TOLERANCE) || !shows {
+            if let Some(detail) = self.details.remove(&page) {
+                self.evicted.push(detail.image);
+            }
+            return None;
+        }
+        let wanted = detail_region(visible, (width, height), scale);
+        let fresh = self.details.get(&page).is_some_and(|detail| {
+            detail.generation == self.generation
+                && (detail.scale / scale - 1.0).abs() <= SCALE_TOLERANCE
+                && contains(detail.region, visible)
+        });
+        if !fresh {
+            self.request_detail(page, scale, wanted, cx);
+        }
+        self.details
+            .get(&page)
+            .map(|detail| (Arc::clone(&detail.image), detail.region))
+    }
+
+    fn request_detail(
+        &mut self,
+        page: usize,
+        scale: f32,
+        region: [f32; 4],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(doc) = self.render.clone() else {
+            return;
+        };
+        // One at a time per page; once it is in, a view that moved on asks again.
+        if !self.details_in_flight.insert(page) {
+            return;
+        }
+        let generation = self.generation;
+        let rendered = cx.background_executor().spawn(async move {
+            catch_unwind(AssertUnwindSafe(|| doc.render_region(page, scale, region)))
+                .unwrap_or_else(|_| Err(godpdf_render::Error::Parse(PANIC_MESSAGE.to_owned())))
+                .map_err(|err| err.to_string())
+                .and_then(to_render_image)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rendered.await;
+            let _ = this.update(cx, |tab, cx| {
+                if tab.generation != generation {
+                    return;
+                }
+                tab.details_in_flight.remove(&page);
+                // A failed part leaves the whole page shown, less sharp: nothing to say.
+                if let Ok(image) = result {
+                    let detail = Detail {
+                        image: Arc::new(image),
+                        scale,
+                        generation,
+                        region,
+                    };
+                    if let Some(old) = tab.details.insert(page, detail) {
+                        tab.evicted.push(old.image);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn request(&mut self, page: usize, scale: f32, cx: &mut Context<Self>) {
         let Some(doc) = self.render.clone() else {
             return;
@@ -368,6 +486,17 @@ impl DocTab {
                 self.evicted.push(cached.image);
             }
         }
+        let gone: Vec<usize> = self
+            .details
+            .keys()
+            .copied()
+            .filter(|page| !visible.contains(page))
+            .collect();
+        for page in gone {
+            if let Some(detail) = self.details.remove(&page) {
+                self.evicted.push(detail.image);
+            }
+        }
         for image in self.evicted.drain(..) {
             // Fails only for an image never painted: nothing to free then.
             let _ = window.drop_image(image);
@@ -393,6 +522,18 @@ pub fn to_render_image(bitmap: Bitmap) -> Result<RenderImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detail_covers_what_shows_with_room_on_whole_pixels() {
+        // A0 at 4 px per point: 2384 x 3370 points, only 400 x 300 show.
+        let region = detail_region([1000.0, 500.0, 1400.0, 800.0], (2384.0, 3370.0), 4.0);
+        assert!(contains(region, [1000.0, 500.0, 1400.0, 800.0]));
+        assert_eq!(region, [800.0, 350.0, 1600.0, 950.0]);
+        assert!((region[2] - region[0]) * 4.0 <= MAX_TEXTURE_SIDE);
+        // At the page corner it stops at the sheet.
+        let corner = detail_region([0.0, 0.0, 100.0, 100.0], (2384.0, 3370.0), 4.0);
+        assert_eq!(corner, [0.0, 0.0, 150.0, 150.0]);
+    }
 
     #[test]
     fn swaps_red_and_blue() {

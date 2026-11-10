@@ -226,7 +226,12 @@ pub fn register(cx: &mut App) {
     });
     cx.on_action(|_: &Flatten, cx| {
         let done = "Comments and form fields are now part of the pages";
-        edit_active(cx, "Flatten", Some(done), core::flatten_annotations);
+        edit_active(
+            cx,
+            "Flatten comments and forms",
+            Some(done),
+            core::flatten_annotations,
+        );
     });
     cx.on_action(|_: &RemoveHiddenData, cx| {
         let done = "Properties, scripts and attached files removed";

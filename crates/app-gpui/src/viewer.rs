@@ -82,6 +82,27 @@ impl Render for DocTab {
         for page in visible.clone() {
             let rect = layout.rects[page];
             let image = self.page_image(page, scale, cx);
+            // The part on screen, in displayed points (drawn sharp over a too large page).
+            let zoom = self.view.zoom;
+            let (left, top) = (rect.x - scroll_x, rect.y - scroll_y);
+            let view_width = f32::from(self.view.bounds.size.width);
+            let visible = [
+                (-left).max(0.0) / zoom,
+                (-top).max(0.0) / zoom,
+                (view_width - left).min(rect.width) / zoom,
+                (view_height - top).min(rect.height) / zoom,
+            ];
+            let detail = self
+                .page_detail(page, scale, visible, cx)
+                .map(|(image, part)| {
+                    img(image)
+                        .absolute()
+                        .left(px(part[0] * zoom))
+                        .top(px(part[1] * zoom))
+                        .w(px((part[2] - part[0]) * zoom))
+                        .h(px((part[3] - part[1]) * zoom))
+                        .object_fit(ObjectFit::Fill)
+                });
             let error = self
                 .page_error(page)
                 .map(|err| format!("Page {}: {err}", page + 1));
@@ -99,6 +120,7 @@ impl Render for DocTab {
                     .when_some(image, |page_box, image| {
                         page_box.child(img(image).size_full().object_fit(ObjectFit::Fill))
                     })
+                    .children(detail)
                     .when_some(error, |page_box, error| {
                         page_box
                             .p(px(16.))

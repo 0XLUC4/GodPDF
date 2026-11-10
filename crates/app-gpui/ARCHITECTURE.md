@@ -126,7 +126,8 @@ multi-part gesture). Undo / redo (`DocTab::undo`, `redo`) also reload. Never wri
   `geom = tab.page_geom(page)?` and `displayed_size = tab.page_sizes[page]`.
 
 Bitmaps render at `zoom * window.scale_factor()` pixels per point (sharp on HiDPI), capped
-at 4096 px a side; up to 4 render at once per tab on the background executor, and pages
+at 4096 px a side; a page too large for that (A3..A0 zoomed in) also gets the part on screen
+rendered sharp (`DocTab::page_detail`, `render_region`) and drawn over it; up to 4 render at once per tab on the background executor, and pages
 more than 3 away from the visible ones are evicted (their GPU textures freed).
 
 ## Dialogs
@@ -149,4 +150,4 @@ DESIGN.md.
 ## Not in wave 0
 
 Password dialog (encrypted files needing a password are refused with a toast), recent
-files, persistence of theme / window size, print, every panel and dialog.
+files, persistence of window size (the theme is kept in `settings.rs`), print, every panel and dialog.

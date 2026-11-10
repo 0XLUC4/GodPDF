@@ -35,6 +35,16 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
         )
         .on_click(move |_, _, cx| panels::rail_click(view, cx))
     });
+    // Search is the find bar over the viewer, not a panel.
+    let find = widgets::rail_button(
+        "find",
+        icons::MAGNIFYING_GLASS,
+        "Find (Ctrl+F)",
+        crate::find::is_open(tab, cx),
+        true,
+        palette,
+    )
+    .on_click(dispatch(panels::Find));
 
     let doc = tab.read(cx);
     let (current, count, zoom) = (doc.view.current_page, doc.page_count(), doc.view.zoom);
@@ -134,7 +144,8 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
                 .flex_col()
                 .items_center()
                 .gap(px(6.))
-                .children(views),
+                .children(views)
+                .child(find),
         )
         .child(bottom)
         .into_any_element()

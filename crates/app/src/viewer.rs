@@ -110,7 +110,7 @@ impl Render for DocTab {
                 (None, None, None, None)
             } else {
                 (
-                    crate::panels::page_overlay(self, page, cx),
+                    crate::find::page_overlay(self, page),
                     crate::text::page_underlay(self, page, window, cx),
                     tools::page_overlay(self, page, rect, window, cx),
                     crate::text::page_overlay(self, page, window, cx),
@@ -144,14 +144,18 @@ impl Render for DocTab {
         }
         self.trim_cache(visible, window);
 
-        let quick_bar = if self.companion {
-            None
+        let (quick_bar, find_bar) = if self.companion {
+            (None, None)
         } else {
-            tools::viewer_overlay(self, window, cx)
+            (
+                tools::viewer_overlay(self, window, cx),
+                crate::find::viewer_overlay(self, window, cx),
+            )
         };
         root.children(pages)
             .children(self.scrollbar(&palette, cx))
             .children(quick_bar)
+            .children(find_bar)
     }
 }
 

@@ -29,7 +29,8 @@ All PDF work is in `godpdf-core` (edits, bytes in -> bytes out) and `godpdf-rend
 | `files.rs` | rfd file dialogs, read, atomic write. |
 | `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`, styled text drawn by `richtext.rs`: per-character bold / italic / underline / sub / superscript, width grip on the right edge), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |
-| `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`), form answers (`form.rs`), the saved signature (`sign.rs`). |
+| `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), form answers (`form.rs`), the saved signature (`sign.rs`). |
+| `find/` | Browser-style find bar (Ctrl+F, rail magnifier, palette "Search text"): card at the viewer's top right, searches as you type (debounced 120 ms, background, page by page from the current page, stale searches cancelled by a token), marks every match on the pages (current one orange), Enter / F3 and Shift+Enter / Shift+F3 step and scroll to the word, Esc closes. `FindState` per tab in `DocTab::panels.find`; pure logic in `matching.rs` (tested). Hooks: `page_overlay`, `viewer_overlay`. |
 | `text/` | Page text (from `textsel.rs`, `lineedit.rs`, `ocr.rs`, `compare.rs`): select with the Select tool and copy (Ctrl+C), "Edit PDF text" mode (click a line, type in place, Enter / click away writes, Esc), Extract text and Compare windows, Recognize text (OCR: Windows.Media.Ocr, ocrs elsewhere). Hooks: `page_underlay` / `page_overlay` (viewer, under / over the tools), `overlay` (app). |
 | `organize/` | Organize page grid with selection, drag reorder and page commands (`grid.rs`, orders in `order.rs`, tested), move earlier / later (Alt+Left / Alt+Right), insert from file, remove blank pages, interleave dialog (`mod.rs`), "Side by side" second viewer (`split.rs`). |
 | `import.rs` | Pictures (JPEG, PNG) and text files made into PDFs: Open, drag-drop, Combine and Insert accept them. |
@@ -88,10 +89,10 @@ viewer and the rail (`shell/mod.rs`). Keep which panel is open in a
 Thumbnails: render with `godpdf_render::Document::thumbnail` on
 `cx.background_executor()`, as `DocTab::request` does for pages.
 
-Done in `panels/`: `PanelState` global (open panel, shared search field, tab shown) and
-`DocTab::panels` (`TabPanels`: thumbnail cache, search hits, outline + bookmark rename).
+Done in `panels/`: `PanelState` global (open panel, tab shown) and
+`DocTab::panels` (`TabPanels`: thumbnail cache, find state, outline + bookmark rename).
 Thumbnails use a `uniform_list` (only visible rows render; far ones are evicted). The viewer
-calls `panels::page_overlay` per page for the search marks.
+calls `find::page_overlay` per page for the find marks.
 
 ## A dialog
 

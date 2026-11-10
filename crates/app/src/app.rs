@@ -60,6 +60,7 @@ pub fn register(cx: &mut App) {
     tools::register(cx);
     crate::signature::register(cx);
     panels::register(cx);
+    crate::find::register(cx);
     dialogs::register(cx);
     services::register(cx);
     organize::register(cx);

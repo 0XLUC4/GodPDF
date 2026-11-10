@@ -32,18 +32,6 @@ impl Group {
             Self::Document => "Document",
         }
     }
-
-    /// Every family, in menu order.
-    pub const ALL: [Group; 8] = [
-        Group::File,
-        Group::Edit,
-        Group::View,
-        Group::Organize,
-        Group::Combine,
-        Group::Comment,
-        Group::Protect,
-        Group::Document,
-    ];
 }
 
 pub struct Command {

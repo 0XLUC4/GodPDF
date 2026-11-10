@@ -39,7 +39,7 @@ pub fn render(
         ),
         Banner::Unsaved => (icons::INFO, "This document has unsaved changes.", "Save"),
     };
-    let hover = palette.hover;
+    // egui: a fixed `bg` fill, no hover change.
     let action = div()
         .id("banner-action")
         .flex()
@@ -51,7 +51,6 @@ pub fn render(
         .border_1()
         .border_color(palette.text_dim)
         .cursor_pointer()
-        .hover(move |style| style.bg(hover))
         .child(label);
     let action = match kind {
         Banner::Encrypted => action.on_click(dispatch(RemovePassword)),

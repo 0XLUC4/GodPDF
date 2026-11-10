@@ -55,6 +55,7 @@ pub fn register(cx: &mut App) {
         KeyBinding::new(secondary!("0"), FitWidth, None),
         KeyBinding::new(secondary!("q"), Quit, None),
     ]);
+    shell::register(cx);
     tools::register(cx);
     panels::register(cx);
     dialogs::register(cx);
@@ -106,7 +107,10 @@ impl GodPdfApp {
             return;
         }
         match files::read_file(path) {
-            Ok(file) => self.open_bytes(file.name, Some(file.path), file.bytes, cx),
+            Ok(file) => {
+                self.shell.remember_recent(path);
+                self.open_bytes(file.name, Some(file.path), file.bytes, cx)
+            }
             Err(err) => toasts::error(cx, err),
         }
     }
@@ -244,11 +248,16 @@ impl GodPdfApp {
         .detach();
     }
 
-    fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
-            self.tabs.remove(index);
-            if self.active >= index && self.active > 0 {
-                self.active -= 1;
+            let tab = self.tabs.remove(index);
+            if let Some(path) = tab.read(cx).session.path.clone() {
+                self.shell.closed.retain(|closed| closed != &path);
+                self.shell.closed.push(path);
+            }
+            // egui `close_tab`: the tab after the closed one comes in front.
+            if self.active > index || self.active >= self.tabs.len() {
+                self.active = self.active.saturating_sub(1);
             }
             cx.notify();
         }
@@ -377,6 +386,7 @@ impl Render for GodPdfApp {
                 app.with_tab(cx, |tab, _| tab.fit_page());
             }))
             .on_action(cx.listener(Self::toggle_tools_panel))
+            .on_action(cx.listener(Self::reopen_tab))
             .on_action(|_: &ToggleTheme, _, cx| theme::toggle(cx))
             .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {

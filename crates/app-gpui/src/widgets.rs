@@ -27,7 +27,6 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         .text_size(px(size))
         .line_height(px(size))
         .text_color(color)
-        .child(glyph)
 }
 
 /// Glyph then label with egui's `with_icon` gap (two spaces of the label's font, ~`size`/2).

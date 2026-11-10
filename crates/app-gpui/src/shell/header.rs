@@ -284,19 +284,13 @@ impl MenuState {
                 command(menu, "Quit", has_doc, cx)
             })
             .submenu("Edit", window, cx, move |mut menu, _, cx| {
-                let steps: [(
-                    &'static str,
-                    &str,
-                    &'static str,
-                    Option<SharedString>,
-                    Box<dyn Action>,
-                ); 2] = [
+                let steps = [
                     (
                         icons::ARROW_U_UP_LEFT,
                         "Undo",
                         "Ctrl+Z",
                         undo.clone(),
-                        Box::new(app::Undo),
+                        Box::new(app::Undo) as Box<dyn Action>,
                     ),
                     (
                         icons::ARROW_U_UP_RIGHT,

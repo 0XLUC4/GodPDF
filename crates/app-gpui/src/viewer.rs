@@ -110,7 +110,10 @@ impl Render for DocTab {
         }
         self.trim_cache(visible, window);
 
-        root.children(pages).children(self.scrollbar(&palette, cx))
+        let quick_bar = tools::viewer_overlay(self, window, cx);
+        root.children(pages)
+            .children(self.scrollbar(&palette, cx))
+            .children(quick_bar)
     }
 }
 

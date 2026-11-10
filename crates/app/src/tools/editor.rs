@@ -1,19 +1,31 @@
 //! Text typed on a page before it becomes an annotation: a free-text box laid out like core's
 //! FreeText appearance (same padding and line height, anchored by its top-left corner), or a
-//! sticky note. Typed in a gpui-component textarea.
+//! sticky note. Typed in a gpui-component textarea; a text box's textarea is invisible (it
+//! keeps the keys, the caret and the selection) and the text is drawn over it by
+//! [`richtext`], each character in its own style (bold, italic, underline, sub / superscript).
 //!
 //! Ctrl+Enter or a click on the page outside writes it; Esc restores an edited text as it was.
+//! The grip on its right edge widens or narrows the box.
 
-use godpdf_core::{Annotation, CharStyle, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Font};
+use std::ops::Range;
+use std::rc::Rc;
+
+use godpdf_core::{
+    Annotation, CharStyle, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Font, style_at,
+};
 use gpui::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, Entity, FontWeight, Hsla, Subscription, Window, div, px, rgb};
+use gpui::{
+    AnyElement, App, Context, CursorStyle, DispatchPhase, Div, Entity, FontWeight, Hsla,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Subscription, Window,
+    canvas, div, px, rgb,
+};
 
 use super::canvas::{self, report};
 use super::geom::DRect;
 use super::{
     Format, Style, TEXT_BOX, ToggleBold, ToggleItalic, ToggleUnderline, common_style, hsla,
-    tool_state,
+    richtext, toggle_all, tool_state,
 };
 use crate::doc::DocTab;
 use crate::theme::Palette;
@@ -28,6 +40,10 @@ const NOTE_SIZE: f32 = 24.0;
 const NOTE_CARD_WIDTH: f32 = 240.0;
 /// Box border; the page is always white, so this stays near-black in both themes.
 const BORDER: u32 = 0x222222;
+/// The width grip on the right edge: handle size, and how far either side of the edge the
+/// strip that grabs it reaches (screen pixels).
+const GRIP: (f32, f32) = (7.0, 18.0);
+pub(super) const GRIP_REACH: f32 = 5.0;
 
 pub enum Kind {
     /// A text box: top-left corner and width in displayed points. `original` is the
@@ -45,15 +61,47 @@ pub struct Editor {
     pub page: usize,
     pub kind: Kind,
     pub state: Entity<TextareaState>,
-    /// Format of the whole text box.
-    pub format: CharStyle,
-    /// The text, format and per-character styles it was opened with: kept on commit while
-    /// neither text nor format changed (the box itself formats the whole text only).
-    opened: Option<(String, CharStyle, Vec<CharStyle>)>,
-    _enter: Subscription,
+    /// The style of each character of the text (an empty list: all plain).
+    styles: Vec<CharStyle>,
+    /// The text `styles` were last matched to.
+    marked: String,
+    /// Picked with nothing selected: the style of what is typed next.
+    typing: Option<CharStyle>,
+    /// The width grip being dragged: pointer x minus the right edge of the box, in points.
+    widen: Option<f32>,
+    _events: [Subscription; 2],
 }
 
-fn font_family(font: Font) -> &'static str {
+impl Editor {
+    /// The selected characters (an empty range is the caret).
+    fn selection(&self, cx: &App) -> Range<usize> {
+        let state = self.state.read(cx);
+        let text = state.value();
+        let count = |at: usize| text.get(..at).map_or(0, |part| part.chars().count());
+        let range = state.selected_range();
+        count(range.start)..count(range.end)
+    }
+
+    /// The formats of the selected characters, or of what is typed next.
+    pub fn active(&self, cx: &App) -> CharStyle {
+        let range = self.selection(cx);
+        if range.is_empty() {
+            let before = range.start.saturating_sub(1);
+            return self.typing.unwrap_or(style_at(&self.styles, before));
+        }
+        common_style(&self.styles, range)
+    }
+}
+
+/// Width of a text box at `anchor_x` whose grip, grabbed `grab` points right of its edge, is
+/// at `pointer_x`: at least two font sizes, never past the page edge.
+fn widened(anchor_x: f32, pointer_x: f32, grab: f32, page_width: f32, font_size: f32) -> f32 {
+    let room = (page_width - anchor_x).max(0.0);
+    let min = (MIN_WIDTH_EMS * font_size).min(room);
+    (pointer_x - grab - anchor_x).clamp(min, room)
+}
+
+pub(super) fn font_family(font: Font) -> &'static str {
     match font {
         Font::Helvetica => "Arial",
         Font::Times => "Times New Roman",
@@ -81,28 +129,41 @@ fn open(
         TextareaState::new(window, cx)
             .auto_grow(1, 40)
             .placeholder(placeholder)
-            .default_value(text)
+            .default_value(text.clone())
     });
     state.update(cx, |state, cx| state.focus(window, cx));
     // Keep the focus on the box: the window root would take it on this same click.
     window.prevent_default();
-    let _enter = cx.subscribe(&state, |tab, _, event: &InputEvent, cx| {
-        if let InputEvent::PressEnter {
+    let enter = cx.subscribe(&state, |tab, state, event: &InputEvent, cx| match event {
+        InputEvent::PressEnter {
             secondary: true, ..
-        } = event
-        {
+        } => {
             commit(tab, cx);
             cx.notify();
         }
+        // The styles follow the characters they belong to.
+        InputEvent::Change => {
+            let typed = state.read(cx).value().to_string();
+            if let Some(editor) = tab.canvas.editor.as_mut() {
+                let typing = editor.typing.take();
+                crate::text::reconcile(&mut editor.styles, &editor.marked, &typed, typing);
+                editor.marked = typed;
+            }
+        }
+        _ => {}
     });
+    // The box draws the caret and the selection: redraw when they move.
+    let moved = cx.observe(&state, |_, _, cx| cx.notify());
     tab.canvas.selected = None;
     Editor {
         page,
         kind,
         state,
-        format: CharStyle::default(),
-        opened: None,
-        _enter,
+        styles: Vec::new(),
+        marked: text,
+        typing: None,
+        widen: None,
+        _events: [enter, moved],
     }
 }
 
@@ -152,8 +213,6 @@ pub fn open_text(
             toasts::error(cx, format!("Cannot edit this text: {err}"));
             return;
         }
-        let format = common_style(styles, text.chars().count());
-        let opened = Some((text.clone(), format, styles.clone()));
         let kind = Kind::Text {
             anchor: (item.rect.x0, item.rect.y0),
             width: godpdf_core::free_text_width(*rect, *rotation),
@@ -161,8 +220,7 @@ pub fn open_text(
         };
         let text = text.clone();
         let mut editor = open(tab, page, kind, text, window, cx);
-        editor.format = format;
-        editor.opened = opened;
+        editor.styles = styles.clone();
         if let Kind::Text { original: slot, .. } = &mut editor.kind {
             *slot = Some(original);
         }
@@ -222,7 +280,15 @@ pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
         return;
     };
     let page = editor.page;
-    let result = match editor.kind {
+    let Editor {
+        kind,
+        mut styles,
+        marked,
+        typing,
+        ..
+    } = editor;
+    crate::text::reconcile(&mut styles, &marked, &typed, typing);
+    let result = match kind {
         Kind::Text {
             anchor,
             width,
@@ -234,18 +300,12 @@ pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
                 return;
             }
             let style: Style = tool_state(cx).styles.text;
-            let len = text.chars().count();
-            let styles = match editor.opened {
-                Some((opened, format, styles)) if opened == text && format == editor.format => {
-                    styles
-                }
-                _ if editor.format == CharStyle::default() => Vec::new(),
-                _ => vec![editor.format; len],
-            };
-            let lines =
-                godpdf_core::wrap_styled(&text, &styles, style.font, style.font_size, width).len();
-            let height = lines.max(1) as f32 * style.font_size * FREE_TEXT_LINE_HEIGHT
-                + 2.0 * FREE_TEXT_PADDING;
+            styles.truncate(text.chars().count());
+            if styles.iter().all(|style| *style == CharStyle::default()) {
+                styles.clear();
+            }
+            let height =
+                richtext::Layout::new(&text, &styles, style.font, style.font_size, width).height();
             let top = anchor.1.min(displayed.1 - height).max(0.0);
             let shown = DRect {
                 x0: anchor.0,
@@ -313,18 +373,30 @@ fn cancel(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     }
 }
 
-/// Flip a format of the text box and give it the keyboard back.
+/// Flip a format on the selected characters, or for what is typed next, and give the box
+/// the keyboard back.
 pub fn toggle_format(
     tab: &mut DocTab,
     format: Format,
     window: &mut Window,
     cx: &mut Context<DocTab>,
 ) {
+    let Some(editor) = tab.canvas.editor.as_ref() else {
+        return;
+    };
+    let range = editor.selection(cx);
+    let active = editor.active(cx);
     let Some(editor) = tab.canvas.editor.as_mut() else {
         return;
     };
-    let on = !format.is_on(editor.format);
-    format.set(&mut editor.format, on);
+    if range.is_empty() {
+        let mut typing = active;
+        format.set(&mut typing, !format.is_on(active));
+        editor.typing = Some(typing);
+    } else {
+        let len = editor.marked.chars().count();
+        toggle_all(&mut editor.styles, len, range, format);
+    }
     refocus(tab, window, cx);
 }
 
@@ -335,6 +407,112 @@ pub fn refocus(tab: &mut DocTab, window: &mut Window, cx: &mut Context<DocTab>) 
         state.update(cx, |state, cx| state.focus(window, cx));
     }
     cx.notify();
+}
+
+/// The width grip was grabbed at `position` (window coordinates).
+fn grab_grip(tab: &mut DocTab, position: Point<Pixels>) {
+    let Some(editor) = tab.canvas.editor.as_ref() else {
+        return;
+    };
+    let Kind::Text { anchor, width, .. } = editor.kind else {
+        return;
+    };
+    let Some(point) = canvas::page_point(tab, editor.page, position) else {
+        return;
+    };
+    if let Some(editor) = tab.canvas.editor.as_mut() {
+        editor.widen = Some(point.0 - (anchor.0 + width));
+    }
+}
+
+/// The grip dragged to `position`: the box takes the new width, the text re-wraps.
+fn drag_grip(tab: &mut DocTab, position: Point<Pixels>, cx: &mut Context<DocTab>) {
+    let Some(editor) = tab.canvas.editor.as_ref() else {
+        return;
+    };
+    let (page, Some(grab)) = (editor.page, editor.widen) else {
+        return;
+    };
+    let (Some(point), Some(&(page_width, _))) = (
+        canvas::page_point(tab, page, position),
+        tab.page_sizes.get(page),
+    ) else {
+        return;
+    };
+    let font_size = tool_state(cx).styles.text.font_size;
+    if let Some(Editor {
+        kind: Kind::Text { anchor, width, .. },
+        ..
+    }) = tab.canvas.editor.as_mut()
+    {
+        *width = widened(anchor.0, point.0, grab, page_width, font_size);
+    }
+    cx.notify();
+}
+
+/// While the grip is dragged: follow the pointer anywhere in the window, let go on release.
+fn grip_tracker(cx: &mut Context<DocTab>) -> AnyElement {
+    let this = cx.entity().downgrade();
+    canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let moves = this.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let _ = moves.update(cx, |tab, cx| drag_grip(tab, event.position, cx));
+                }
+            });
+            let ups = this.clone();
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let _ = ups.update(cx, |tab, cx| {
+                        if let Some(editor) = tab.canvas.editor.as_mut() {
+                            editor.widen = None;
+                        }
+                        refocus(tab, window, cx);
+                    });
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
+    .into_any_element()
+}
+
+/// The width grip on the right edge of a text box `height` pixels high: a dark bar along the
+/// edge, a small white handle in its middle, and around the edge the strip that grabs it.
+pub(super) fn grip(height: f32) -> Div {
+    let border = rgb(BORDER);
+    let handle = GRIP.1.min(height);
+    div()
+        .absolute()
+        .top_0()
+        .right(px(-GRIP_REACH))
+        .w(px(2.0 * GRIP_REACH))
+        .h(px(height))
+        .cursor(CursorStyle::ResizeLeftRight)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left(px(GRIP_REACH - 1.5))
+                .w(px(3.0))
+                .h_full()
+                .bg(border),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(GRIP_REACH - GRIP.0 / 2.0))
+                .top(px((height - handle) / 2.0))
+                .w(px(GRIP.0))
+                .h(px(handle))
+                .rounded(px(2.0))
+                .bg(gpui::white())
+                .border(px(1.5))
+                .border_color(border),
+        )
 }
 
 fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
@@ -355,25 +533,44 @@ pub fn render(
         cancel(tab, cx);
         cx.notify();
     });
-    let page_width = tab
-        .page_sizes
-        .get(editor.page)
-        .map_or(0.0, |size| size.0 * zoom);
+    let page_size = tab.page_sizes.get(editor.page).copied().unwrap_or_default();
+    let page_width = page_size.0 * zoom;
     let element = match &editor.kind {
         Kind::Text { anchor, width, .. } => {
-            let format = editor.format;
-            // Sub / superscript: smaller, moved off the baseline (core's size and rise).
-            let font_px = format.size(style.font_size) * zoom;
-            let line_px = style.font_size * FREE_TEXT_LINE_HEIGHT * zoom;
-            let rise = format.rise(style.font_size) * zoom;
-            let min_width = (MIN_WIDTH_EMS * style.font_size).min(*width);
+            let layout = Rc::new(richtext::Layout::new(
+                &editor.marked,
+                &editor.styles,
+                style.font,
+                style.font_size,
+                *width,
+            ));
+            let height = layout.height();
+            // As it is written: a box running off the bottom of the page goes up.
+            let top = anchor.1.min(page_size.1 - height).max(0.0);
+            let pad = FREE_TEXT_PADDING * zoom;
+            let look = richtext::Look {
+                family: font_family(style.font),
+                color: hsla(style.color),
+                selection: Some(editor.selection(cx)),
+            };
+            let placeholder = editor.marked.is_empty().then(|| {
+                div()
+                    .absolute()
+                    .left(px(pad))
+                    .top(px(pad))
+                    .text_size(px(style.font_size * zoom))
+                    .line_height(px(style.font_size * FREE_TEXT_LINE_HEIGHT * zoom))
+                    .font_family(font_family(style.font))
+                    .text_color(gpui::rgb(0x888888))
+                    .child("Type here")
+            });
             div()
                 .id("text-box")
                 .absolute()
                 .left(px(anchor.0 * zoom))
-                .top(px(anchor.1 * zoom))
-                .w(px(width.max(min_width) * zoom))
-                .p(px(FREE_TEXT_PADDING * zoom))
+                .top(px(top * zoom))
+                .w(px(width * zoom))
+                .h(px(height * zoom))
                 .bg(with_alpha(gpui::white(), 0.67))
                 .border_1()
                 .border_color(rgb(BORDER))
@@ -389,19 +586,39 @@ pub fn render(
                 .on_action(cx.listener(|tab, _: &ToggleUnderline, window, cx| {
                     toggle_format(tab, Format::Underline, window, cx)
                 }))
+                // Keys, caret moves and mouse selection; the text itself is drawn below.
+                // shortcut: the field measures every letter plain, so a click lands a little
+                // off in bold or sub / superscript runs; upgrade with a hit test on the layout.
                 .child(
-                    div().relative().top(px(-rise)).child(
-                        Textarea::new(&editor.state)
-                            .appearance(false)
-                            .text_size(px(font_px))
-                            .line_height(px(line_px))
-                            .font_family(font_family(style.font))
-                            .text_color(hsla(style.color))
-                            .when(format.bold, |text| text.font_weight(FontWeight::BOLD))
-                            .when(format.italic, |text| text.italic())
-                            .when(format.underline, |text| text.underline()),
-                    ),
+                    div()
+                        .absolute()
+                        .left(px(pad))
+                        .top(px(pad))
+                        .w(px((width * zoom - 2.0 * pad).max(1.0)))
+                        .opacity(0.0)
+                        .child(
+                            Textarea::new(&editor.state)
+                                .appearance(false)
+                                .text_size(px(style.font_size * zoom))
+                                .line_height(px(style.font_size * FREE_TEXT_LINE_HEIGHT * zoom))
+                                .font_family(font_family(style.font)),
+                        ),
                 )
+                .children(placeholder)
+                .child(richtext::element(layout, look, zoom))
+                .child(grip(height * zoom).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|tab, event: &MouseDownEvent, window, cx| {
+                        grab_grip(tab, event.position);
+                        // The box keeps the keyboard.
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ))
+                .when(editor.widen.is_some(), |text_box| {
+                    text_box.child(grip_tracker(cx))
+                })
                 .into_any_element()
         }
         Kind::Note { rect, .. } => div()
@@ -446,4 +663,18 @@ pub fn render(
             .into_any_element(),
     };
     Some(element)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::widened;
+
+    #[test]
+    fn the_grip_widens_within_the_page() {
+        // Box at x 100, grabbed 2 points right of its edge, pointer at 302: 200 wide.
+        assert_eq!(widened(100.0, 302.0, 2.0, 612.0, 12.0), 200.0);
+        // Never narrower than two font sizes, never past the page edge.
+        assert_eq!(widened(100.0, 50.0, 0.0, 612.0, 12.0), 24.0);
+        assert_eq!(widened(100.0, 900.0, 0.0, 612.0, 12.0), 512.0);
+    }
 }

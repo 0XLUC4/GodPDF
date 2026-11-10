@@ -11,8 +11,11 @@ mod editor;
 mod fields;
 mod geom;
 mod quickbar;
+mod richtext;
 mod sign;
 mod stamp;
+
+use std::ops::Range;
 
 use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
@@ -387,12 +390,15 @@ impl Format {
     }
 }
 
-/// Flip `format` over the `len` characters of `styles`: on unless all have it already.
-/// An all-default result is the empty list, as core writes it.
-pub fn toggle_all(styles: &mut Vec<CharStyle>, len: usize, format: Format) {
+/// Flip `format` over the characters `range` of the `len` of `styles`: on unless all of
+/// them have it already. An all-default result is the empty list, as core writes it.
+pub fn toggle_all(styles: &mut Vec<CharStyle>, len: usize, range: Range<usize>, format: Format) {
     styles.resize(len, CharStyle::default());
-    let on = !styles.iter().all(|style| format.is_on(*style));
-    for style in styles.iter_mut() {
+    let range = range.start.min(len)..range.end.min(len);
+    let on = !styles[range.clone()]
+        .iter()
+        .all(|style| format.is_on(*style));
+    for style in &mut styles[range] {
         format.set(style, on);
     }
     if styles.iter().all(|style| *style == CharStyle::default()) {
@@ -400,12 +406,14 @@ pub fn toggle_all(styles: &mut Vec<CharStyle>, len: usize, format: Format) {
     }
 }
 
-/// Formats every one of the `len` characters has.
-pub fn common_style(styles: &[CharStyle], len: usize) -> CharStyle {
+/// Formats every one of the characters `range` has.
+pub fn common_style(styles: &[CharStyle], range: Range<usize>) -> CharStyle {
     let mut common = CharStyle::default();
     for format in Format::ALL {
-        let on =
-            len > 0 && (0..len).all(|index| format.is_on(godpdf_core::style_at(styles, index)));
+        let on = !range.is_empty()
+            && range
+                .clone()
+                .all(|index| format.is_on(godpdf_core::style_at(styles, index)));
         format.set(&mut common, on);
     }
     common
@@ -584,10 +592,10 @@ mod tests {
     #[test]
     fn toggling_formats_over_all_characters() {
         let mut styles = Vec::new();
-        toggle_all(&mut styles, 3, Format::Bold);
+        toggle_all(&mut styles, 3, 0..3, Format::Bold);
         assert!(styles.len() == 3 && styles.iter().all(|style| style.bold));
-        assert!(common_style(&styles, 3).bold);
-        toggle_all(&mut styles, 3, Format::Bold);
+        assert!(common_style(&styles, 0..3).bold);
+        toggle_all(&mut styles, 3, 0..3, Format::Bold);
         assert!(styles.is_empty());
         // Partly bold: the toggle makes all of it bold.
         let bold = CharStyle {
@@ -595,10 +603,19 @@ mod tests {
             ..CharStyle::default()
         };
         let mut mixed = vec![bold, CharStyle::default()];
-        assert!(!common_style(&mixed, 2).bold);
-        toggle_all(&mut mixed, 2, Format::Bold);
-        assert!(common_style(&mixed, 2).bold);
-        assert_eq!(common_style(&[], 0), CharStyle::default());
+        assert!(!common_style(&mixed, 0..2).bold);
+        toggle_all(&mut mixed, 2, 0..2, Format::Bold);
+        assert!(common_style(&mixed, 0..2).bold);
+        assert_eq!(common_style(&[], 0..0), CharStyle::default());
+        // Only the selected characters: "H2O" with the 2 lowered, then raised instead.
+        let mut chemistry = Vec::new();
+        toggle_all(&mut chemistry, 3, 1..2, Format::Sub);
+        assert_eq!(chemistry[1].script, Script::Sub);
+        assert_eq!(common_style(&chemistry, 0..1), CharStyle::default());
+        toggle_all(&mut chemistry, 3, 1..2, Format::Super);
+        assert_eq!(common_style(&chemistry, 1..2).script, Script::Super);
+        toggle_all(&mut chemistry, 3, 1..2, Format::Super);
+        assert!(chemistry.is_empty());
         // Superscript replaces subscript; turning superscript off then leaves it normal.
         let mut style = CharStyle::default();
         Format::Sub.set(&mut style, true);

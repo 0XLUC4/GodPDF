@@ -12,6 +12,8 @@ mod ocr;
 mod sel;
 mod view;
 
+pub(crate) use lineedit::reconcile;
+
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};

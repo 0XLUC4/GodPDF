@@ -35,6 +35,16 @@ pub struct CachedPage {
     generation: u64,
 }
 
+/// A page rendered without one of its annotations: shown under that annotation while it is
+/// moved or resized (and until the page is rendered again), so only the annotation moves.
+struct Lifted {
+    page: usize,
+    id: String,
+    generation: u64,
+    scale: f32,
+    image: Option<Arc<RenderImage>>,
+}
+
 /// A sharp picture of the part on screen of a page too large to be drawn whole at the zoom
 /// in use: drawn over the page, which is then as large as it can be.
 struct Detail {
@@ -81,6 +91,8 @@ pub struct ViewState {
 pub struct DocTab {
     pub session: Session,
     render: Option<Arc<Document>>,
+    /// The bytes `render` was opened from (shared with background renders).
+    bytes: Arc<Vec<u8>>,
     pub render_error: Option<String>,
     /// Bumped on every reload; render results from older generations are stale.
     generation: u64,
@@ -95,6 +107,10 @@ pub struct DocTab {
     /// Images evicted from the cache; their GPU textures are freed on the next paint.
     evicted: Vec<Arc<RenderImage>>,
     geometries: HashMap<usize, PageGeometry>,
+    lifted: Option<Lifted>,
+    /// The page and annotation the tools want lifted next, and whether one is rendering.
+    lift_wanted: Option<(usize, String)>,
+    lift_busy: bool,
     pub view: ViewState,
     /// Viewer scrollbar drag in progress.
     pub thumb_drag: Option<crate::viewer::ThumbDrag>,
@@ -115,6 +131,7 @@ impl DocTab {
         let mut tab = Self {
             session,
             render: None,
+            bytes: Arc::default(),
             render_error: None,
             generation: 0,
             page_sizes: Vec::new(),
@@ -125,6 +142,9 @@ impl DocTab {
             details_in_flight: HashSet::new(),
             evicted: Vec::new(),
             geometries: HashMap::new(),
+            lifted: None,
+            lift_wanted: None,
+            lift_busy: false,
             thumb_drag: None,
             canvas: Default::default(),
             panels: Default::default(),
@@ -172,6 +192,7 @@ impl DocTab {
         self.grid.selection.clear();
         let old_count = self.page_count();
         let bytes = Arc::new(self.session.bytes().to_vec());
+        self.bytes = Arc::clone(&bytes);
         let opened = catch_unwind(AssertUnwindSafe(|| {
             let doc = Document::open(bytes, None).map_err(|err| err.to_string())?;
             let sizes = (0..doc.page_count())
@@ -359,6 +380,96 @@ impl DocTab {
         self.pages
             .get(&page)
             .map(|cached| Arc::clone(&cached.image))
+    }
+
+    /// The bitmap shown for `page`, fresh or not, without asking for a render.
+    pub fn cached_page(&self, page: usize) -> Option<Arc<RenderImage>> {
+        self.pages
+            .get(&page)
+            .map(|cached| Arc::clone(&cached.image))
+    }
+
+    /// `page` shows the current document (or cannot be rendered at all).
+    pub fn page_settled(&self, page: usize) -> bool {
+        self.page_errors.contains_key(&page)
+            || self
+                .pages
+                .get(&page)
+                .is_some_and(|cached| cached.generation == self.generation)
+    }
+
+    /// Have `page` rendered without the annotation `id` in the background (see
+    /// [`Self::lifted`]). Cheap to call on every pointer move: it renders only when the
+    /// target, the document or the zoom changed, one at a time.
+    pub fn lift(&mut self, page: usize, id: &str, cx: &mut Context<Self>) {
+        self.lift_wanted = Some((page, id.to_owned()));
+        self.pump_lift(cx);
+    }
+
+    /// `page` without the annotation `id`, once [`Self::lift`] has rendered it.
+    pub fn lifted(&self, page: usize, id: &str) -> Option<Arc<RenderImage>> {
+        let lifted = self.lifted.as_ref()?;
+        (lifted.page == page && lifted.id == id)
+            .then(|| lifted.image.clone())
+            .flatten()
+    }
+
+    fn pump_lift(&mut self, cx: &mut Context<Self>) {
+        let Some((page, id)) = self.lift_wanted.clone() else {
+            return;
+        };
+        let Some(scale) = self.pages.get(&page).map(|cached| cached.scale) else {
+            return;
+        };
+        let current = self.lifted.as_ref().is_some_and(|lifted| {
+            lifted.page == page
+                && lifted.id == id
+                && lifted.generation == self.generation
+                && (lifted.scale / scale - 1.0).abs() <= SCALE_TOLERANCE
+        });
+        if current || self.lift_busy {
+            return;
+        }
+        self.lift_busy = true;
+        let generation = self.generation;
+        if let Some(old) = self.lifted.take().and_then(|lifted| lifted.image) {
+            self.evicted.push(old);
+        }
+        self.lifted = Some(Lifted {
+            page,
+            id: id.clone(),
+            generation,
+            scale,
+            image: None,
+        });
+        let bytes = Arc::clone(&self.bytes);
+        let wanted = id.clone();
+        let rendered = cx.background_executor().spawn(async move {
+            catch_unwind(AssertUnwindSafe(|| {
+                let pdf = godpdf_core::remove_annotation(&bytes, page, &wanted)
+                    .map_err(|err| err.to_string())?;
+                let doc = Document::open(Arc::new(pdf), None).map_err(|err| err.to_string())?;
+                doc.render(page, scale)
+                    .map_err(|err| err.to_string())
+                    .and_then(to_render_image)
+            }))
+            .unwrap_or_else(|_| Err(PANIC_MESSAGE.to_owned()))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rendered.await;
+            let _ = this.update(cx, |tab, cx| {
+                tab.lift_busy = false;
+                // Without it the annotation simply shows under its stand-in: nothing to say.
+                if let (Ok(image), Some(lifted)) = (result, tab.lifted.as_mut())
+                    && (lifted.page, &lifted.id, lifted.generation) == (page, &id, generation)
+                {
+                    lifted.image = Some(Arc::new(image));
+                }
+                tab.pump_lift(cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The sharp part of `page` on screen when it is too large to be drawn whole at `scale`:

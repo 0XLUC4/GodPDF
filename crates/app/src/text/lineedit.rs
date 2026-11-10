@@ -87,7 +87,12 @@ impl LineEdit {
 
 /// Have `marks` (one per character of `old`) follow the words to `new`: what stayed keeps
 /// its mark, what was typed takes `typing`, or the mark of the character before it.
-fn reconcile<T: Copy + Default>(marks: &mut Vec<T>, old: &str, new: &str, typing: Option<T>) {
+pub(crate) fn reconcile<T: Copy + Default>(
+    marks: &mut Vec<T>,
+    old: &str,
+    new: &str,
+    typing: Option<T>,
+) {
     let old: Vec<char> = old.chars().collect();
     let new: Vec<char> = new.chars().collect();
     let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();

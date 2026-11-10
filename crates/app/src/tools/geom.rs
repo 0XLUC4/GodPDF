@@ -299,6 +299,19 @@ pub fn parse_mm(text: &str) -> Option<f32> {
     text.parse::<f32>().ok().filter(|value| value.is_finite())
 }
 
+/// Where a whole page of `page` points goes, relative to `dst`, so that its part `src`
+/// fills `dst`: the page picture under a moved or resized annotation, cut to it.
+pub fn crop(src: DRect, dst: DRect, page: (f32, f32)) -> DRect {
+    let sx = dst.width() / src.width().max(0.01);
+    let sy = dst.height() / src.height().max(0.01);
+    DRect {
+        x0: -src.x0 * sx,
+        y0: -src.y0 * sy,
+        x1: (page.0 - src.x0) * sx,
+        y1: (page.1 - src.y0) * sy,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +325,32 @@ mod tests {
 
     fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> DRect {
         DRect { x0, y0, x1, y1 }
+    }
+
+    #[test]
+    fn the_page_picture_is_cut_to_the_moved_annotation() {
+        let page = (600.0, 800.0);
+        let src = rect(100.0, 200.0, 150.0, 220.0);
+        // Moved: same scale, the page shifted so `src` sits at the box's corner.
+        let moved = crop(src, src.translate((30.0, 40.0)), page);
+        assert_eq!(moved, rect(-100.0, -200.0, 500.0, 600.0));
+        // Twice as wide: the page is stretched twice as wide too.
+        let wide = crop(src, rect(0.0, 0.0, 100.0, 20.0), page);
+        assert_eq!(wide, rect(-200.0, -200.0, 1000.0, 600.0));
+    }
+
+    #[test]
+    fn a_dragged_annotation_keeps_the_grab_point_under_the_pointer() {
+        // Grabbed at (110, 205), 10 / 5 points into the box; pointer now at (300, 405).
+        let original = rect(100.0, 200.0, 150.0, 220.0);
+        let (grab, pointer) = ((110.0, 205.0), (300.0, 405.0));
+        let offset = clamp_offset(
+            original,
+            (600.0, 800.0),
+            (pointer.0 - grab.0, pointer.1 - grab.1),
+        );
+        let moved = original.translate(offset);
+        assert_eq!((moved.x0 + 10.0, moved.y0 + 5.0), pointer);
     }
 
     #[test]

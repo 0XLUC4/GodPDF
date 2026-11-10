@@ -168,7 +168,6 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
                     .on_click(move |_, _, cx| remove(index, cx)),
             )
     });
-    let accent = palette.accent;
     card(&palette, 420.)
         .key_context("GodPdfDialog")
         .on_action(|_: &DialogCancel, window, cx| close(window, cx))
@@ -199,14 +198,12 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
             super::button_row()
                 .pt(px(8.))
                 .child(
-                    framed_button(
+                    crate::widgets::accent_button(
                         "attach-add",
                         with_icon(icons::PLUS, "Attach files…", fonts::BODY, palette.on_accent),
                         true,
                         &palette,
                     )
-                    .bg(accent)
-                    .hover(move |style| style.bg(accent))
                     .on_click(|_, _, cx| add(cx)),
                 )
                 .child(

@@ -5,7 +5,7 @@
 //! The second viewer is its own `DocTab` (flagged `companion`, so no tools are drawn on it)
 //! holding a copy of the shown document's bytes, copied again whenever that one changes.
 
-use gpui::component::button::Button;
+use gpui::component::button::{Button, ButtonVariants as _};
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui::prelude::*;
@@ -100,7 +100,7 @@ pub fn render(
         })
         .collect();
     let picker = Button::new("companion-document")
-        .outline()
+        .secondary()
         .h(px(theme::INTERACT_HEIGHT))
         .min_w(px(80.))
         .max_w(px(240.))

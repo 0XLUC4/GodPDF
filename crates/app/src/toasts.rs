@@ -1,121 +1,81 @@
-//! Transient notifications, bottom-right. A [`Global`]: push from anywhere with
-//! [`info`] / [`success`] / [`error`]; the root view observes it and redraws.
+//! Messages to the user. Success and info notes are dropped: the result shows on the page
+//! and slow work shows the header's "Working…" spinner. Errors must not be lost: the last
+//! one shows in a thin red-tinted bar under the header ([`bar`]) for 6 s or until closed.
 
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{App, Global, SharedString, div, px};
+use gpui::{AnyElement, App, Global, SharedString, div, px};
 
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::{fonts, icons, widgets};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Level {
-    Info,
-    Success,
-    Error,
-}
+/// How long an error stays.
+const ERROR_TTL: Duration = Duration::from_secs(6);
 
-struct Toast {
-    id: u64,
-    level: Level,
-    text: SharedString,
-}
-
+/// The error shown, latest wins.
 #[derive(Default)]
 pub struct Toasts {
-    items: Vec<Toast>,
+    shown: Option<(u64, SharedString)>,
     next_id: u64,
 }
 
 impl Global for Toasts {}
 
-/// At most this many toasts show at once; the oldest goes first.
-const MAX_SHOWN: usize = 5;
+/// Dropped (kept so callers need not care).
+pub fn info(_cx: &mut App, _text: impl Into<SharedString>) {}
 
-pub fn push(cx: &mut App, level: Level, text: impl Into<SharedString>) {
+/// Dropped (kept so callers need not care).
+pub fn success(_cx: &mut App, _text: impl Into<SharedString>) {}
+
+/// Show `text` in the error bar, replacing the one shown; it goes after 6 s.
+pub fn error(cx: &mut App, text: impl Into<SharedString>) {
     let toasts = cx.default_global::<Toasts>();
     let id = toasts.next_id;
     toasts.next_id += 1;
-    toasts.items.push(Toast {
-        id,
-        level,
-        text: text.into(),
-    });
-    if toasts.items.len() > MAX_SHOWN {
-        toasts.items.remove(0);
-    }
-    let ttl = Duration::from_secs(if level == Level::Error { 8 } else { 4 });
+    toasts.shown = Some((id, text.into()));
+    cx.refresh_windows();
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(ttl).await;
-        cx.update_global::<Toasts, _>(|toasts, _| toasts.items.retain(|toast| toast.id != id));
+        cx.background_executor().timer(ERROR_TTL).await;
+        cx.update(|cx| dismiss(id, cx));
     })
     .detach();
 }
 
-pub fn info(cx: &mut App, text: impl Into<SharedString>) {
-    push(cx, Level::Info, text);
-}
-
-pub fn success(cx: &mut App, text: impl Into<SharedString>) {
-    push(cx, Level::Success, text);
-}
-
-pub fn error(cx: &mut App, text: impl Into<SharedString>) {
-    push(cx, Level::Error, text);
-}
-
-/// The toast stack, absolutely placed in the bottom-right of its parent (anchored
-/// 16 from the right and 40 from the bottom, 6 of space after each toast). A click on a toast
-/// dismisses it.
-pub fn render(cx: &App) -> Option<impl IntoElement> {
-    let toasts = cx.try_global::<Toasts>()?;
-    if toasts.items.is_empty() {
-        return None;
+/// Drop error `id` if it is still the one shown.
+fn dismiss(id: u64, cx: &mut App) {
+    let toasts = cx.default_global::<Toasts>();
+    if toasts.shown.as_ref().is_some_and(|(shown, _)| *shown == id) {
+        toasts.shown = None;
+        cx.refresh_windows();
     }
-    let palette = Palette::of(cx);
+}
+
+/// The error bar: full width, error tint at 10 % over `bg`, 1 px line under it,
+/// `WARNING_CIRCLE` 16 in `error`, text 13, close cross. `None` without an error.
+pub fn bar(palette: &Palette, cx: &App) -> Option<AnyElement> {
+    let (id, text) = cx.try_global::<Toasts>()?.shown.clone()?;
     Some(
         div()
-            .absolute()
-            .bottom(px(46.))
-            .right(px(16.))
+            .flex_none()
             .flex()
-            .flex_col()
-            .items_end()
-            // Item spacing 6 + the 6 of space after each toast.
-            .gap(px(12.))
-            .children(toasts.items.iter().map(|toast| {
-                let (accent, glyph) = match toast.level {
-                    Level::Info => (palette.accent, icons::INFO),
-                    Level::Success => (palette.success, icons::CHECK_CIRCLE),
-                    Level::Error => (palette.error, icons::WARNING_CIRCLE),
-                };
-                let id = toast.id;
-                let toast = div()
-                    .id(("toast", id as usize))
-                    .flex()
-                    .items_center()
-                    .gap(px(crate::theme::ITEM_SPACING.0))
-                    .max_w(px(380. + 28.))
-                    .px(px(14.))
-                    .py(px(10.))
-                    .rounded(px(10.))
-                    .shadow(widgets::popup_shadow(&palette))
-                    .bg(palette.surface)
-                    .border_1()
-                    .border_color(accent)
-                    .text_size(px(fonts::BODY))
-                    .text_color(palette.text)
-                    .cursor_pointer()
-                    .child(widgets::icon(glyph, 16.0, accent))
-                    .child(toast.text.clone())
-                    .on_click(move |_, _, cx| {
-                        cx.update_global::<Toasts, _>(|toasts, _| {
-                            toasts.items.retain(|toast| toast.id != id)
-                        });
-                        cx.refresh_windows();
-                    });
-                widgets::tooltip(toast, "Click to dismiss")
-            })),
+            .items_center()
+            .gap(px(theme::ITEM_SPACING.0))
+            .min_h(px(36.))
+            .pl(px(16.))
+            .pr(px(8.))
+            .py(px(4.))
+            .bg(palette.error.opacity(0.1))
+            .border_b_1()
+            .border_color(palette.error.opacity(0.25))
+            .text_size(px(fonts::BODY))
+            .text_color(palette.text)
+            .child(widgets::icon(icons::WARNING_CIRCLE, 16.0, palette.error))
+            .child(div().flex_1().min_w_0().child(text))
+            .child(
+                widgets::small_icon_button("error-dismiss", icons::X, "Dismiss", palette)
+                    .on_click(move |_, _, cx| dismiss(id, cx)),
+            )
+            .into_any_element(),
     )
 }

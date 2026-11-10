@@ -67,7 +67,7 @@ fn check(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
             (doc.title().to_owned(), doc.is_dirty())
         };
         if dirty {
-            toasts::info(
+            toasts::error(
                 cx,
                 format!("“{name}” was changed by another program; what you changed here is kept"),
             );
@@ -87,7 +87,7 @@ fn check(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
                     format!("“{name}” was changed by another program: read again"),
                 );
             }
-            _ => toasts::info(
+            _ => toasts::error(
                 cx,
                 format!("“{name}” was changed by another program; open it again to see it"),
             ),

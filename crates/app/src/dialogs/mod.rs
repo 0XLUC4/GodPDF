@@ -339,18 +339,18 @@ pub fn overlay(
 }
 
 /// The card of a dialog, `width` of content wide: panel fill,
-/// 1 px border, radius 9, margin 8, popup shadow, item spacing 6. A click in it does not
-/// close it.
+/// 1 px border, radius 12, padding 16, popup shadow, 8 between items. A click in it does
+/// not close it.
 pub(crate) fn card(palette: &Palette, width: f32) -> Div {
-    let margin = crate::theme::MENU_MARGIN;
+    let margin = crate::theme::WINDOW_MARGIN;
     div()
         .flex()
         .flex_col()
-        .gap(px(crate::theme::ITEM_SPACING.1))
+        .gap(px(8.))
         .w(px(width + 2.0 * margin + 2.0))
         .max_w_full()
         .p(px(margin))
-        .rounded(px(crate::theme::MENU_RADIUS))
+        .rounded(px(crate::theme::WINDOW_RADIUS))
         .shadow(crate::widgets::popup_shadow(palette))
         .bg(palette.panel)
         .border_1()
@@ -472,7 +472,7 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
             window.refresh();
         }
         (Err(error), Open::Signature(_)) => {
-            toasts::info(cx, error);
+            toasts::error(cx, error);
             state(cx).open = Some(open);
             window.refresh();
         }
@@ -631,9 +631,9 @@ mod tests {
     }
 }
 
-/// Dialog title: 19 px (strong is only a colour), then 8 of space.
+/// Dialog title: 18 px (strong is only a colour), then 4 more of space.
 pub(crate) fn title(text: impl IntoElement) -> Div {
-    div().pb(px(2.)).text_size(px(19.)).child(text)
+    div().pb(px(4.)).text_size(px(18.)).child(text)
 }
 
 /// Error line: warning glyph and text in the error colour.
@@ -646,11 +646,7 @@ pub(crate) fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette
     )
 }
 
-/// Button row: 12 of space above, item spacing 8 between.
+/// Button row: 8 more of space above, 8 between.
 pub(crate) fn button_row() -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(crate::theme::ITEM_SPACING.0))
-        .pt(px(12.))
+    div().flex().items_center().gap(px(8.)).pt(px(8.))
 }

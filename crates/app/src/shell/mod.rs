@@ -5,7 +5,8 @@
 //! - `header.rs`: Menu, mode tabs, search pill, properties / save / export / print.
 //! - `leftpanel.rs`: the tools panel ("All tools", ... ) left of the canvas.
 //! - `rail.rs`: right icon rail (views, page box, zoom). The panel it opens is `panels::right`.
-//! - `banner.rs`: thin message over the canvas (unsaved / encrypted).
+//! - `banner.rs`: thin message over the canvas (unsaved / encrypted); the error bar
+//!   (`toasts::bar`) sits above it.
 //! - `welcome.rs`: start screen (no document, or the home tab).
 //!
 //! Layout, top to bottom: tab row, header, then either the welcome screen or
@@ -174,7 +175,7 @@ impl GodPdfApp {
     }
 }
 
-/// The whole window content but the overlays (dialogs, toasts).
+/// The whole window content but the overlays (dialogs, palette).
 pub fn render(
     app: &mut GodPdfApp,
     active: Option<&Entity<DocTab>>,
@@ -199,6 +200,7 @@ pub fn render(
                     .min_w_0()
                     .flex()
                     .flex_col()
+                    .children(crate::toasts::bar(&palette, cx))
                     .children(banner::render(app, tab, &palette, cx))
                     .child(
                         div()
@@ -210,7 +212,14 @@ pub fn render(
             .children(panels::right(Some(tab), window, cx))
             .child(rail::render(tab, &palette, cx))
             .into_any_element(),
-        None => welcome::render(app, &palette, window, cx),
+        None => div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .children(crate::toasts::bar(&palette, cx))
+            .child(welcome::render(app, &palette, window, cx))
+            .into_any_element(),
     };
     div()
         .size_full()

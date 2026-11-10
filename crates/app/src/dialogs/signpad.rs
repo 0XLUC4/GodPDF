@@ -176,7 +176,7 @@ pub fn render(pad: &Pad, palette: &Palette) -> AnyElement {
         .child(super::title(with_icon(
             icons::SIGNATURE,
             "Your signature",
-            19.,
+            18.,
             palette.text,
         )))
         .child(

@@ -179,31 +179,17 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     let field = rename_field(tab, window, cx);
     let more_of = weak.clone();
     let has_items = read.as_ref().is_ok_and(|items| !items.is_empty());
-    // A framed "Add" button (BOOKMARK_SIMPLE), a framed menu button
+    // A secondary "Add" button (BOOKMARK_SIMPLE), a secondary menu button
     // (DOTS_THREE_VERTICAL) on the right, then 6 px.
-    let (surface, border, hover) = (palette.surface, palette.border, palette.hover);
-    let framed = |button: gpui::Stateful<gpui::Div>| {
-        button
-            .h(px(theme::INTERACT_HEIGHT))
-            .px(px(theme::BUTTON_PADDING.0))
-            .flex()
-            .items_center()
-            .rounded(px(theme::RADIUS))
-            .bg(surface)
-            .border_1()
-            .border_color(border)
-            .cursor_pointer()
-            .hover(move |style| style.bg(hover))
-    };
+    let (fill, hover) = (palette.button, palette.button_hover);
     let add = widgets::tooltip(
-        framed(div().id("bookmark-add"))
-            .child(widgets::with_icon(
-                icons::BOOKMARK_SIMPLE,
-                "Add",
-                fonts::BODY,
-                palette.text,
-            ))
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(AddBookmark), cx)),
+        widgets::framed_button(
+            "bookmark-add",
+            widgets::with_icon(icons::BOOKMARK_SIMPLE, "Add", fonts::BODY, palette.text),
+            true,
+            &palette,
+        )
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(AddBookmark), cx)),
         format!("Bookmark page {}", current + 1),
     );
     let menu_palette = palette;
@@ -212,12 +198,11 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
         .h(px(theme::INTERACT_HEIGHT))
         .px(px(theme::BUTTON_PADDING.0))
         .rounded(px(theme::RADIUS))
-        .bg(surface)
-        .border_1()
-        .border_color(border)
+        .bg(fill)
+        .hover(move |style| style.bg(hover))
         .child(widgets::icon(
             icons::DOTS_THREE_VERTICAL,
-            fonts::BODY,
+            16.0,
             palette.text,
         ))
         .dropdown_menu(move |menu, _, _| {
@@ -519,7 +504,7 @@ Goes nowhere",
         .child(
             div()
                 .flex_none()
-                .text_size(px(12.5))
+                .text_size(px(12.))
                 .text_color(palette.text_dim)
                 .child(number),
         );

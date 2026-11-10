@@ -1,55 +1,55 @@
-//! Files that are not PDFs but become one when opened: pictures and plain text.
+//! Files that are not PDFs but become one when opened: pictures and plain text (ported from
+//! the egui `src/import.rs`).
 
 use std::path::Path;
 
 use godpdf_core as core;
 
 use crate::doc::guarded;
-use crate::platform::PickedFile;
+use crate::files::{self, PickedFile};
+use crate::toasts;
 
-/// `file` as a PDF, and whether it had to be made into one. A file made into a PDF has no
-/// path: saving it asks where, and never writes over the picture or the text it came from.
-pub fn to_pdf(file: PickedFile) -> Result<(PickedFile, bool), String> {
-    let extension = Path::new(&file.name)
+/// `name`'s `bytes` as a PDF: its name, its bytes and whether it had to be made into one.
+/// A PDF (or any other file) is left as it is.
+pub fn to_pdf(name: &str, bytes: Vec<u8>) -> Result<(String, Vec<u8>, bool), String> {
+    let extension = Path::new(name)
         .extension()
         .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
-    let made = if file.bytes.starts_with(&[0xFF, 0xD8]) {
-        guarded(|| core::jpeg_document(&file.bytes)).map_err(|err| err.to_string())
-    } else if file.bytes.starts_with(b"\x89PNG") {
-        png_document(&file.bytes)
+    let made = if bytes.starts_with(&[0xFF, 0xD8]) {
+        guarded(|| core::jpeg_document(&bytes)).map_err(|err| err.to_string())
+    } else if bytes.starts_with(b"\x89PNG") {
+        png_document(&bytes)
     } else if extension.as_deref() == Some("txt") {
-        guarded(|| core::text_document(&String::from_utf8_lossy(&file.bytes)))
+        guarded(|| core::text_document(&String::from_utf8_lossy(&bytes)))
             .map_err(|err| err.to_string())
     } else {
-        return Ok((file, false));
+        return Ok((name.to_owned(), bytes, false));
     };
-    let bytes = made.map_err(|err| format!("Cannot make a PDF of “{}”: {err}", file.name))?;
-    let name = Path::new(&file.name)
+    let made = made.map_err(|err| format!("Cannot make a PDF of “{name}”: {err}"))?;
+    let pdf_name = Path::new(name)
         .with_extension("pdf")
         .to_string_lossy()
         .into_owned();
-    Ok((
-        PickedFile {
-            name,
-            path: None,
-            bytes,
-        },
-        true,
-    ))
+    Ok((pdf_name, made, true))
 }
 
-/// A PNG or JPEG file as a picture to put on a page. A JPEG is kept as it is.
-pub fn picture(bytes: &[u8]) -> Result<core::Picture, String> {
-    if bytes.starts_with(&[0xFF, 0xD8])
-        && let Ok(picture) = guarded(|| core::Picture::jpeg(bytes))
-    {
-        return Ok(picture);
-    }
-    let image = image::load_from_memory(bytes)
-        .map_err(|err| err.to_string())?
-        .into_rgba8();
-    let (width, height) = image.dimensions();
-    guarded(|| core::Picture::rgba(width, height, image.as_raw())).map_err(|err| err.to_string())
+/// Ask for PDFs, pictures or text files and read them, each made into a PDF. What cannot be
+/// read or made into one is said in a toast and left out.
+pub fn pick_as_pdfs(cx: &mut gpui::App) -> Vec<PickedFile> {
+    files::pick_pdfs()
+        .iter()
+        .filter_map(|path| {
+            let file = files::read_file(path)
+                .and_then(|file| to_pdf(&file.name, file.bytes).map(|made| (file.path, made)));
+            match file {
+                Ok((path, (name, bytes, _))) => Some(PickedFile { name, path, bytes }),
+                Err(err) => {
+                    toasts::error(cx, err);
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// A PNG on a page: what is see-through shows the white of the paper.
@@ -72,38 +72,30 @@ fn png_document(png: &[u8]) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
-    fn file(name: &str, bytes: &[u8]) -> PickedFile {
-        PickedFile {
-            name: name.to_owned(),
-            path: Some(name.into()),
-            bytes: bytes.to_vec(),
-        }
-    }
-
     #[test]
     fn a_pdf_is_left_as_it_is() {
-        let (out, made) = to_pdf(file("a.pdf", b"%PDF-1.7")).unwrap();
-        assert!(!made && out.path.is_some() && out.bytes == b"%PDF-1.7");
+        let (name, bytes, made) = to_pdf("a.pdf", b"%PDF-1.7".to_vec()).unwrap();
+        assert!(!made && name == "a.pdf" && bytes == b"%PDF-1.7");
     }
 
     #[test]
-    fn text_becomes_a_pdf_to_save_elsewhere() {
-        let (out, made) = to_pdf(file("notes.txt", b"hello")).unwrap();
-        assert!(made && out.path.is_none());
-        assert_eq!(out.name, "notes.pdf");
-        assert_eq!(core::page_count(&out.bytes).unwrap(), 1);
+    fn text_becomes_a_pdf() {
+        let (name, bytes, made) = to_pdf("notes.txt", b"hello".to_vec()).unwrap();
+        assert!(made);
+        assert_eq!(name, "notes.pdf");
+        assert_eq!(core::page_count(&bytes).unwrap(), 1);
     }
 
     #[test]
-    fn a_png_becomes_a_page_and_its_holes_are_white() {
+    fn a_png_becomes_a_page_and_a_broken_one_an_error() {
         let mut png = Vec::new();
         let pixels = image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 0, 0, 0]));
         image::DynamicImage::ImageRgba8(pixels)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let (out, made) = to_pdf(file("shot.png", &png)).unwrap();
+        let (_, bytes, made) = to_pdf("shot.png", png).unwrap();
         assert!(made);
-        assert_eq!(core::page_count(&out.bytes).unwrap(), 1);
-        assert!(to_pdf(file("bad.png", b"\x89PNG nothing")).is_err());
+        assert_eq!(core::page_count(&bytes).unwrap(), 1);
+        assert!(to_pdf("bad.png", b"\x89PNG nothing".to_vec()).is_err());
     }
 }

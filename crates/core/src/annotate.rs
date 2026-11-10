@@ -1322,7 +1322,6 @@ fn unique_name(annot_id: ObjectId) -> String {
 }
 
 /// Current UTC time as a PDF date string.
-#[cfg(not(target_arch = "wasm32"))]
 fn pdf_date() -> Option<String> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1337,14 +1336,7 @@ fn pdf_date() -> Option<String> {
     ))
 }
 
-/// wasm32-unknown-unknown has no clock without JS glue, so /M is omitted there.
-#[cfg(target_arch = "wasm32")]
-fn pdf_date() -> Option<String> {
-    None
-}
-
 /// Days since 1970-01-01 to (year, month, day). Howard Hinnant's algorithm.
-#[cfg(not(target_arch = "wasm32"))]
 fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);

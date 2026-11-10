@@ -12,22 +12,15 @@ path = "src/main.rs"
 [dependencies]
 godpdf-core.workspace = true
 godpdf-render.workspace = true
-eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
-egui = "0.35"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# GPUI Kit = the gpui-pre snapshot of Zed gpui + platform + gpui-component + Lucide icons.
+# Aliased as `gpui` so gpui macros (actions!, derives) resolve through it.
+gpui = { package = "gpui-kit", version = "0.9.1" }
 rfd = "0.17"
-egui-phosphor = "0.13"
-# Read /Rotate + crop box origin for annotation coordinates (no core API for it yet).
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Same version gpui uses, to build its page bitmaps (`image::Frame`) and decode pictures.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Updates: GitHub releases; settings as JSON.
 ureq = "3"
 serde_json = "1"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Document", "Element", "HtmlAnchorElement", "HtmlCanvasElement", "Url", "Window"] }
 
 [build-dependencies]
 winresource = "0.1"
@@ -36,7 +29,7 @@ winresource = "0.1"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Security_Cryptography", "Storage_Streams", "Globalization"] }
 
-[target.'cfg(all(not(windows), not(target_arch = "wasm32")))'.dependencies]
+[target.'cfg(not(windows))'.dependencies]
 ocrs = "0.13"
 rten = "0.26"
 anyhow = "1"

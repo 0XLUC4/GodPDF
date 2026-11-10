@@ -1,551 +1,269 @@
-//! Continuous vertical page viewer with zoom and comment gestures.
+//! Continuous vertical page viewer: `impl Render for DocTab`.
+//!
+//! Scrolling is ours (not a gpui scroll container): `DocTab::view.scroll` is the offset, and
+//! only pages intersecting the view are built, absolutely placed. Coordinates: see
+//! `geometry.rs`. Bitmaps are rendered at `zoom * window.scale_factor()` pixels per point.
 
-use egui::{
-    Color32, CornerRadius, CursorIcon, Id, Pos2, Rect, RichText, ScrollArea, Sense, Shadow, Stroke,
-    StrokeKind, Ui, pos2, vec2,
+use gpui::prelude::*;
+use gpui::{
+    Bounds, Context, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, ScrollDelta,
+    ScrollEvent, Window, canvas, div, img, px, white,
 };
 
-use crate::commands::CommentTool;
-use crate::doc::{Budget, DocTab, Gesture};
-use crate::lineedit::{self, LineEdit};
-use crate::quickbar::{Styles, Tool};
-use crate::selection;
-use crate::textbox::{self, TextBox};
+use crate::doc::DocTab;
+use crate::geometry::ZOOM_STEP;
 use crate::theme::Palette;
-use crate::tools::CommentStyle;
+use crate::tools;
 
-pub const PAD: f32 = 28.0;
-pub const GAP: f32 = 18.0;
-/// Points scrolled by one notch of the wheel.
-const WHEEL_LINE: f32 = 100.0;
+/// Logical pixels per wheel "line" (Windows sends 3 lines per notch by default).
+const LINE_HEIGHT: f32 = 33.0;
+/// Wheel lines in one notch, to turn Ctrl+wheel into zoom steps.
+const LINES_PER_NOTCH: f32 = 3.0;
+const SCROLLBAR_WIDTH: f32 = 10.0;
+const MIN_THUMB: f32 = 24.0;
 
-/// A finished comment gesture, in displayed page points (origin top-left).
-pub struct Finished {
-    pub page: usize,
-    pub points: Vec<Pos2>,
+/// Scrollbar drag in progress: the view-space y where the thumb was grabbed, relative to
+/// its top.
+#[derive(Clone, Copy)]
+pub struct ThumbDrag {
+    grab_offset: f32,
 }
 
-/// A line of a page: the page, its box (displayed points), its letters and where each is.
-pub type ClickedLine = (usize, Rect, Vec<(char, Pos2)>);
+impl Render for DocTab {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = Palette::of(cx);
+        let this = cx.entity();
+        // Learn the viewer size after layout; layout-dependent state is fixed up then.
+        let measure = canvas(
+            move |bounds, _, cx| {
+                this.update(cx, |tab, cx| tab.set_bounds(bounds, cx));
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
 
-#[derive(Default)]
-pub struct Output {
-    pub gesture: Option<Finished>,
-    /// Page and point (displayed page points) where a text box should open: a click with the
-    /// Free text tool, or a double-click without tool (`new_allowed` false).
-    pub open_text: Option<(usize, Pos2, bool)>,
-    pub text_event: Option<textbox::Event>,
-    /// Select tool: an annotation was moved or opened.
-    pub select: Option<selection::Action>,
-    /// Highlight tool over text: (page, one rectangle per line, displayed points).
-    pub highlight: Option<(usize, Vec<Rect>)>,
-    /// Eraser tool: (page, annotation id) to remove.
-    pub erase: Option<(usize, String)>,
-    /// First and last page on screen: the others can give their textures back.
-    pub visible: Option<(usize, usize)>,
-    /// Edit-text mode: a line was clicked. Its page, its box (displayed points), its letters
-    /// and where each is.
-    pub edit_line: Option<ClickedLine>,
-    pub line_event: Option<lineedit::Event>,
-    /// A form field to fill in: page, field name, value.
-    pub fill: Option<crate::fieldedit::Fill>,
-    pub field_event: Option<crate::fieldedit::Event>,
-}
-
-pub struct Editors<'a> {
-    pub text_box: Option<&'a mut TextBox>,
-    pub line: Option<&'a mut LineEdit>,
-}
-
-/// Zoom that fits the widest page in the viewer width.
-pub fn fit_width_zoom(tab: &DocTab) -> f32 {
-    (tab.viewport.x - 2.0 * PAD - 14.0) / tab.max_page_width()
-}
-
-pub fn fit_page_zoom(tab: &DocTab) -> f32 {
-    let height = tab
-        .page_sizes
-        .get(tab.current_page)
-        .map_or(792.0, |size| size.y);
-    fit_width_zoom(tab).min((tab.viewport.y - 2.0 * PAD) / height.max(1.0))
-}
-
-pub fn show(
-    ui: &mut Ui,
-    tab: &mut DocTab,
-    tool: Tool,
-    editors: Editors<'_>,
-    styles: &Styles,
-    budget: &mut Budget,
-    edit_text: bool,
-) -> Output {
-    let palette = Palette::of(ui);
-    let Editors {
-        mut text_box,
-        line: mut line_edit,
-    } = editors;
-    tab.viewport = ui.available_size();
-    if tab.fit_pending && tab.page_count() > 0 {
-        tab.fit_pending = false;
-        tab.zoom = fit_width_zoom(tab).clamp(0.25, 1.5);
-    }
-
-    if let Some(err) = &tab.render_error {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                RichText::new(format!("Cannot display this PDF:\n{err}")).color(palette.error),
+        let root = div()
+            .id("viewer")
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .bg(palette.canvas)
+            .child(measure)
+            .on_scroll(cx.listener(Self::on_wheel))
+            .on_mouse_move(cx.listener(Self::on_drag_thumb))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|tab, _, _, cx| {
+                    if tab.thumb_drag.take().is_some() {
+                        cx.notify();
+                    }
+                }),
             );
-        });
-        return Output::default();
-    }
 
-    let zoom_delta = ui.input(|input| input.zoom_delta());
-    if zoom_delta != 1.0 && ui.rect_contains_pointer(ui.max_rect()) {
-        tab.set_zoom(tab.zoom * zoom_delta);
-    }
-
-    let zoom = tab.zoom;
-    let mut tops = Vec::with_capacity(tab.page_count());
-    let mut y = PAD;
-    for size in &tab.page_sizes {
-        tops.push(y);
-        y += size.y * zoom + GAP;
-    }
-    let total_height = y - GAP + PAD;
-    let content_width = tab.max_page_width() * zoom + 2.0 * PAD;
-
-    let mut area = ScrollArea::both()
-        .id_salt(("viewer", tab.id, tab.second))
-        .scroll_source(egui::scroll_area::ScrollSource {
-            mouse_wheel: false,
-            ..Default::default()
-        })
-        // An animated area forgets the turns of the wheel that come while it still moves.
-        .animated(false)
-        .auto_shrink(false);
-    if let Some(page) = tab.scroll_to_page.take() {
-        if let Some(top) = tops.get(page) {
-            area = area.vertical_scroll_offset((top - PAD / 2.0).max(0.0));
+        if let Some(err) = &self.render_error {
+            return root.child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(palette.error)
+                    .child(format!("Cannot display this PDF: {err}")),
+            );
         }
-    } else if let Some(offset) = tab.pending_scroll.take() {
-        area = area.vertical_scroll_offset(offset.max(0.0));
-    }
 
-    let ppp = ui.ctx().pixels_per_point();
-    let mut out = Output::default();
-    let output = area.show_viewport(ui, |ui, viewport| {
-        let width = content_width.max(ui.available_width());
-        let origin = ui.max_rect().min;
-        ui.allocate_rect(
-            Rect::from_min_size(origin, vec2(width, total_height)),
-            Sense::hover(),
-        );
-        if ui.rect_contains_pointer(ui.clip_rect()) {
-            let delta = wheel_delta(ui, viewport.height());
-            if delta != egui::Vec2::ZERO {
-                ui.scroll_with_delta(delta);
-            }
-        }
-        if tool == Tool::Hand {
-            let pan = ui
-                .interact(
-                    ui.clip_rect(),
-                    Id::new(("pan", tab.id, tab.second)),
-                    Sense::drag(),
+        let layout = self.layout();
+        let (scroll_x, scroll_y) = self.view.scroll;
+        let view_height = f32::from(self.view.bounds.size.height);
+        let visible = layout.visible(scroll_y, view_height);
+        let scale = self.view.zoom * window.scale_factor();
+        let mut pages = Vec::with_capacity(visible.len());
+        for page in visible.clone() {
+            let rect = layout.rects[page];
+            let image = self.page_image(page, scale, cx);
+            // The part on screen, in displayed points (drawn sharp over a too large page).
+            let zoom = self.view.zoom;
+            let (left, top) = (rect.x - scroll_x, rect.y - scroll_y);
+            let view_width = f32::from(self.view.bounds.size.width);
+            let visible = [
+                (-left).max(0.0) / zoom,
+                (-top).max(0.0) / zoom,
+                (view_width - left).min(rect.width) / zoom,
+                (view_height - top).min(rect.height) / zoom,
+            ];
+            let detail = self
+                .page_detail(page, scale, visible, cx)
+                .map(|(image, part)| {
+                    img(image)
+                        .absolute()
+                        .left(px(part[0] * zoom))
+                        .top(px(part[1] * zoom))
+                        .w(px((part[2] - part[0]) * zoom))
+                        .h(px((part[3] - part[1]) * zoom))
+                        .object_fit(ObjectFit::Fill)
+                });
+            let error = self
+                .page_error(page)
+                .map(|err| format!("Page {}: {err}", page + 1));
+            let (hits, text_under, overlay, text_over) = if self.companion {
+                (None, None, None, None)
+            } else {
+                (
+                    crate::panels::page_overlay(self, page, cx),
+                    crate::text::page_underlay(self, page, window, cx),
+                    tools::page_overlay(self, page, rect, window, cx),
+                    crate::text::page_overlay(self, page, window, cx),
                 )
-                .on_hover_cursor(CursorIcon::Grab);
-            if pan.dragged() {
-                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
-                ui.scroll_with_delta(pan.drag_delta());
-            }
-        }
-
-        let mut visible: Option<(usize, usize)> = None;
-        let probe = viewport.min.y + viewport.height() * 0.35;
-        for (page, &top) in tops.iter().enumerate() {
-            let size = tab.page_sizes[page] * zoom;
-            let local = Rect::from_min_size(pos2((width - size.x) / 2.0, top), size);
-            if local.min.y <= probe {
-                tab.current_page = page;
-            }
-            let rect = local.translate(origin.to_vec2());
-            if viewport.expand(GAP).intersects(local) {
-                visible = Some(visible.map_or((page, page), |(first, _)| (first, page)));
-                let texture =
-                    paint_page(ui, tab, page, rect, scale_for(zoom, ppp), budget, &palette);
-                paint_search_hits(ui, tab, page, rect);
-                // While a text box is open, clicks only edit or commit it.
-                let editing = text_box.is_some() || line_edit.is_some();
-                match tool {
-                    // Changing the words of the page comes before any tool.
-                    _ if edit_text => {
-                        if !editing {
-                            let clicked = text_line(ui, tab, page, rect, &palette);
-                            out.edit_line = clicked.or(out.edit_line.take());
-                        }
-                    }
-                    Tool::Hand => {}
-                    Tool::Select if !editing => {
-                        if let Some(action) = selection::page(ui, tab, page, rect, texture) {
-                            out.select = Some(action);
-                        }
-                        // Over the comments: a click on a field fills it in.
-                        if let Some(fill) = crate::fieldedit::page(ui, tab, page, rect) {
-                            out.fill = Some(fill);
-                        }
-                    }
-                    Tool::Eraser if !editing => {
-                        if let Some(id) = selection::erase(ui, tab, page, rect) {
-                            out.erase = Some((page, id));
-                        }
-                    }
-                    Tool::Select | Tool::Eraser => {}
-                    Tool::Text => {
-                        if let Some(point) = page_click(ui, tab, page, rect) {
-                            out.open_text = Some((page, point, true));
-                        }
-                    }
-                    Tool::Highlight => {
-                        let style = &styles.highlight;
-                        match selection::highlight_text(ui, tab, page, rect, style.color) {
-                            selection::TextDrag::Done(bands) => {
-                                out.highlight = Some((page, bands));
-                            }
-                            selection::TextDrag::Active => {}
-                            // Not on text: drag a free rectangle.
-                            selection::TextDrag::Off => {
-                                let tool = CommentTool::Highlight;
-                                if let Some(done) = interact(ui, tab, page, rect, tool, style) {
-                                    out.gesture = Some(done);
-                                }
-                            }
-                        }
-                    }
-                    Tool::Note
-                    | Tool::Ink
-                    | Tool::Rectangle
-                    | Tool::Picture
-                    | Tool::Sign
-                    | Tool::Field => {
-                        if let Some(comment) = tool.comment()
-                            && let Some(done) =
-                                interact(ui, tab, page, rect, comment, styles.get(comment))
-                        {
-                            out.gesture = Some(done);
-                        }
-                    }
-                }
-            }
-            if let Some(edit) = tab.field_edit.as_mut()
-                && edit.page == page
-            {
-                out.field_event =
-                    crate::fieldedit::show(ui, edit, rect, zoom).or(out.field_event.take());
-            }
-            // The box is shown even off-screen so its text field keeps keyboard focus.
-            if let Some(line) = line_edit.as_deref_mut()
-                && line.page == page
-            {
-                out.line_event = lineedit::show(ui, line, rect, zoom).or(out.line_event);
-            }
-            if let Some(text_box) = text_box.as_deref_mut()
-                && text_box.page == page
-            {
-                out.text_event =
-                    textbox::show(ui, text_box, rect, zoom, &styles.text).or(out.text_event);
-            }
-        }
-        out.visible = visible;
-    });
-    tab.scroll_y = output.state.offset.y;
-    if budget.exhausted() {
-        ui.ctx().request_repaint();
-    }
-    out
-}
-
-fn wheel_delta(ui: &Ui, page_height: f32) -> egui::Vec2 {
-    ui.input(|input| {
-        input
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                egui::Event::MouseWheel {
-                    unit,
-                    delta,
-                    modifiers,
-                    ..
-                } if !modifiers.command && !modifiers.ctrl => {
-                    let delta = match unit {
-                        egui::MouseWheelUnit::Point => *delta,
-                        egui::MouseWheelUnit::Line => *delta * WHEEL_LINE,
-                        egui::MouseWheelUnit::Page => *delta * page_height,
-                    };
-                    Some(if modifiers.shift {
-                        vec2(delta.x + delta.y, 0.0)
-                    } else {
-                        delta
+            };
+            pages.push(
+                div()
+                    .absolute()
+                    .left(px(rect.x - scroll_x))
+                    .top(px(rect.y - scroll_y))
+                    .w(px(rect.width))
+                    .h(px(rect.height))
+                    .bg(white())
+                    .shadow_md()
+                    .when_some(image, |page_box, image| {
+                        page_box.child(img(image).size_full().object_fit(ObjectFit::Fill))
                     })
-                }
-                _ => None,
-            })
-            .fold(egui::Vec2::ZERO, |total, delta| total + delta)
-    })
-}
-
-fn scale_for(zoom: f32, ppp: f32) -> f32 {
-    zoom * ppp
-}
-
-fn paint_page(
-    ui: &Ui,
-    tab: &mut DocTab,
-    page: usize,
-    rect: Rect,
-    scale: f32,
-    budget: &mut Budget,
-    palette: &Palette,
-) -> Option<egui::TextureId> {
-    let painter = ui.painter();
-    let shadow = Shadow {
-        offset: [0, 4],
-        blur: 18,
-        spread: 0,
-        color: Color32::from_black_alpha(90),
-    };
-    painter.add(shadow.as_shape(rect, CornerRadius::same(2)));
-    painter.rect_filled(rect, CornerRadius::same(2), Color32::WHITE);
-
-    let texture = tab
-        .page_texture(ui.ctx(), page, scale, budget)
-        .map(|tex| (tex.id(), tex.size_vec2()));
-    if let Some((texture, pixels)) = texture {
-        // Drawn pixel for pixel: a page that starts between two pixels of the screen, or is
-        // stretched by a fraction of one, has every letter smeared over its neighbours.
-        let ppp = ui.ctx().pixels_per_point();
-        let on_pixel = |at: f32| (at * ppp).round() / ppp;
-        let min = pos2(on_pixel(rect.min.x), on_pixel(rect.min.y));
-        // A page drawn for another zoom, shown while the right one is made, is stretched.
-        let own = pixels / ppp;
-        let fits = (own.x - rect.width()).abs() <= 1.0 && (own.y - rect.height()).abs() <= 1.0;
-        let size = if fits { own } else { rect.size() };
-        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-        painter.image(texture, Rect::from_min_size(min, size), uv, Color32::WHITE);
-        // A page too large to be drawn whole this big is stretched: what shows of it is
-        // drawn again over it, sharp.
-        let zoom = scale / ppp;
-        let seen = ui
-            .clip_rect()
-            .intersect(rect)
-            .translate(-rect.min.to_vec2());
-        let seen = Rect::from_min_max(
-            (seen.min.to_vec2() / zoom).to_pos2(),
-            (seen.max.to_vec2() / zoom).to_pos2(),
-        );
-        if let Some((detail, pixels, part)) = tab.page_detail(ui.ctx(), page, scale, seen, budget) {
-            let corner = min + part.min.to_vec2() * zoom;
-            let corner = pos2(on_pixel(corner.x), on_pixel(corner.y));
-            // Made for another zoom, it is stretched until the right one comes.
-            let (own, shown) = (pixels / ppp, part.size() * zoom);
-            let fits = (own.x - shown.x).abs() <= 1.0 && (own.y - shown.y).abs() <= 1.0;
-            let size = if fits { own } else { shown };
-            painter.image(
-                detail,
-                Rect::from_min_size(corner, size),
-                uv,
-                Color32::WHITE,
+                    .children(detail)
+                    .when_some(error, |page_box, error| {
+                        page_box
+                            .p(px(16.))
+                            .text_sm()
+                            .text_color(gpui::black())
+                            .child(error)
+                    })
+                    .children(hits)
+                    .children(text_under)
+                    .children(overlay)
+                    .children(text_over),
             );
         }
-    } else {
-        let text = tab.page_error(page).map_or_else(
-            || format!("Rendering page {}…", page + 1),
-            |err| format!("Page {} failed to render:\n{err}", page + 1),
-        );
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            text,
-            egui::FontId::proportional(14.0),
-            palette.text_dim,
-        );
-    }
-    texture.map(|(texture, _)| texture)
-}
+        self.trim_cache(visible, window);
 
-/// Edit-text mode: the line under the pointer is framed, and a click asks to change it.
-/// Returns its page, its box in displayed points and its words.
-fn text_line(
-    ui: &mut Ui,
-    tab: &mut DocTab,
-    page: usize,
-    rect: Rect,
-    palette: &Palette,
-) -> Option<ClickedLine> {
-    let id = Id::new(("page-edit-text", tab.id, page));
-    let response = ui.interact(rect, id, Sense::click());
-    let chars = tab.text_chars(page);
-    let zoom = tab.zoom;
-    let pointer = ((response.hover_pos()? - rect.min) / zoom).to_pos2();
-    let line = crate::textsel::line_of(&chars, crate::textsel::char_near(&chars, pointer)?);
-    let bands = crate::textsel::bands(&chars, line.clone());
-    let band = bands.into_iter().reduce(|all, band| all.union(band))?;
-    let frame = Rect::from_min_size(rect.min + band.min.to_vec2() * zoom, band.size() * zoom);
-    let stroke = Stroke::new(1.5, palette.accent);
-    ui.painter()
-        .rect_stroke(frame.expand(2.0), 2.0, stroke, StrokeKind::Outside);
-    ui.ctx().set_cursor_icon(CursorIcon::Text);
-    response
-        .clicked()
-        .then(|| (page, band, crate::textsel::spelled(&chars, line)))
-}
-
-/// Mark every place the searched words are written on `page`, while the search shows them.
-fn paint_search_hits(ui: &Ui, tab: &mut DocTab, page: usize, rect: Rect) {
-    let Some(words) = tab.search.marked().map(str::to_owned) else {
-        return;
-    };
-    let chars = tab.text_chars(page);
-    let zoom = tab.zoom;
-    let fill = Color32::from_rgba_unmultiplied(255, 196, 0, 96);
-    for found in crate::textsel::find(&chars, &words) {
-        for band in crate::textsel::bands(&chars, found) {
-            let min = rect.min + band.min.to_vec2() * zoom;
-            let band = Rect::from_min_size(min, band.size() * zoom);
-            ui.painter().rect_filled(band.expand(1.0), 2.0, fill);
-        }
-    }
-}
-
-/// Click on a page with the Text tool, in displayed page points.
-fn page_click(ui: &mut Ui, tab: &DocTab, page: usize, rect: Rect) -> Option<Pos2> {
-    let response = ui
-        .interact(rect, Id::new(("page-click", tab.id, page)), Sense::click())
-        .on_hover_cursor(CursorIcon::Text);
-    let pos = response
-        .interact_pointer_pos()
-        .filter(|_| response.clicked())?;
-    Some(((pos - rect.min) / tab.zoom).to_pos2())
-}
-
-fn interact(
-    ui: &mut Ui,
-    tab: &mut DocTab,
-    page: usize,
-    rect: Rect,
-    tool: CommentTool,
-    style: &CommentStyle,
-) -> Option<Finished> {
-    let response = ui
-        .interact(
-            rect,
-            Id::new(("page-input", tab.id, page)),
-            Sense::click_and_drag(),
-        )
-        .on_hover_cursor(CursorIcon::Crosshair);
-    let zoom = tab.zoom;
-    let to_page = |pos: Pos2| {
-        let local = (pos - rect.min) / zoom;
-        pos2(
-            local.x.clamp(0.0, rect.width() / zoom),
-            local.y.clamp(0.0, rect.height() / zoom),
-        )
-    };
-
-    let clicks = matches!(
-        tool,
-        CommentTool::Note | CommentTool::Picture | CommentTool::Signature | CommentTool::Field
-    );
-    if clicks && response.clicked() {
-        let pos = response.interact_pointer_pos()?;
-        return Some(Finished {
-            page,
-            points: vec![to_page(pos)],
-        });
-    }
-    if response.drag_started()
-        && let Some(pos) = response.interact_pointer_pos()
-    {
-        let origin = ui
-            .input(|input| input.pointer.press_origin())
-            .filter(|origin| rect.contains(*origin))
-            .unwrap_or(pos);
-        let mut points = vec![to_page(origin)];
-        if tool == CommentTool::Ink && origin != pos {
-            points.push(to_page(pos));
-        }
-        tab.gesture = Some(Gesture { page, points });
-    }
-    let gesture = tab
-        .gesture
-        .as_mut()
-        .filter(|gesture| gesture.page == page)?;
-    if response.dragged() && tool == CommentTool::Ink {
-        let moves: Vec<Pos2> = ui.input(|input| {
-            input
-                .events
-                .iter()
-                .filter_map(|event| match event {
-                    egui::Event::PointerMoved(pos) => Some(*pos),
-                    _ => None,
-                })
-                .collect()
-        });
-        let moves = if moves.is_empty() {
-            response.interact_pointer_pos().into_iter().collect()
+        let quick_bar = if self.companion {
+            None
         } else {
-            moves
+            tools::viewer_overlay(self, window, cx)
         };
-        for pos in moves {
-            let point = to_page(pos);
-            if gesture.points.last() != Some(&point) {
-                gesture.points.push(point);
-            }
-        }
-    } else if response.dragged()
-        && let Some(pos) = response.interact_pointer_pos()
-    {
-        let point = to_page(pos);
-        if gesture.points.len() < 2 {
-            gesture.points.push(point);
-        } else if let Some(last) = gesture.points.last_mut() {
-            *last = point;
-        }
+        root.children(pages)
+            .children(self.scrollbar(&palette, cx))
+            .children(quick_bar)
     }
-    paint_preview(ui, rect.min, zoom, &gesture.points, tool, style);
-    if response.drag_stopped() {
-        let gesture = tab.gesture.take()?;
-        return Some(Finished {
-            page,
-            points: gesture.points,
-        });
-    }
-    None
 }
 
-/// Show the comment being drawn the way it will look once written.
-fn paint_preview(
-    ui: &Ui,
-    origin: Pos2,
-    zoom: f32,
-    points: &[Pos2],
-    tool: CommentTool,
-    style: &CommentStyle,
-) {
-    let to_screen = |p: &Pos2| origin + p.to_vec2() * zoom;
-    let painter = ui.painter();
-    let stroke = Stroke::new(style.width * zoom, style.color);
-    if tool == CommentTool::Ink {
-        painter.line(points.iter().map(to_screen).collect(), stroke);
-        return;
+impl DocTab {
+    fn set_bounds(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
+        if self.view.bounds == bounds {
+            return;
+        }
+        self.view.bounds = bounds;
+        if self.view.fit_pending && bounds.size.width > px(0.) && self.page_count() > 0 {
+            self.view.fit_pending = false;
+            let zoom =
+                crate::geometry::fit_width_zoom(&self.page_sizes, f32::from(bounds.size.width));
+            self.view.zoom = zoom.clamp(0.25, 1.5);
+        }
+        // Re-clamp the scroll offset to the new size.
+        self.scroll_by((0.0, 0.0));
+        cx.notify();
     }
-    let (Some(first), Some(last)) = (points.first(), points.last()) else {
-        return;
-    };
-    let rect = Rect::from_two_pos(to_screen(first), to_screen(last));
-    if tool == CommentTool::Highlight {
-        let fill = style.color.gamma_multiply(selection::HIGHLIGHT_OPACITY);
-        painter.rect_filled(rect, 0.0, fill);
-    } else {
-        painter.rect_stroke(rect, 0.0, stroke, StrokeKind::Inside);
+
+    fn on_wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let (lines_x, lines_y) = match event.delta {
+            ScrollDelta::Lines(lines) => (lines.x, lines.y),
+            ScrollDelta::Pixels(pixels) => (
+                f32::from(pixels.x) / LINE_HEIGHT,
+                f32::from(pixels.y) / LINE_HEIGHT,
+            ),
+        };
+        if event.modifiers.control {
+            let notches = (lines_y / LINES_PER_NOTCH).clamp(-3.0, 3.0);
+            let origin = self.view.bounds.origin;
+            let anchor = (
+                f32::from(event.position.x - origin.x),
+                f32::from(event.position.y - origin.y),
+            );
+            self.set_zoom(self.view.zoom * ZOOM_STEP.powf(notches), Some(anchor));
+        } else {
+            self.scroll_by((-lines_x * LINE_HEIGHT, -lines_y * LINE_HEIGHT));
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Thumb top and height in view space, `None` when everything fits.
+    fn thumb(&self) -> Option<(f32, f32)> {
+        let layout = self.layout();
+        let view_height = f32::from(self.view.bounds.size.height);
+        let max_scroll = layout.max_scroll((0.0, view_height)).1;
+        if max_scroll <= 0.0 || view_height <= 0.0 {
+            return None;
+        }
+        let height = (view_height * view_height / layout.content_height).max(MIN_THUMB);
+        let top = self.view.scroll.1 / max_scroll * (view_height - height);
+        Some((top, height))
+    }
+
+    fn on_drag_thumb(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let (Some(drag), Some((_, height))) = (self.thumb_drag, self.thumb()) else {
+            return;
+        };
+        if !event.dragging() {
+            self.thumb_drag = None;
+            return;
+        }
+        let view_height = f32::from(self.view.bounds.size.height);
+        let max_scroll = self.layout().max_scroll((0.0, view_height)).1;
+        let top = f32::from(event.position.y - self.view.bounds.origin.y) - drag.grab_offset;
+        let fraction = top / (view_height - height).max(1.0);
+        self.scroll_by((0.0, fraction * max_scroll - self.view.scroll.1));
+        cx.notify();
+    }
+
+    fn scrollbar(&self, palette: &Palette, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let (top, height) = self.thumb()?;
+        let thumb_color = if self.thumb_drag.is_some() {
+            palette.text_dim
+        } else {
+            palette.border
+        };
+        Some(
+            div()
+                .id("scrollbar")
+                .absolute()
+                .top_0()
+                .right_0()
+                .h_full()
+                .w(px(SCROLLBAR_WIDTH + 4.))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |tab, event: &MouseDownEvent, _, cx| {
+                        let y = f32::from(event.position.y - tab.view.bounds.origin.y);
+                        // Grabbing the thumb keeps its offset; clicking the track centers it.
+                        let grab_offset = if (top..top + height).contains(&y) {
+                            y - top
+                        } else {
+                            height / 2.0
+                        };
+                        tab.thumb_drag = Some(ThumbDrag { grab_offset });
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(top))
+                        .right(px(2.))
+                        .w(px(SCROLLBAR_WIDTH - 4.))
+                        .h(px(height))
+                        .rounded_full()
+                        .bg(thumb_color),
+                ),
+        )
     }
 }

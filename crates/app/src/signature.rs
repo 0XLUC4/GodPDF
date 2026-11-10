@@ -1,13 +1,12 @@
-//! The handwritten signature of the user: drawn once on a pad, kept between sessions, put
-//! on pages as a drawing that can be moved and resized.
+//! The handwritten signature of the user (ported from the egui `src/signature.rs`): drawn
+//! once on a pad, kept on disk between sessions, put on pages as an ink drawing that can be
+//! moved and resized. The pad dialog is `dialogs/signpad.rs`, the panel `panels/sign.rs`,
+//! placing it `tools/sign.rs`.
 
-use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
+use std::path::PathBuf;
 
-use crate::theme::Palette;
-use crate::widgets::{icon, with_icon};
+use gpui::{App, Bounds, Global, PathBuilder, Pixels, Point, Window, point, px, rgb, size};
 
-/// Size of the drawing pad on screen.
-const PAD: egui::Vec2 = vec2(440.0, 170.0);
 /// Width of a signature put on a page, in points.
 pub const WIDTH: f32 = 150.0;
 /// Ink of a signature: a dark blue, like a pen.
@@ -17,29 +16,34 @@ pub const INK: godpdf_core::Color = godpdf_core::Color {
     b: 0.45,
 };
 pub const PEN: f32 = 1.4;
+/// The ink as the pad and the panel show it.
+pub const SCREEN_INK: u32 = 0x0D1F73;
 
 /// Strokes in a box one unit wide, y pointing down.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Signature {
-    strokes: Vec<Vec<(f32, f32)>>,
+    pub strokes: Vec<Vec<(f32, f32)>>,
 }
 
 impl Signature {
     /// From strokes drawn on the pad: framed tight and made one unit wide.
-    pub fn from_pad(strokes: &[Vec<Pos2>]) -> Option<Self> {
-        let points: Vec<Pos2> = strokes.iter().flatten().copied().collect();
-        let bounds = Rect::from_points(&points);
-        if points.len() < 2 || bounds.width().max(bounds.height()) < 4.0 {
+    pub fn from_pad(strokes: &[Vec<(f32, f32)>]) -> Option<Self> {
+        let points: Vec<(f32, f32)> = strokes.iter().flatten().copied().collect();
+        let (min_x, min_y, max_x, max_y) = points.iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(x0, y0, x1, y1), &(x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+        );
+        if points.len() < 2 || (max_x - min_x).max(max_y - min_y) < 4.0 {
             return None;
         }
-        let scale = 1.0 / bounds.width().max(1.0);
+        let scale = 1.0 / (max_x - min_x).max(1.0);
         let strokes = strokes
             .iter()
             .filter(|stroke| !stroke.is_empty())
             .map(|stroke| {
                 stroke
                     .iter()
-                    .map(|p| ((p.x - bounds.min.x) * scale, (p.y - bounds.min.y) * scale))
+                    .map(|&(x, y)| ((x - min_x) * scale, (y - min_y) * scale))
                     .collect()
             })
             .collect();
@@ -90,138 +94,99 @@ impl Signature {
     }
 
     /// The strokes `WIDTH` points wide, top left corner at `at` (displayed points).
-    pub fn placed(&self, at: Pos2) -> Vec<Vec<Pos2>> {
+    pub fn placed(&self, at: (f32, f32)) -> Vec<Vec<(f32, f32)>> {
         self.strokes
             .iter()
             .map(|stroke| {
                 stroke
                     .iter()
-                    .map(|&(x, y)| at + vec2(x, y) * WIDTH)
+                    .map(|&(x, y)| (at.0 + x * WIDTH, at.1 + y * WIDTH))
                     .collect()
             })
             .collect()
     }
 }
 
-/// A pad to sign on with the mouse or a pen.
-pub fn pad(ui: &mut Ui, strokes: &mut Vec<Vec<Pos2>>) {
-    let palette = Palette::of(ui);
-    let (rect, response) = ui.allocate_exact_size(PAD, Sense::drag());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, Color32::WHITE);
-    painter.rect_stroke(
-        rect,
-        6.0,
-        Stroke::new(1.0, palette.border),
-        egui::StrokeKind::Inside,
-    );
-    let line_y = rect.bottom() - 40.0;
-    painter.line_segment(
-        [
-            pos2(rect.left() + 24.0, line_y),
-            pos2(rect.right() - 24.0, line_y),
-        ],
-        Stroke::new(1.0, Color32::from_gray(200)),
-    );
-    if response.drag_started() {
-        strokes.push(Vec::new());
-    }
-    if response.dragged()
-        && let Some(pos) = response.interact_pointer_pos()
-        && let Some(stroke) = strokes.last_mut()
-    {
-        let point = (pos - rect.min).to_pos2();
-        if stroke.last() != Some(&point) {
-            stroke.push(point);
-        }
-    }
-    let ink = Color32::from_rgb(13, 31, 115);
-    for stroke in strokes.iter() {
-        let points: Vec<Pos2> = stroke.iter().map(|p| rect.min + p.to_vec2()).collect();
-        match points.as_slice() {
-            [dot] => {
-                painter.circle_filled(*dot, 1.5, ink);
-            }
-            _ => {
-                painter.add(egui::Shape::line(points, Stroke::new(2.5, ink)));
-            }
-        }
-    }
-    if strokes.iter().all(Vec::is_empty) {
-        painter.text(
-            rect.center() - vec2(0.0, 12.0),
-            egui::Align2::CENTER_CENTER,
-            "Sign here",
-            egui::FontId::proportional(16.0),
-            Color32::from_gray(170),
-        );
-    }
-}
+/// The saved signature, read from disk once at start.
+struct Saved(Option<Signature>);
 
-/// What the signature panel asks the app to do.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PanelAction {
-    Draw,
-    Place,
-    Forget,
-}
+impl Global for Saved {}
 
-/// The signature panel: the saved signature and what to do with it.
-pub fn panel(ui: &mut Ui, saved: Option<&Signature>) -> Option<PanelAction> {
-    let palette = Palette::of(ui);
-    let mut action = None;
-    let Some(signature) = saved else {
-        ui.label(
-            RichText::new("Draw your signature once: it is kept for the next time.")
-                .color(palette.text_dim),
-        );
-        ui.add_space(6.0);
-        if ui
-            .button(with_icon(icon::PENCIL_SIMPLE, "Draw my signature"))
-            .clicked()
-        {
-            action = Some(PanelAction::Draw);
-        }
-        return action;
+/// Where it is kept (the egui app keeps it in its own settings file).
+// shortcut: own text file, not shared with the egui app's settings; move to the app settings once GPUI has them.
+fn file() -> Option<PathBuf> {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
     };
-    let width = ui.available_width().min(280.0);
-    let height = (signature.height() * width).clamp(40.0, 140.0) + 16.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, Color32::WHITE);
-    let ink = Color32::from_rgb(13, 31, 115);
-    let scale = (width - 16.0).min((height - 16.0) / signature.height().max(0.01));
-    for stroke in &signature.strokes {
-        let points: Vec<Pos2> = stroke
-            .iter()
-            .map(|&(x, y)| rect.min + vec2(8.0, 8.0) + vec2(x, y) * scale)
-            .collect();
-        painter.add(egui::Shape::line(points, Stroke::new(2.0, ink)));
+    Some(base?.join("GodPDF").join("signature.txt"))
+}
+
+pub fn register(cx: &mut App) {
+    let saved = file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| Signature::from_text(&text));
+    cx.set_global(Saved(saved));
+}
+
+pub fn saved(cx: &App) -> Option<Signature> {
+    cx.try_global::<Saved>()?.0.clone()
+}
+
+/// Keep `signature` (or forget it) for this and the next sessions.
+pub fn set(signature: Option<Signature>, cx: &mut App) {
+    let text = signature
+        .as_ref()
+        .map(Signature::to_text)
+        .unwrap_or_default();
+    cx.set_global(Saved(signature));
+    let written = file()
+        .ok_or_else(|| "no settings folder".to_owned())
+        .and_then(|path| {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+            }
+            crate::files::write_atomic(&path, text.as_bytes())
+        });
+    if let Err(err) = written {
+        crate::toasts::error(cx, format!("Cannot keep the signature: {err}"));
     }
-    ui.add_space(8.0);
-    let place = egui::Button::new(
-        RichText::new(with_icon(icon::SIGNATURE, "Sign the page")).color(palette.on_accent),
-    )
-    .fill(palette.accent);
-    if ui
-        .add(place)
-        .on_hover_text("Then click where the signature goes")
-        .clicked()
-    {
-        action = Some(PanelAction::Place);
+    cx.refresh_windows();
+}
+
+/// Paint `strokes` (pixels from `origin`) in the screen ink, `width` px wide; a lone point is a dot.
+pub fn paint_strokes(
+    window: &mut Window,
+    origin: Point<Pixels>,
+    strokes: &[Vec<(f32, f32)>],
+    width: f32,
+) {
+    let ink = rgb(SCREEN_INK);
+    let at = |&(x, y): &(f32, f32)| origin + point(px(x), px(y));
+    for stroke in strokes {
+        if let [dot] = stroke.as_slice() {
+            let dot = Bounds::centered_at(at(dot), size(px(3.), px(3.)));
+            window.paint_quad(gpui::fill(dot, ink).corner_radii(px(1.5)));
+            continue;
+        }
+        let mut path = PathBuilder::stroke(px(width));
+        for (index, p) in stroke.iter().enumerate() {
+            if index == 0 {
+                path.move_to(at(p));
+            } else {
+                path.line_to(at(p));
+            }
+        }
+        // An empty stroke makes no path.
+        if let Ok(path) = path.build() {
+            window.paint_path(path, ink);
+        }
     }
-    ui.horizontal(|ui| {
-        if ui
-            .button(with_icon(icon::PENCIL_SIMPLE, "Draw again"))
-            .clicked()
-        {
-            action = Some(PanelAction::Draw);
-        }
-        if ui.button(with_icon(icon::TRASH, "Forget it")).clicked() {
-            action = Some(PanelAction::Forget);
-        }
-    });
-    action
 }
 
 #[cfg(test)]
@@ -230,22 +195,19 @@ mod tests {
 
     #[test]
     fn a_signature_is_kept_as_text() {
-        let drawn = vec![
-            vec![pos2(10.0, 10.0), pos2(110.0, 60.0)],
-            vec![pos2(60.0, 20.0)],
-        ];
+        let drawn = vec![vec![(10.0, 10.0), (110.0, 60.0)], vec![(60.0, 20.0)]];
         let signature = Signature::from_pad(&drawn).unwrap();
         assert_eq!(signature.strokes[0], [(0.0, 0.0), (1.0, 0.5)]);
         let back = Signature::from_text(&signature.to_text()).unwrap();
         assert_eq!(back.to_text(), signature.to_text());
-        let placed = back.placed(pos2(100.0, 200.0));
-        assert_eq!(placed[0][1], pos2(100.0 + WIDTH, 200.0 + WIDTH / 2.0));
+        let placed = back.placed((100.0, 200.0));
+        assert_eq!(placed[0][1], (100.0 + WIDTH, 200.0 + WIDTH / 2.0));
     }
 
     #[test]
     fn nothing_drawn_is_no_signature() {
         assert!(Signature::from_pad(&[]).is_none());
-        assert!(Signature::from_pad(&[vec![pos2(1.0, 1.0)]]).is_none());
+        assert!(Signature::from_pad(&[vec![(1.0, 1.0)]]).is_none());
         assert!(Signature::from_text("").is_none());
         assert!(Signature::from_text("1,a").is_none());
     }

@@ -1,10 +1,15 @@
-//! Transient notifications, bottom-right.
+//! Transient notifications, bottom-right. A [`Global`]: push from anywhere with
+//! [`info`] / [`success`] / [`error`]; the root view observes it and redraws.
+
+use std::time::Duration;
+
+use gpui::prelude::*;
+use gpui::{App, Global, SharedString, div, px};
 
 use crate::theme::Palette;
-use crate::widgets::icon;
-use egui::{Align2, Context, CornerRadius, Frame, Margin, RichText, Stroke, vec2};
+use crate::{fonts, icons, widgets};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Level {
     Info,
     Success,
@@ -12,87 +17,105 @@ pub enum Level {
 }
 
 struct Toast {
+    id: u64,
     level: Level,
-    text: String,
-    expires_at: f64,
+    text: SharedString,
 }
 
 #[derive(Default)]
 pub struct Toasts {
     items: Vec<Toast>,
-    /// Set on first show; toasts pushed earlier get their timer then.
-    now: f64,
+    next_id: u64,
 }
 
-impl Toasts {
-    pub fn push(&mut self, level: Level, text: impl Into<String>) {
-        let ttl = if level == Level::Error { 8.0 } else { 4.0 };
-        self.items.push(Toast {
-            level,
-            text: text.into(),
-            expires_at: self.now + ttl,
-        });
-        if self.items.len() > 5 {
-            self.items.remove(0);
-        }
-    }
+impl Global for Toasts {}
 
-    pub fn info(&mut self, text: impl Into<String>) {
-        self.push(Level::Info, text);
-    }
+/// At most this many toasts show at once; the oldest goes first.
+const MAX_SHOWN: usize = 5;
 
-    pub fn success(&mut self, text: impl Into<String>) {
-        self.push(Level::Success, text);
+pub fn push(cx: &mut App, level: Level, text: impl Into<SharedString>) {
+    let toasts = cx.default_global::<Toasts>();
+    let id = toasts.next_id;
+    toasts.next_id += 1;
+    toasts.items.push(Toast {
+        id,
+        level,
+        text: text.into(),
+    });
+    if toasts.items.len() > MAX_SHOWN {
+        toasts.items.remove(0);
     }
+    let ttl = Duration::from_secs(if level == Level::Error { 8 } else { 4 });
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(ttl).await;
+        cx.update_global::<Toasts, _>(|toasts, _| toasts.items.retain(|toast| toast.id != id));
+    })
+    .detach();
+}
 
-    pub fn error(&mut self, text: impl Into<String>) {
-        self.push(Level::Error, text);
-    }
+pub fn info(cx: &mut App, text: impl Into<SharedString>) {
+    push(cx, Level::Info, text);
+}
 
-    pub fn show(&mut self, ctx: &Context) {
-        self.now = ctx.input(|input| input.time);
-        let now = self.now;
-        self.items.retain(|toast| toast.expires_at > now);
-        if self.items.is_empty() {
-            return;
-        }
-        let palette = Palette::of_ctx(ctx);
-        let mut dismissed = None;
-        egui::Area::new(egui::Id::new("toasts"))
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -40.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                for (index, toast) in self.items.iter().enumerate() {
-                    let (accent, icon) = match toast.level {
-                        Level::Info => (palette.accent, icon::INFO),
-                        Level::Success => (palette.success, icon::CHECK_CIRCLE),
-                        Level::Error => (palette.error, icon::WARNING_CIRCLE),
-                    };
-                    let response = Frame::new()
-                        .fill(palette.surface)
-                        .stroke(Stroke::new(1.0, accent))
-                        .corner_radius(CornerRadius::same(10))
-                        .inner_margin(Margin::symmetric(14, 10))
-                        .shadow(ctx.global_style().visuals.popup_shadow)
-                        .show(ui, |ui| {
-                            ui.set_max_width(380.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(icon).color(accent).size(16.0));
-                                ui.label(&toast.text);
-                            });
-                        })
-                        .response
-                        .interact(egui::Sense::click())
-                        .on_hover_text("Click to dismiss");
-                    if response.clicked() {
-                        dismissed = Some(index);
-                    }
-                    ui.add_space(6.0);
-                }
-            });
-        if let Some(index) = dismissed {
-            self.items.remove(index);
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+pub fn success(cx: &mut App, text: impl Into<SharedString>) {
+    push(cx, Level::Success, text);
+}
+
+pub fn error(cx: &mut App, text: impl Into<SharedString>) {
+    push(cx, Level::Error, text);
+}
+
+/// The toast stack, absolutely placed in the bottom-right of its parent (egui: anchored
+/// 16 from the right and 40 from the bottom, 6 of space after each toast). A click on a toast
+/// dismisses it.
+pub fn render(cx: &App) -> Option<impl IntoElement> {
+    let toasts = cx.try_global::<Toasts>()?;
+    if toasts.items.is_empty() {
+        return None;
     }
+    let palette = Palette::of(cx);
+    Some(
+        div()
+            .absolute()
+            .bottom(px(46.))
+            .right(px(16.))
+            .flex()
+            .flex_col()
+            .items_end()
+            // egui item spacing 6 + the 6 of space after each toast.
+            .gap(px(12.))
+            .children(toasts.items.iter().map(|toast| {
+                let (accent, glyph) = match toast.level {
+                    Level::Info => (palette.accent, icons::INFO),
+                    Level::Success => (palette.success, icons::CHECK_CIRCLE),
+                    Level::Error => (palette.error, icons::WARNING_CIRCLE),
+                };
+                let id = toast.id;
+                let toast = div()
+                    .id(("toast", id as usize))
+                    .flex()
+                    .items_center()
+                    .gap(px(crate::theme::ITEM_SPACING.0))
+                    .max_w(px(380. + 28.))
+                    .px(px(14.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .shadow(widgets::popup_shadow(&palette))
+                    .bg(palette.surface)
+                    .border_1()
+                    .border_color(accent)
+                    .text_size(px(fonts::BODY))
+                    .text_color(palette.text)
+                    .cursor_pointer()
+                    .child(widgets::icon(glyph, 16.0, accent))
+                    .child(toast.text.clone())
+                    .on_click(move |_, _, cx| {
+                        cx.update_global::<Toasts, _>(|toasts, _| {
+                            toasts.items.retain(|toast| toast.id != id)
+                        });
+                        cx.refresh_windows();
+                    });
+                widgets::tooltip(toast, "Click to dismiss")
+            })),
+    )
 }

@@ -1,27 +1,26 @@
-//! One open document tab: editing session + render state + view state.
-//!
-//! Native: pages and thumbnails are rasterized on a per-tab worker thread; the UI uploads
-//! textures when results arrive. Web: rendered inline under a per-frame [`Budget`].
+//! One open document (an `Entity<DocTab>`): editing session, parsed renderer, page bitmap
+//! cache and view state. Every edit goes through [`DocTab::apply`] (undo history), then the
+//! renderer is re-opened from the new bytes ([`DocTab::reload`]).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use egui::{ColorImage, Context, TextureHandle, TextureOptions, Vec2, vec2};
-use godpdf_core::{OutlineItem, PageGeometry, PlacedAnnotation, SearchHit, Session};
-use godpdf_render::{Bitmap, Document, TextChar};
+use godpdf_core::{PageGeometry, Session};
+use godpdf_render::{Bitmap, Document};
+use gpui::{Bounds, Context, Pixels, RenderImage, Window};
 
-pub const MIN_ZOOM: f32 = 0.1;
-pub const MAX_ZOOM: f32 = 6.0;
-/// Longest side of thumbnails in points; rendered at this times pixels-per-point.
-pub const THUMB_PX: u32 = 220;
-/// A cached page texture is re-rendered when its scale is off by more than this ratio.
+use crate::geometry::{self, Layout};
+
+const PANIC_MESSAGE: &str = "internal error while processing this PDF (malformed file?)";
+/// A cached page is re-rendered when its scale is off by more than this ratio.
 const SCALE_TOLERANCE: f32 = 0.005;
 /// Keep page bitmaps under typical GPU texture limits.
 const MAX_TEXTURE_SIDE: f32 = 4096.0;
-/// Render requests queued per tab at once (keeps the worker close to what is on screen).
+/// Pages rendering at once per tab (keeps the work close to what is on screen).
 const MAX_IN_FLIGHT: usize = 4;
-const PANIC_MESSAGE: &str = "internal error while processing this PDF (malformed file?)";
+/// Pages kept rendered beyond those on screen, on each side.
+const KEEP_AROUND: usize = 3;
 
 /// Run a core call, turning a panic (library bug on a malformed PDF) into an error.
 pub fn guarded<T>(work: impl FnOnce() -> godpdf_core::Result<T>) -> godpdf_core::Result<T> {
@@ -29,350 +28,119 @@ pub fn guarded<T>(work: impl FnOnce() -> godpdf_core::Result<T>) -> godpdf_core:
         .unwrap_or_else(|_| Err(godpdf_core::Error::Pdf(PANIC_MESSAGE.to_owned())))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ViewMode {
-    Read,
-    Organize,
-}
-
-#[derive(Default)]
-pub struct SearchState {
-    pub query: String,
-    /// Query the hits belong to.
-    pub searched: String,
-    pub hits: Vec<SearchHit>,
-    pub error: Option<String>,
-    /// Query the sidebar wants searched; the app starts the job.
-    pub request: Option<String>,
-    /// A search job is running.
-    pub busy: bool,
-    /// The search panel is on screen.
-    pub open: bool,
-}
-
-impl SearchState {
-    /// The words to mark on the pages: those searched, for as long as the search panel
-    /// shows and its field still reads them.
-    pub fn marked(&self) -> Option<&str> {
-        let current = !self.searched.is_empty() && self.query.trim() == self.searched;
-        (self.open && current).then_some(&self.searched)
-    }
-}
-
-/// An in-progress comment gesture, in displayed page points (origin top-left).
-pub struct Gesture {
-    pub page: usize,
-    pub points: Vec<egui::Pos2>,
-}
-
-/// A texture plus the document generation it was rendered from (older = stale but shown).
-struct Cached {
-    texture: TextureHandle,
+/// A rendered page plus what it was rendered from (older = stale but still shown).
+pub struct CachedPage {
+    pub image: Arc<RenderImage>,
     scale: f32,
     generation: u64,
 }
 
 /// A sharp picture of the part on screen of a page too large to be drawn whole at the zoom
-/// in use. It is shown over the page, which is then drawn as large as it can be.
+/// in use (egui `Detail`): drawn over the page, which is then as large as it can be.
 struct Detail {
-    texture: TextureHandle,
+    image: Arc<RenderImage>,
     scale: f32,
     generation: u64,
-    /// The part of the page it shows, in displayed points.
-    region: egui::Rect,
+    /// The part of the page it shows (left, top, right, bottom), displayed points.
+    region: [f32; 4],
 }
 
-/// Per-frame render allowance so a frame never starts too many renders.
-pub struct Budget(pub u32);
-
-impl Budget {
-    fn take(&mut self) -> bool {
-        if self.0 == 0 {
-            return false;
-        }
-        self.0 -= 1;
-        true
-    }
-
-    pub fn exhausted(&self) -> bool {
-        self.0 == 0
-    }
+/// The part of a page of `size` points to render at `scale` around `visible` (both
+/// left, top, right, bottom in displayed points): what shows plus some room around it so a
+/// little scrolling needs no new picture, on whole pixels, at most [`MAX_TEXTURE_SIDE`] a side.
+pub fn detail_region(visible: [f32; 4], size: (f32, f32), scale: f32) -> [f32; 4] {
+    let [left, top, right, bottom] = visible;
+    let reach = MAX_TEXTURE_SIDE / scale;
+    let grow = |low: f32, high: f32, extent: f32| {
+        let room = (reach - (high - low)).max(0.0).min(high - low) / 2.0;
+        let low = ((low - room) * scale).floor() / scale;
+        let high = ((high + room) * scale).ceil() / scale;
+        (low.max(0.0), high.min(extent))
+    };
+    let (left, right) = grow(left, right, size.0);
+    let (top, bottom) = grow(top, bottom, size.1);
+    [left, top, right, bottom]
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Kind {
-    Page,
-    Thumb,
-    /// A page without one of its annotations (see [`Lifted`]).
-    Lifted,
-    /// A part of a page (see [`Detail`]), for the first or the second viewer.
-    Detail {
-        second: bool,
-    },
+fn contains(outer: [f32; 4], inner: [f32; 4]) -> bool {
+    outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]
 }
 
-enum Source {
-    Doc(Arc<Document>),
-    /// The document `bytes` once the annotation `id` is removed from the requested page.
-    Without {
-        bytes: Arc<Vec<u8>>,
-        id: String,
-    },
-}
-
-struct Request {
-    source: Source,
-    /// Document generation; for [`Kind::Lifted`] the serial of the lift.
-    generation: u64,
-    page: usize,
-    kind: Kind,
-    scale: f32,
-    /// For [`Kind::Detail`]: the part of the page to draw (left, top, right, bottom).
-    region: Option<[f32; 4]>,
-}
-
-struct Rendered {
-    generation: u64,
-    page: usize,
-    kind: Kind,
-    scale: f32,
-    region: Option<[f32; 4]>,
-    result: Result<Bitmap, String>,
-}
-
-impl Request {
-    fn run(self) -> Rendered {
-        let Self {
-            source,
-            generation,
-            page,
-            kind,
-            scale,
-            region,
-        } = self;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let doc = match source {
-                Source::Doc(doc) => doc,
-                Source::Without { bytes, id } => {
-                    let pdf = godpdf_core::remove_annotation(&bytes, page, &id)
-                        .map_err(|err| err.to_string())?;
-                    let doc = Document::open(Arc::new(pdf), None).map_err(|err| err.to_string())?;
-                    Arc::new(doc)
-                }
-            };
-            match (kind, region) {
-                (Kind::Detail { .. }, Some(region)) => doc.render_region(page, scale, region),
-                (Kind::Page | Kind::Lifted | Kind::Detail { .. }, _) => doc.render(page, scale),
-                // For thumbnails `scale` is the longest side in pixels.
-                (Kind::Thumb, _) => doc.thumbnail(page, scale.round().max(1.0) as u32),
-            }
-            .map_err(|err| err.to_string())
-        }))
-        .unwrap_or_else(|_| Err(PANIC_MESSAGE.to_owned()));
-        Rendered {
-            generation,
-            page,
-            kind,
-            scale,
-            region,
-            result,
-        }
-    }
-}
-
-/// Background render thread. Exits when the tab (and its sender) is dropped.
-#[cfg(not(target_arch = "wasm32"))]
-struct Worker {
-    requests: std::sync::mpsc::Sender<Request>,
-    results: std::sync::mpsc::Receiver<Rendered>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Worker {
-    fn spawn(ctx: Context) -> Option<Self> {
-        let (requests, inbox) = std::sync::mpsc::channel::<Request>();
-        let (outbox, results) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name("render".to_owned())
-            .stack_size(16 << 20)
-            .spawn(move || {
-                for request in inbox {
-                    if outbox.send(request.run()).is_err() {
-                        break;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-            .ok()?;
-        Some(Self { requests, results })
-    }
-}
-
-/// A page rendered without one annotation: shown under that annotation while it is moved or
-/// resized, so only the annotation itself appears to move.
-struct Lifted {
-    page: usize,
-    id: String,
-    /// Document generation it was made from.
-    generation: u64,
-    serial: u64,
-    scale: f32,
-    texture: Option<TextureHandle>,
+/// Where the viewer is in the document. Sizes in logical pixels.
+pub struct ViewState {
+    pub zoom: f32,
+    /// Scroll offset (x, y) of the viewer content.
+    pub scroll: (f32, f32),
+    /// Viewer bounds in the window, as of the last paint.
+    pub bounds: Bounds<Pixels>,
+    /// Fit width once the viewer size is known.
+    pub fit_pending: bool,
+    pub current_page: usize,
 }
 
 pub struct DocTab {
-    pub id: u64,
     pub session: Session,
-    /// The bytes `render` was opened from.
-    bytes: Arc<Vec<u8>>,
     render: Option<Arc<Document>>,
     pub render_error: Option<String>,
-    /// Bumped on every reload; render/search results from older generations are stale.
+    /// Bumped on every reload; render results from older generations are stale.
     generation: u64,
     /// Displayed (post-rotation) page sizes in points.
-    pub page_sizes: Vec<Vec2>,
-    pages: HashMap<usize, Cached>,
-    /// By page and viewer (true for the second one).
-    details: HashMap<(usize, bool), Detail>,
-    thumbs: HashMap<usize, Cached>,
+    pub page_sizes: Vec<(f32, f32)>,
+    pages: HashMap<usize, CachedPage>,
     page_errors: HashMap<usize, String>,
-    in_flight: HashSet<(usize, Kind)>,
-    lifted: Option<Lifted>,
-    lift_serial: u64,
-    /// A lift is rendering; the next one waits for it.
-    lift_busy: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    worker: Option<Worker>,
-    pub outline: Option<Result<Vec<OutlineItem>, String>>,
-    /// The bookmark whose name is being typed in the bookmarks panel.
-    pub bookmark_rename: Option<crate::bookmarks::Renaming>,
-    /// The form shown in the form panel, read once per revision.
-    pub form: Option<crate::formfill::FormState>,
-    /// Parsed annotations per page for hit-testing; cleared on reload (new generation).
-    annotations: HashMap<usize, Vec<PlacedAnnotation>>,
-    /// Form field boxes of each page, read once per revision.
-    widgets: HashMap<usize, Vec<godpdf_core::FieldWidget>>,
-    /// The text field being typed in on the page.
-    pub field_edit: Option<crate::fieldedit::FieldEdit>,
-    /// Page rotation / origin per page; cleared on reload.
+    in_flight: HashSet<usize>,
+    /// Sharp parts of pages too large to render whole, and those being rendered.
+    details: HashMap<usize, Detail>,
+    details_in_flight: HashSet<usize>,
+    /// Images evicted from the cache; their GPU textures are freed on the next paint.
+    evicted: Vec<Arc<RenderImage>>,
     geometries: HashMap<usize, PageGeometry>,
-    /// Text with positions per page, for text selection; cleared on reload.
-    texts: HashMap<usize, Arc<Vec<TextChar>>>,
-    /// Selected / dragged annotation (Select tool).
-    pub canvas: crate::selection::CanvasState,
-    pub search: SearchState,
-    pub current_page: usize,
-    pub zoom: f32,
-    pub scroll_to_page: Option<usize>,
-    /// Vertical scroll offset to apply next frame (after zoom).
-    pub pending_scroll: Option<f32>,
-    pub scroll_y: f32,
-    /// Size of the viewer area last frame, for fit width / fit page.
-    pub viewport: Vec2,
-    pub selection: BTreeSet<usize>,
-    pub anchor: Option<usize>,
-    pub mode: ViewMode,
-    /// (user, owner) passwords applied when saving.
-    pub encrypt_on_save: Option<(String, String)>,
-    /// `encrypt_on_save` as of the last save / open; a difference counts as unsaved.
-    pub saved_encryption: Option<(String, String)>,
-    pub gesture: Option<Gesture>,
-    /// Created by the app (merge, extract, split) and never saved: counts as unsaved.
-    pub derived: bool,
-    /// Fit width once the viewer size is known.
-    pub fit_pending: bool,
-    /// When its file was last written, as of the last open or save: a later time means
-    /// another program changed it.
-    pub disk_time: Option<std::time::SystemTime>,
-    /// Where the second viewer of this document is, when it shows twice side by side.
-    other_place: Place,
-    /// The place in use is the second viewer's (see [`Self::swap_place`]).
-    pub second: bool,
-}
-
-/// Where a viewer is in a document.
-#[derive(Clone, Copy, Default)]
-struct Place {
-    scroll_y: f32,
-    current_page: usize,
-    scroll_to_page: Option<usize>,
-    pending_scroll: Option<f32>,
-    viewport: Vec2,
+    pub view: ViewState,
+    /// Viewer scrollbar drag in progress.
+    pub thumb_drag: Option<crate::viewer::ThumbDrag>,
+    /// Canvas tools state: selection, gesture, text being typed.
+    pub canvas: crate::tools::Canvas,
+    /// Sidebar state of this document: thumbnails, search hits, bookmark being renamed.
+    pub panels: crate::panels::TabPanels,
+    /// Page text: positions, selection, line being edited.
+    pub text: crate::text::TabText,
+    /// Organize page grid: shown or not, selected pages, its thumbnails.
+    pub grid: crate::organize::Grid,
+    /// The second viewer of "Side by side": for reading only, no tools on it.
+    pub companion: bool,
 }
 
 impl DocTab {
-    pub fn new(id: u64, session: Session) -> Self {
+    pub fn new(session: Session) -> Self {
         let mut tab = Self {
-            id,
             session,
-            bytes: Arc::default(),
             render: None,
             render_error: None,
             generation: 0,
             page_sizes: Vec::new(),
             pages: HashMap::new(),
-            details: HashMap::new(),
-            thumbs: HashMap::new(),
             page_errors: HashMap::new(),
             in_flight: HashSet::new(),
-            lifted: None,
-            lift_serial: 0,
-            lift_busy: false,
-            #[cfg(not(target_arch = "wasm32"))]
-            worker: None,
-            outline: None,
-            bookmark_rename: None,
-            form: None,
-            annotations: HashMap::new(),
-            widgets: HashMap::new(),
-            field_edit: None,
+            details: HashMap::new(),
+            details_in_flight: HashSet::new(),
+            evicted: Vec::new(),
             geometries: HashMap::new(),
-            texts: HashMap::new(),
-            canvas: crate::selection::CanvasState::default(),
-            search: SearchState::default(),
-            current_page: 0,
-            zoom: 1.0,
-            scroll_to_page: None,
-            pending_scroll: None,
-            scroll_y: 0.0,
-            viewport: vec2(800.0, 600.0),
-            selection: BTreeSet::new(),
-            anchor: None,
-            mode: ViewMode::Read,
-            encrypt_on_save: None,
-            saved_encryption: None,
-            gesture: None,
-            derived: false,
-            fit_pending: true,
-            disk_time: None,
-            other_place: Place::default(),
-            second: false,
+            thumb_drag: None,
+            canvas: Default::default(),
+            panels: Default::default(),
+            text: Default::default(),
+            grid: Default::default(),
+            companion: false,
+            view: ViewState {
+                zoom: 1.0,
+                scroll: (0.0, 0.0),
+                bounds: Bounds::default(),
+                fit_pending: true,
+                current_page: 0,
+            },
         };
         tab.reload();
         tab
-    }
-
-    /// Trade the place in use for the one of the other viewer showing this document. Called
-    /// around the second viewer, so everything else keeps seeing the first.
-    pub fn swap_place(&mut self) {
-        let other = &mut self.other_place;
-        std::mem::swap(&mut self.scroll_y, &mut other.scroll_y);
-        std::mem::swap(&mut self.current_page, &mut other.current_page);
-        std::mem::swap(&mut self.scroll_to_page, &mut other.scroll_to_page);
-        std::mem::swap(&mut self.pending_scroll, &mut other.pending_scroll);
-        std::mem::swap(&mut self.viewport, &mut other.viewport);
-        self.second = !self.second;
-    }
-
-    /// The second viewer starts on the page the first is on.
-    pub fn start_second_view(&mut self) {
-        self.other_place = Place {
-            scroll_y: self.scroll_y,
-            current_page: self.current_page,
-            scroll_to_page: Some(self.current_page),
-            pending_scroll: None,
-            viewport: self.viewport,
-        };
     }
 
     pub fn title(&self) -> &str {
@@ -380,52 +148,39 @@ impl DocTab {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.derived || self.session.is_dirty() || self.encrypt_on_save != self.saved_encryption
+        self.session.is_dirty()
+    }
+
+    /// Bumped on every reload: caches of what the bytes contain key on it.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn page_count(&self) -> usize {
         self.page_sizes.len()
     }
 
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Re-parse after the bytes changed. Old textures stay visible (as stale previews) while
-    /// the page count is unchanged; selection is cleared (callers re-set it after an edit).
+    /// Re-parse after the bytes changed. Old bitmaps stay visible as stale previews while
+    /// the page count is unchanged.
     pub fn reload(&mut self) {
-        let old_count = self.page_count();
         self.generation += 1;
         self.in_flight.clear();
+        self.details_in_flight.clear();
         self.page_errors.clear();
-        self.outline = None;
-        self.annotations.clear();
-        self.widgets.clear();
-        self.field_edit = None;
         self.geometries.clear();
-        self.texts.clear();
-        self.canvas.drag = None;
-        self.canvas.resize = None;
-        self.canvas.text = None;
-        self.search.hits.clear();
-        self.search.searched.clear();
-        self.search.busy = false;
-        self.gesture = None;
-        self.selection.clear();
-        self.anchor = None;
-        self.page_sizes.clear();
-
+        // egui: callers set the selection again after an edit that keeps the pages.
+        self.grid.selection.clear();
+        let old_count = self.page_count();
         let bytes = Arc::new(self.session.bytes().to_vec());
-        self.bytes = Arc::clone(&bytes);
         let opened = catch_unwind(AssertUnwindSafe(|| {
             let doc = Document::open(bytes, None).map_err(|err| err.to_string())?;
-            let sizes: Vec<Vec2> = (0..doc.page_count())
+            let sizes = (0..doc.page_count())
                 .map(|page| {
                     doc.page_size(page)
-                        .map_or(vec2(612.0, 792.0), |size| vec2(size.width, size.height))
+                        .map_or((612.0, 792.0), |size| (size.width, size.height))
                 })
-                .collect();
-            Ok((doc, sizes))
+                .collect::<Vec<_>>();
+            Ok::<_, String>((doc, sizes))
         }))
         .unwrap_or_else(|_| Err(PANIC_MESSAGE.to_owned()));
         match opened {
@@ -435,19 +190,21 @@ impl DocTab {
                 self.render_error = None;
             }
             Err(err) => {
+                self.page_sizes.clear();
                 self.render = None;
                 self.render_error = Some(err);
             }
         }
-        let count = self.page_count();
-        if count != old_count || self.render.is_none() {
-            self.pages.clear();
-            self.details.clear();
-            self.thumbs.clear();
-            self.lifted = None;
-            self.canvas.ghost = None;
+        if self.page_count() != old_count {
+            self.evicted
+                .extend(self.pages.drain().map(|(_, cached)| cached.image));
+            self.evicted
+                .extend(self.details.drain().map(|(_, detail)| detail.image));
         }
-        self.current_page = self.current_page.min(count.saturating_sub(1));
+        self.view.current_page = self
+            .view
+            .current_page
+            .min(self.page_count().saturating_sub(1));
     }
 
     /// Run a core edit through the session (undo history), then reload.
@@ -476,44 +233,26 @@ impl DocTab {
         Ok(())
     }
 
-    /// Form field boxes of `page`, read once per document revision; none when unreadable.
-    pub fn field_widgets(&mut self, page: usize) -> &[godpdf_core::FieldWidget] {
-        let bytes = self.session.bytes();
-        self.widgets.entry(page).or_insert_with(|| {
-            guarded(|| godpdf_core::field_widgets(bytes, page)).unwrap_or_default()
+    /// Returns the label of the undone step, `None` when there was nothing to undo.
+    pub fn undo(&mut self) -> Option<String> {
+        let label = self.session.undo_label()?.to_owned();
+        self.session.undo().then(|| {
+            self.reload();
+            label
         })
     }
 
-    /// Annotations of `page`, parsed once per document revision.
-    pub fn annotations(&mut self, page: usize) -> Result<&[PlacedAnnotation], String> {
-        if !self.annotations.contains_key(&page) {
-            let list = guarded(|| godpdf_core::annotations(self.session.bytes(), page))
-                .map_err(|err| err.to_string())?;
-            self.annotations.insert(page, list);
-        }
-        Ok(self.annotations.get(&page).map_or(&[], Vec::as_slice))
+    pub fn redo(&mut self) -> Option<String> {
+        let label = self.session.redo_label()?.to_owned();
+        self.session.redo().then(|| {
+            self.reload();
+            label
+        })
     }
 
-    /// Text of `page` with positions (displayed points), read once per document revision.
-    /// Empty when the page has no text or cannot be read.
-    pub fn text_chars(&mut self, page: usize) -> Arc<Vec<TextChar>> {
-        if let Some(chars) = self.texts.get(&page) {
-            return Arc::clone(chars);
-        }
-        let chars = self
-            .render
-            .as_ref()
-            .and_then(|doc| {
-                let doc = Arc::clone(doc);
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-                    doc.text_chars(page).ok()
-                }))
-                .ok()?
-            })
-            .unwrap_or_default();
-        let chars = Arc::new(chars);
-        self.texts.insert(page, Arc::clone(&chars));
-        chars
+    /// The parsed document, `None` when it cannot be displayed.
+    pub fn renderer(&self) -> Option<Arc<Document>> {
+        self.render.clone()
     }
 
     /// Rotation and origin of `page`, parsed once per document revision.
@@ -527,355 +266,268 @@ impl DocTab {
         Ok(geom)
     }
 
-    pub fn undo(&mut self) -> bool {
-        let done = self.session.undo();
-        if done {
-            self.reload();
-        }
-        done
+    /// Page layout at the current zoom and viewer width.
+    pub fn layout(&self) -> Layout {
+        Layout::new(
+            &self.page_sizes,
+            self.view.zoom,
+            f32::from(self.view.bounds.size.width),
+        )
     }
 
-    pub fn redo(&mut self) -> bool {
-        let done = self.session.redo();
-        if done {
-            self.reload();
-        }
-        done
+    fn view_size(&self) -> (f32, f32) {
+        let size = self.view.bounds.size;
+        (f32::from(size.width), f32::from(size.height))
     }
 
-    /// Pages an organize command acts on: the selection in Organize view, else the current page.
-    pub fn target_pages(&self) -> Vec<usize> {
-        if self.mode == ViewMode::Organize && !self.selection.is_empty() {
-            self.selection.iter().copied().collect()
-        } else if self.page_count() > 0 {
-            vec![self.current_page]
-        } else {
-            Vec::new()
+    /// Scroll by `delta` (logical pixels), clamped to the content.
+    pub fn scroll_by(&mut self, delta: (f32, f32)) {
+        let scroll = (self.view.scroll.0 + delta.0, self.view.scroll.1 + delta.1);
+        self.set_scroll(&self.layout(), scroll);
+    }
+
+    pub fn scroll_to_page(&mut self, page: usize) {
+        let layout = self.layout();
+        if let Some(y) = layout.scroll_to_page(page) {
+            self.set_scroll(&layout, (self.view.scroll.0, y));
         }
     }
 
-    pub fn set_zoom(&mut self, zoom: f32) {
-        let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
-        if (zoom - self.zoom).abs() < f32::EPSILON {
+    fn set_scroll(&mut self, layout: &Layout, scroll: (f32, f32)) {
+        let view = self.view_size();
+        let max = layout.max_scroll(view);
+        self.view.scroll = (scroll.0.clamp(0.0, max.0), scroll.1.clamp(0.0, max.1));
+        self.view.current_page = layout.current_page(self.view.scroll.1, view.1);
+    }
+
+    /// Zoom to `zoom`, keeping the content under `anchor` (view space; `None` = view center).
+    pub fn set_zoom(&mut self, zoom: f32, anchor: Option<(f32, f32)>) {
+        let zoom = zoom.clamp(geometry::MIN_ZOOM, geometry::MAX_ZOOM);
+        if (zoom - self.view.zoom).abs() < f32::EPSILON {
             return;
         }
-        self.pending_scroll = Some(self.scroll_y * zoom / self.zoom);
-        self.zoom = zoom;
+        let view = self.view_size();
+        let anchor = anchor.unwrap_or((view.0 / 2.0, view.1 / 2.0));
+        let old = self.layout();
+        self.view.zoom = zoom;
+        let new = self.layout();
+        let scroll = geometry::anchored_scroll(&old, &new, self.view.scroll, anchor);
+        self.set_scroll(&new, scroll);
     }
 
-    pub fn max_page_width(&self) -> f32 {
-        self.page_sizes
-            .iter()
-            .map(|size| size.x)
-            .fold(1.0, f32::max)
+    pub fn fit_width(&mut self) {
+        let width = f32::from(self.view.bounds.size.width);
+        if width > 0.0 && !self.page_sizes.is_empty() {
+            let page = self.view.current_page;
+            self.set_zoom(geometry::fit_width_zoom(&self.page_sizes, width), None);
+            self.scroll_to_page(page);
+        }
+    }
+
+    /// Zoom so the current page fits whole in the view, and show it.
+    pub fn fit_page(&mut self) {
+        let size = self.view_size();
+        let page = self.view.current_page;
+        if let Some(&(width, height)) = self.page_sizes.get(page) {
+            let zoom = geometry::fit_page_zoom((width, height), size);
+            self.set_zoom(zoom, None);
+            self.scroll_to_page(page);
+        }
     }
 
     pub fn page_error(&self, page: usize) -> Option<&str> {
         self.page_errors.get(&page).map(String::as_str)
     }
 
-    /// Texture for `page` near `scale`. May return a stale texture (old resolution or old
-    /// revision) while the fresh one renders; `None` means "nothing to show yet".
-    pub fn page_texture(
+    /// Bitmap for `page`, rendering it at `scale` (pixels per point) when the cached one is
+    /// missing, stale or at another scale. May return the stale one meanwhile.
+    pub fn page_image(
         &mut self,
-        ctx: &Context,
         page: usize,
         scale: f32,
-        budget: &mut Budget,
-    ) -> Option<&TextureHandle> {
-        self.poll(ctx);
-        if self.page_errors.contains_key(&page) {
-            return None;
-        }
-        let size = self.page_sizes.get(page).copied()?;
-        let scale = scale.min(MAX_TEXTURE_SIDE / size.x.max(size.y).max(1.0));
-        let fresh = self
-            .pages
-            .get(&page)
-            .is_some_and(|tex| tex.generation == self.generation && same_scale(tex.scale, scale));
-        if !fresh {
-            self.request(ctx, page, Kind::Page, scale, None, budget);
-        }
-        self.pages.get(&page).map(|tex| &tex.texture)
-    }
-
-    /// A sharp picture of the part of `page` on screen, when the page is too large to be drawn
-    /// whole at `scale`: its texture, its size in pixels and the part of the page it shows.
-    /// `visible` is the part on screen, in displayed points. May be stale, as page textures.
-    pub fn page_detail(
-        &mut self,
-        ctx: &Context,
-        page: usize,
-        scale: f32,
-        visible: egui::Rect,
-        budget: &mut Budget,
-    ) -> Option<(egui::TextureId, Vec2, egui::Rect)> {
-        let key = (page, self.second);
-        let size = self.page_sizes.get(page).copied()?;
-        let sheet = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-        let visible = visible.intersect(sheet);
-        let whole = MAX_TEXTURE_SIDE / size.x.max(size.y).max(1.0);
-        if scale <= whole * (1.0 + SCALE_TOLERANCE) || !visible.is_positive() {
-            self.details.remove(&key);
-            return None;
-        }
-        // Some of the page around what shows: scrolling a little needs no new picture.
-        let room = (Vec2::splat(MAX_TEXTURE_SIDE / scale) - visible.size()).max(Vec2::ZERO);
-        let around = visible.expand2(room.min(visible.size()) / 2.0);
-        // On whole pixels, to be drawn pixel for pixel like the page under it.
-        let min = (around.min.to_vec2() * scale).floor() / scale;
-        let max = (around.max.to_vec2() * scale).ceil() / scale;
-        let wanted = egui::Rect::from_min_max(min.to_pos2(), max.to_pos2()).intersect(sheet);
-        let fresh = self.details.get(&key).is_some_and(|detail| {
-            detail.generation == self.generation
-                && same_scale(detail.scale, scale)
-                && detail.region.contains_rect(visible.intersect(wanted))
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        let &(width, height) = self.page_sizes.get(page)?;
+        let scale = scale.min(MAX_TEXTURE_SIDE / width.max(height).max(1.0));
+        let fresh = self.pages.get(&page).is_some_and(|cached| {
+            cached.generation == self.generation
+                && (cached.scale / scale - 1.0).abs() <= SCALE_TOLERANCE
         });
-        if !fresh {
-            let kind = Kind::Detail {
-                second: self.second,
-            };
-            let region = [wanted.min.x, wanted.min.y, wanted.max.x, wanted.max.y];
-            self.request(ctx, page, kind, scale, Some(region), budget);
+        if !fresh && !self.page_errors.contains_key(&page) {
+            self.request(page, scale, cx);
         }
-        let detail = self.details.get(&key)?;
-        Some((
-            detail.texture.id(),
-            detail.texture.size_vec2(),
-            detail.region,
-        ))
-    }
-
-    /// True when the texture of `page` shows the current document revision.
-    pub fn page_fresh(&self, page: usize) -> bool {
         self.pages
             .get(&page)
-            .is_some_and(|tex| tex.generation == self.generation)
+            .map(|cached| Arc::clone(&cached.image))
     }
 
-    /// Prepare `page` rendered without the annotation `id` (see [`Self::lifted`]). Cheap to
-    /// call every frame: it only renders when the target or the document changed.
-    pub fn lift(&mut self, ctx: &Context, page: usize, id: &str) {
-        let Some(scale) = self.pages.get(&page).map(|tex| tex.scale) else {
-            return;
-        };
-        let current = self.lifted.as_ref().is_some_and(|lifted| {
-            lifted.page == page
-                && lifted.id == id
-                && lifted.generation == self.generation
-                && same_scale(lifted.scale, scale)
-        });
-        if current || self.lift_busy {
-            return;
-        }
-        self.lift_serial += 1;
-        self.lift_busy = true;
-        self.lifted = Some(Lifted {
-            page,
-            id: id.to_owned(),
-            generation: self.generation,
-            serial: self.lift_serial,
-            scale,
-            texture: None,
-        });
-        self.send(
-            ctx,
-            Request {
-                source: Source::Without {
-                    bytes: Arc::clone(&self.bytes),
-                    id: id.to_owned(),
-                },
-                generation: self.lift_serial,
-                page,
-                kind: Kind::Lifted,
-                scale,
-                region: None,
-            },
-        );
-    }
-
-    /// `page` without the annotation `id`, once [`Self::lift`] has rendered it.
-    pub fn lifted(&self, page: usize, id: &str) -> Option<egui::TextureId> {
-        let lifted = self
-            .lifted
-            .as_ref()
-            .filter(|lifted| lifted.page == page && lifted.id == id)?;
-        lifted.texture.as_ref().map(TextureHandle::id)
-    }
-
-    pub fn thumbnail(
+    /// The sharp part of `page` on screen when it is too large to be drawn whole at `scale`:
+    /// its image and the part of the page it shows. `visible` (left, top, right, bottom in
+    /// displayed points) is what shows. May be stale, as page images.
+    pub fn page_detail(
         &mut self,
-        ctx: &Context,
         page: usize,
-        budget: &mut Budget,
-    ) -> Option<&TextureHandle> {
-        self.poll(ctx);
-        if self.page_errors.contains_key(&page) {
+        scale: f32,
+        visible: [f32; 4],
+        cx: &mut Context<Self>,
+    ) -> Option<(Arc<RenderImage>, [f32; 4])> {
+        let &(width, height) = self.page_sizes.get(page)?;
+        let whole = MAX_TEXTURE_SIDE / width.max(height).max(1.0);
+        let shows = visible[2] > visible[0] && visible[3] > visible[1];
+        if scale <= whole * (1.0 + SCALE_TOLERANCE) || !shows {
+            if let Some(detail) = self.details.remove(&page) {
+                self.evicted.push(detail.image);
+            }
             return None;
         }
-        // Device pixels so thumbnails stay sharp on HiDPI screens.
-        let pixels = THUMB_PX as f32 * ctx.pixels_per_point();
-        let fresh = self
-            .thumbs
-            .get(&page)
-            .is_some_and(|tex| tex.generation == self.generation && same_scale(tex.scale, pixels));
+        let wanted = detail_region(visible, (width, height), scale);
+        let fresh = self.details.get(&page).is_some_and(|detail| {
+            detail.generation == self.generation
+                && (detail.scale / scale - 1.0).abs() <= SCALE_TOLERANCE
+                && contains(detail.region, visible)
+        });
         if !fresh {
-            self.request(ctx, page, Kind::Thumb, pixels, None, budget);
+            self.request_detail(page, scale, wanted, cx);
         }
-        self.thumbs.get(&page).map(|tex| &tex.texture)
+        self.details
+            .get(&page)
+            .map(|detail| (Arc::clone(&detail.image), detail.region))
     }
 
-    /// Free full-size textures far from what is on screen.
-    pub fn retain_pages(&mut self, keep: std::ops::RangeInclusive<usize>) {
-        self.pages.retain(|page, _| keep.contains(page));
-        self.details.retain(|(page, _), _| keep.contains(page));
-    }
-
-    fn request(
+    fn request_detail(
         &mut self,
-        ctx: &Context,
         page: usize,
-        kind: Kind,
         scale: f32,
-        region: Option<[f32; 4]>,
-        budget: &mut Budget,
+        region: [f32; 4],
+        cx: &mut Context<Self>,
     ) {
-        if self.in_flight.contains(&(page, kind))
-            || self.in_flight.len() >= MAX_IN_FLIGHT
-            || !budget.take()
-        {
-            return;
-        }
         let Some(doc) = self.render.clone() else {
             return;
         };
-        self.in_flight.insert((page, kind));
-        self.send(
-            ctx,
-            Request {
-                source: Source::Doc(doc),
-                generation: self.generation,
-                page,
-                kind,
-                scale,
-                region,
-            },
-        );
-    }
-
-    /// Hand a request to the worker, or run it right here without one.
-    fn send(&mut self, ctx: &Context, request: Request) {
-        #[cfg(not(target_arch = "wasm32"))]
-        let request = {
-            if self.worker.is_none() {
-                self.worker = Worker::spawn(ctx.clone());
-            }
-            let unsent = match &self.worker {
-                Some(worker) => worker.requests.send(request).err().map(|err| err.0),
-                None => Some(request),
-            };
-            let Some(request) = unsent else {
-                return;
-            };
-            // No worker (spawn failed or it died): render inline.
-            self.worker = None;
-            request
-        };
-        let rendered = request.run();
-        self.store(ctx, rendered);
-    }
-
-    /// Upload finished renders from the worker.
-    fn poll(&mut self, ctx: &Context) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let done: Vec<Rendered> = self
-                .worker
-                .as_ref()
-                .map(|worker| worker.results.try_iter().collect())
-                .unwrap_or_default();
-            for rendered in done {
-                self.store(ctx, rendered);
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        let _ = ctx;
-    }
-
-    fn store(&mut self, ctx: &Context, rendered: Rendered) {
-        if rendered.kind == Kind::Lifted {
-            self.lift_busy = false;
-            if let Some(lifted) = self
-                .lifted
-                .as_mut()
-                .filter(|lifted| lifted.serial == rendered.generation)
-                && let Ok(bitmap) = &rendered.result
-            {
-                let name = format!("lifted-{}", self.id);
-                lifted.texture = Some(upload(ctx, name, bitmap));
-            }
+        // One at a time per page; once it is in, a view that moved on asks again.
+        if !self.details_in_flight.insert(page) {
             return;
         }
-        if rendered.generation != self.generation {
+        let generation = self.generation;
+        let rendered = cx.background_executor().spawn(async move {
+            catch_unwind(AssertUnwindSafe(|| doc.render_region(page, scale, region)))
+                .unwrap_or_else(|_| Err(godpdf_render::Error::Parse(PANIC_MESSAGE.to_owned())))
+                .map_err(|err| err.to_string())
+                .and_then(to_render_image)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rendered.await;
+            let _ = this.update(cx, |tab, cx| {
+                if tab.generation != generation {
+                    return;
+                }
+                tab.details_in_flight.remove(&page);
+                // A failed part leaves the whole page shown, less sharp: nothing to say.
+                if let Ok(image) = result {
+                    let detail = Detail {
+                        image: Arc::new(image),
+                        scale,
+                        generation,
+                        region,
+                    };
+                    if let Some(old) = tab.details.insert(page, detail) {
+                        tab.evicted.push(old.image);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn request(&mut self, page: usize, scale: f32, cx: &mut Context<Self>) {
+        let Some(doc) = self.render.clone() else {
+            return;
+        };
+        if self.in_flight.len() >= MAX_IN_FLIGHT || !self.in_flight.insert(page) {
             return;
         }
-        let page = rendered.page;
-        self.in_flight.remove(&(page, rendered.kind));
-        if let Kind::Detail { second } = rendered.kind {
-            // A part that cannot be drawn leaves the page as it shows.
-            if let (Ok(bitmap), Some([left, top, right, bottom])) =
-                (&rendered.result, rendered.region)
-            {
-                let name = format!("detail-{}-{page}-{second}", self.id);
-                let corners = (egui::pos2(left, top), egui::pos2(right, bottom));
-                let detail = Detail {
-                    texture: upload(ctx, name, bitmap),
-                    scale: rendered.scale,
-                    generation: rendered.generation,
-                    region: egui::Rect::from_min_max(corners.0, corners.1),
-                };
-                self.details.insert((page, second), detail);
+        let generation = self.generation;
+        let rendered = cx.background_executor().spawn(async move {
+            catch_unwind(AssertUnwindSafe(|| doc.render(page, scale)))
+                .unwrap_or_else(|_| Err(godpdf_render::Error::Parse(PANIC_MESSAGE.to_owned())))
+                .map_err(|err| err.to_string())
+                .and_then(to_render_image)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rendered.await;
+            // The tab may be closed meanwhile: nothing to do then.
+            let _ = this.update(cx, |tab, cx| {
+                if tab.generation != generation {
+                    return;
+                }
+                tab.in_flight.remove(&page);
+                match result {
+                    Ok(image) => {
+                        let cached = CachedPage {
+                            image: Arc::new(image),
+                            scale,
+                            generation,
+                        };
+                        if let Some(old) = tab.pages.insert(page, cached) {
+                            tab.evicted.push(old.image);
+                        }
+                    }
+                    Err(err) => {
+                        tab.page_errors.insert(page, err);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Drop bitmaps of pages far from `visible`, and free evicted GPU textures.
+    pub fn trim_cache(&mut self, visible: std::ops::Range<usize>, window: &mut Window) {
+        let keep = visible.start.saturating_sub(KEEP_AROUND)..visible.end + KEEP_AROUND;
+        let far: Vec<usize> = self
+            .pages
+            .keys()
+            .copied()
+            .filter(|page| !keep.contains(page))
+            .collect();
+        for page in far {
+            if let Some(cached) = self.pages.remove(&page) {
+                self.evicted.push(cached.image);
             }
-            return;
         }
-        let bitmap = match rendered.result {
-            Ok(bitmap) => bitmap,
-            Err(err) => {
-                self.page_errors.insert(page, err);
-                return;
+        let gone: Vec<usize> = self
+            .details
+            .keys()
+            .copied()
+            .filter(|page| !visible.contains(page))
+            .collect();
+        for page in gone {
+            if let Some(detail) = self.details.remove(&page) {
+                self.evicted.push(detail.image);
             }
-        };
-        let (prefix, cache) = match rendered.kind {
-            Kind::Page => ("page", &mut self.pages),
-            Kind::Thumb => ("thumb", &mut self.thumbs),
-            Kind::Lifted | Kind::Detail { .. } => return,
-        };
-        let texture = upload(ctx, format!("{prefix}-{}-{page}", self.id), &bitmap);
-        cache.insert(
-            page,
-            Cached {
-                texture,
-                scale: rendered.scale,
-                generation: rendered.generation,
-            },
-        );
+        }
+        for image in self.evicted.drain(..) {
+            // Fails only for an image never painted: nothing to free then.
+            let _ = window.drop_image(image);
+        }
     }
 }
 
-/// Scales close enough that re-rendering would not change a pixel.
-fn same_scale(cached: f32, wanted: f32) -> bool {
-    (cached - wanted).abs() <= wanted.abs() * SCALE_TOLERANCE
-}
-
-fn upload(ctx: &Context, name: String, bitmap: &Bitmap) -> TextureHandle {
-    let size = [bitmap.width as usize, bitmap.height as usize];
-    let image = if bitmap.rgba.len() == size[0] * size[1] * 4 {
-        ColorImage::from_rgba_unmultiplied(size, &bitmap.rgba)
-    } else {
-        // Defensive: a malformed bitmap would panic in ColorImage.
-        ColorImage::filled([1, 1], egui::Color32::WHITE)
-    };
-    ctx.load_texture(name, image, TextureOptions::LINEAR)
+/// hayro gives straight RGBA; gpui wants BGRA.
+pub fn to_render_image(bitmap: Bitmap) -> Result<RenderImage, String> {
+    let Bitmap {
+        width,
+        height,
+        mut rgba,
+    } = bitmap;
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    let buffer = image::RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "rendered page has a wrong size".to_owned())?;
+    Ok(RenderImage::new(vec![image::Frame::new(buffer)]))
 }
 
 #[cfg(test)]
@@ -883,25 +535,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn searched_words_are_marked_only_while_the_search_shows_them() {
-        let mut search = SearchState {
-            query: " fluo ".to_owned(),
-            searched: "fluo".to_owned(),
-            open: true,
-            ..SearchState::default()
+    fn detail_covers_what_shows_with_room_on_whole_pixels() {
+        // A0 at 4 px per point: 2384 x 3370 points, only 400 x 300 show.
+        let region = detail_region([1000.0, 500.0, 1400.0, 800.0], (2384.0, 3370.0), 4.0);
+        assert!(contains(region, [1000.0, 500.0, 1400.0, 800.0]));
+        assert_eq!(region, [800.0, 350.0, 1600.0, 950.0]);
+        assert!((region[2] - region[0]) * 4.0 <= MAX_TEXTURE_SIDE);
+        // At the page corner it stops at the sheet.
+        let corner = detail_region([0.0, 0.0, 100.0, 100.0], (2384.0, 3370.0), 4.0);
+        assert_eq!(corner, [0.0, 0.0, 150.0, 150.0]);
+    }
+
+    #[test]
+    fn swaps_red_and_blue() {
+        let bitmap = Bitmap {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 4],
         };
-        assert_eq!(search.marked(), Some("fluo"));
-        // Other words in the field: the marks of the old ones go.
-        search.query = "flu".to_owned();
-        assert_eq!(search.marked(), None);
-        // The panel closed: no marks, and they come back with it.
-        search.query = "fluo".to_owned();
-        search.open = false;
-        assert_eq!(search.marked(), None);
-        search.open = true;
-        assert_eq!(search.marked(), Some("fluo"));
-        search.searched.clear();
-        search.query.clear();
-        assert_eq!(search.marked(), None);
+        let image = to_render_image(bitmap).unwrap();
+        assert_eq!(image.as_bytes(0), Some(&[3, 2, 1, 4][..]));
     }
 }

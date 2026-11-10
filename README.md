@@ -40,7 +40,7 @@ New versions come through the Updates button: it downloads one and restarts on i
 - Protect: open encrypted PDFs, add or remove a password, remove hidden data (properties, scripts, attached files)
 - Tabs: right-click to close the others, reopen the last closed (`Ctrl+Shift+T`), show the file in its folder
 - A file changed by another program is read again
-- Print, document properties, text extraction, undo/redo history
+- Print, document properties, text extraction, undo/redo
 - Command palette (`Ctrl+K`): every tool by name; chosen with nothing open, a tool asks for a file and runs on it
 
 ## Build
@@ -51,14 +51,22 @@ Requires Rust 1.94+.
 cargo run --release -p godpdf
 ```
 
+Linux needs the GPUI system libraries:
+
+```sh
+sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev   libvulkan-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev
+```
+
+macOS needs Xcode (GPUI compiles its Metal shaders with it).
+There is no web build: GPUI is native only.
+
 ## Workspace
 
 | Crate | Role |
 |-------|------|
 | `crates/core` (`godpdf-core`) | Editing ops on PDF bytes via `lopdf`, undo/redo session |
 | `crates/render` (`godpdf-render`) | Page rasterization via `hayro` |
-| `crates/app` (`godpdf`) | `egui`/`eframe` desktop app |
-| `crates/app-gpui` (`godpdf-gpui`) | GPUI desktop app (in progress, native only) |
+| `crates/app` (`godpdf`) | Desktop app on [GPUI](https://gpui.rs) (Windows, Linux, macOS) |
 
 ## License
 

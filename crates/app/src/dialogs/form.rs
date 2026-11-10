@@ -36,11 +36,11 @@ impl Field {
 pub fn text(
     label: &'static str,
     value: impl Into<SharedString>,
-    placeholder: &'static str,
+    placeholder: impl Into<SharedString>,
     window: &mut Window,
     cx: &mut App,
 ) -> Field {
-    let value = value.into();
+    let (value, placeholder) = (value.into(), placeholder.into());
     let input = cx.new(|cx| {
         InputState::new(window, cx)
             .placeholder(placeholder)
@@ -96,6 +96,15 @@ impl Form {
             .unwrap_or_default()
     }
 
+    /// Whether the field `label` shows: Split shows only the field of the way chosen.
+    fn shows(&self, label: &str) -> bool {
+        match (self.kind, label) {
+            (Kind::Split, super::kinds::PER_PART) => self.choice("Split") == 0,
+            (Kind::Split, super::kinds::STARTS_AT) => self.choice("Split") == 1,
+            _ => true,
+        }
+    }
+
     /// Chosen option of the choice `label` (0 when there is none).
     pub fn choice(&self, label: &str) -> usize {
         self.fields
@@ -131,7 +140,12 @@ pub fn render(form: &Form, palette: &Palette) -> AnyElement {
     let palette = *palette;
     let (title, description) = form.kind.title();
     let (primary, secondary) = form.kind.buttons();
-    let rows = form.fields.iter().enumerate().map(|(index, field)| {
+    let shown = form
+        .fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| form.shows(field.label()));
+    let rows = shown.map(|(index, field)| {
         let value = match field {
             Field::Text { input, .. } => div().flex_1().child(Input::new(input)),
             Field::Choice {
@@ -144,7 +158,10 @@ pub fn render(form: &Form, palette: &Palette) -> AnyElement {
                         true,
                         &palette,
                     )
-                    .when(option == *selected, |chip| chip.bg(palette.selected))
+                    .when(option == *selected, |chip| {
+                        let fill = palette.selected;
+                        chip.bg(fill).hover(move |style| style.bg(fill))
+                    })
                     .on_click(move |_, window, cx| {
                         select(index, option, cx);
                         window.refresh();

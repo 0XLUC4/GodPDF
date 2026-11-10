@@ -25,7 +25,7 @@ All PDF work is in `godpdf-core` (edits, bytes in -> bytes out) and `godpdf-rend
 | `geometry.rs` | Pure math: page `Layout`, visible pages, zoom anchoring, displayed points <-> PDF space. Tested. |
 | `theme.rs` | Palette and visuals (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`; tool colours. |
 | `signature.rs` | The user's signature (strokes one unit wide, tested), kept in `<config>/GodPDF/signature.txt`; the pad dialog is `dialogs/signpad.rs`. |
-| `toasts.rs` | `toasts::error(cx, ..)`: the error bar under the header (latest wins, 6 s); `info` / `success` are no-ops. |
+| `toasts.rs` | `toasts::error(cx, ..)`: the error bar under the header (latest wins, 6 s); `note` the same bar, neutral, for an action that changed nothing; `info` / `success` are no-ops. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
 | `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `framed_button`, `accent_button`, `dispatch`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`, styled text drawn by `richtext.rs`: per-character bold / italic / underline / sub / superscript, width grip on the right edge), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |

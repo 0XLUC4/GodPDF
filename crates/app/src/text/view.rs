@@ -19,6 +19,8 @@ const ADDED: u32 = 0x2F9E44;
 pub struct TextView {
     pub title: String,
     pub text: String,
+    /// Characters of the document's text (page headers left out); 0 for scanned pages.
+    pub chars: usize,
     /// The read-only field, made on the first frame (it needs the window).
     pub area: Option<Entity<TextareaState>>,
 }
@@ -64,7 +66,7 @@ fn floating(
             div()
                 .flex()
                 .items_center()
-                .child(div().flex_1().truncate().text_size(px(15.)).child(title))
+                .child(div().flex_1().truncate().text_size(px(18.)).child(title))
                 .child(
                     widgets::small_icon_button((id, 0usize), icons::X, "Close", palette)
                         .on_click(move |_, _, cx| close(cx)),
@@ -109,8 +111,11 @@ pub fn render(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
         let Some(view) = windows(cx).text.as_ref() else {
             return shown;
         };
-        let text = view.text.clone();
-        let count = format!("{} characters", text.chars().count());
+        let (text, chars) = (view.text.clone(), view.chars);
+        let count = match chars {
+            1 => "1 character".to_owned(),
+            chars => format!("{chars} characters"),
+        };
         let close = |cx: &mut App| {
             windows(cx).text = None;
             cx.refresh_windows();
@@ -122,36 +127,57 @@ pub fn render(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
             &palette,
         )
         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())));
-        shown.push(
-            floating(
-                "text-view",
-                view.title.clone(),
-                (560., 520.),
-                0.,
-                close,
-                &palette,
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(theme::ITEM_SPACING.0))
-                    .child(copy)
-                    .child(div().text_color(palette.text_dim).child(count)),
-            )
-            .child(separator(&palette))
-            .child(
-                // A flex row would size the text area to its content, a sliver on the left.
-                div().flex_1().min_h_0().w_full().flex().flex_col().child(
-                    Textarea::new(&area)
-                        .readonly(true)
-                        .w_full()
-                        .h(relative(1.))
-                        .font_family(fonts::MONO),
-                ),
-            )
-            .into_any_element(),
+        let frame = floating(
+            "text-view",
+            view.title.clone(),
+            (560., 520.),
+            0.,
+            close,
+            &palette,
         );
+        if chars == 0 {
+            shown.push(
+                frame
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(theme::ITEM_SPACING.0))
+                            .text_color(palette.text_dim)
+                            .child(widgets::icon(icons::SCAN, 32.0, palette.text_dim))
+                            .child("No text found")
+                            .child("Scanned pages need Recognize text (OCR) first."),
+                    )
+                    .into_any_element(),
+            );
+        } else {
+            shown.push(
+                frame
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(theme::ITEM_SPACING.0))
+                            .child(copy)
+                            .child(div().text_color(palette.text_dim).child(count)),
+                    )
+                    .child(separator(&palette))
+                    .child(
+                        // A flex row would size the text area to its content, a sliver on the left.
+                        div().flex_1().min_h_0().w_full().flex().flex_col().child(
+                            Textarea::new(&area)
+                                .readonly(true)
+                                .w_full()
+                                .h(relative(1.))
+                                .font_family(fonts::MONO),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+        }
     }
     if let Some(view) = windows(cx).compare.as_ref() {
         let close = |cx: &mut App| {
@@ -207,7 +233,10 @@ pub fn render(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
                 .child(
                     div()
                         .text_color(palette.text_dim)
-                        .child(format!("{} pages differ", view.pages.len())),
+                        .child(match view.pages.len() {
+                            1 => "1 page differs".to_owned(),
+                            count => format!("{count} pages differ"),
+                        }),
                 )
                 .child(separator(&palette))
                 .child(

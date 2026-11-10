@@ -131,6 +131,13 @@ pub struct Canvas {
     pointer: Option<(usize, (f32, f32))>,
 }
 
+impl Canvas {
+    /// The decoded picture's pixels, handed over to have their GPU texture freed.
+    pub fn take_picture(&mut self) -> Option<Arc<RenderImage>> {
+        self.picture.take().and_then(|cached| cached.image)
+    }
+}
+
 /// A picture annotation decoded once to be drawn at the pointer, image `None` while decoding.
 // shortcut: keyed by id and pixel size, so a picture swapped for another of the same size under
 // the same id would show the old pixels while moved; key on a content hash if that happens.

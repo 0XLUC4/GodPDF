@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::App;
 use rfd::{AsyncFileDialog, FileHandle};
@@ -31,15 +32,26 @@ pub fn read_file(path: &Path) -> Result<PickedFile, String> {
 /// What Open, Combine and Insert accept: pictures and text are made into PDFs (`import.rs`).
 const OPENABLE: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "txt"];
 
-/// Run a native dialog without blocking, then `then` with its answer. A blocking dialog runs a
-/// nested Windows message loop, where gpui tasks borrow the app again and abort the process.
-pub fn ask<T: 'static>(
+/// A file dialog is up: another one would stack on it (Ctrl+O twice opens two).
+static ASKING: AtomicBool = AtomicBool::new(false);
+
+/// Run the native dialog `dialog` makes without blocking, then `then` with its answer; nothing
+/// while another one is up. A blocking dialog runs a nested Windows message loop, where gpui
+/// tasks borrow the app again and abort the process.
+// shortcut: the dialogs have no parent window (that needs its raw handle, kept as unsafe
+// code), so one can fall behind the app; pass `set_parent` if that bothers.
+pub fn ask<T: 'static, F: Future<Output = T> + 'static>(
     cx: &App,
-    dialog: impl Future<Output = T> + 'static,
+    dialog: impl FnOnce() -> F,
     then: impl FnOnce(T, &mut App) + 'static,
 ) {
+    if ASKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let dialog = dialog();
     cx.spawn(async move |cx| {
         let answer = dialog.await;
+        ASKING.store(false, Ordering::SeqCst);
         cx.update(|cx| then(answer, cx));
     })
     .detach();
@@ -55,15 +67,17 @@ fn paths(handles: Option<Vec<FileHandle>>) -> Vec<PathBuf> {
 
 /// Ask for files to open (PDFs, pictures, text); empty when cancelled.
 pub fn pick_pdfs(cx: &App, then: impl FnOnce(Vec<PathBuf>, &mut App) + 'static) {
-    let dialog = AsyncFileDialog::new()
-        .add_filter("PDFs, images and text", &OPENABLE)
-        .pick_files();
+    let dialog = || {
+        AsyncFileDialog::new()
+            .add_filter("PDFs, images and text", &OPENABLE)
+            .pick_files()
+    };
     ask(cx, dialog, move |picked, cx| then(paths(picked), cx));
 }
 
 /// Ask for any files; empty when cancelled.
 pub fn pick_any(cx: &App, then: impl FnOnce(Vec<PathBuf>, &mut App) + 'static) {
-    let dialog = AsyncFileDialog::new().pick_files();
+    let dialog = || AsyncFileDialog::new().pick_files();
     ask(cx, dialog, move |picked, cx| then(paths(picked), cx));
 }
 
@@ -73,9 +87,11 @@ pub fn pick_file(
     filter: (&str, &[&str]),
     then: impl FnOnce(PathBuf, &mut App) + 'static,
 ) {
-    let dialog = AsyncFileDialog::new()
-        .add_filter(filter.0, filter.1)
-        .pick_file();
+    let dialog = || {
+        AsyncFileDialog::new()
+            .add_filter(filter.0, filter.1)
+            .pick_file()
+    };
     ask(cx, dialog, move |picked, cx| {
         if let Some(handle) = picked {
             then(handle.path().to_path_buf(), cx);
@@ -87,7 +103,7 @@ pub fn pick_file(
 pub fn pick_folder(cx: &App, then: impl FnOnce(PathBuf, &mut App) + 'static) {
     ask(
         cx,
-        AsyncFileDialog::new().pick_folder(),
+        || AsyncFileDialog::new().pick_folder(),
         move |picked, cx| {
             if let Some(handle) = picked {
                 then(handle.path().to_path_buf(), cx);
@@ -106,11 +122,15 @@ pub fn pick_save(cx: &App, name: &str, pdf: bool, then: impl FnOnce(PathBuf, &mu
     } else {
         dialog = dialog.set_file_name(name);
     }
-    ask(cx, dialog.save_file(), move |picked, cx| {
-        if let Some(handle) = picked {
-            then(handle.path().to_path_buf(), cx);
-        }
-    });
+    ask(
+        cx,
+        || dialog.save_file(),
+        move |picked, cx| {
+            if let Some(handle) = picked {
+                then(handle.path().to_path_buf(), cx);
+            }
+        },
+    );
 }
 
 /// Ask where to save a new PDF and write it there; `done` gets the path once written.

@@ -15,6 +15,8 @@ use crate::toasts;
 const MM: f32 = 72.0 / 25.4;
 const PAGES: &str = "Pages";
 const PAGES_HINT: &str = "e.g. 1-3, 5, 8-";
+pub(super) const PER_PART: &str = "Pages per part";
+pub(super) const STARTS_AT: &str = "New part starts at";
 
 /// Colours offered for stamps.
 const COLOURS: [(&str, Color); 5] = [
@@ -176,9 +178,11 @@ pub fn build(
         guarded(|| core::read_metadata(doc.session.bytes()))
             .map_err(|err| format!("Cannot read properties: {err}"))
     });
-    let mut text = |label, value: &str, hint| form::text(label, value.to_owned(), hint, window, cx);
+    let mut text = |label, value: &str, hint: &str| {
+        form::text(label, value.to_owned(), hint.to_owned(), window, cx)
+    };
     let fields = match kind {
-        Kind::GoToPage => vec![text("Page", "", "")],
+        Kind::GoToPage => vec![text("Page", "", &format!("1–{count}"))],
         Kind::NumberPages => vec![
             form::choice("Position", Place::ALL.map(Place::label), 0),
             form::choice("Format", NUMBER_FORMATS.map(number_sample), 0),
@@ -229,9 +233,9 @@ pub fn build(
         ],
         Kind::Extract => vec![text(PAGES, &extract, PAGES_HINT)],
         Kind::Split => vec![
-            form::choice("Split", ["Every N pages", "At pages"], 0),
-            text("N", "1", ""),
-            text("New part starts at", "", "e.g. 4, 9"),
+            form::choice("Split", ["Every few pages", "At pages"], 0),
+            text(PER_PART, "1", ""),
+            text(STARTS_AT, "", "e.g. 4, 9"),
         ],
         Kind::Encrypt => vec![
             form::password("Open password", "", window, cx),
@@ -415,10 +419,10 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             let starts = if every {
                 Vec::new()
             } else {
-                ranges::parse(&form.text("New part starts at", cx), count)?
+                ranges::parse(&form.text(STARTS_AT, cx), count)?
             };
             let n = if every {
-                num("N", 1.0..=10_000.0)? as usize
+                num(PER_PART, 1.0..=10_000.0)? as usize
             } else {
                 0
             };

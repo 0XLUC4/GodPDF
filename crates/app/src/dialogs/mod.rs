@@ -108,6 +108,8 @@ pub struct Dialogs {
     open: Option<Open>,
     /// Focused before the dialog opened: focused again when it closes.
     return_focus: Option<FocusHandle>,
+    /// Put on the backdrop: holds the keyboard while no field of the dialog has it.
+    focus: Option<FocusHandle>,
     passwords: HashMap<EntityId, Passwords>,
     printing: bool,
 }
@@ -139,6 +141,7 @@ pub fn register(cx: &mut App) {
         KeyBinding::new(secondary!("p"), Print, None),
         KeyBinding::new(secondary!("g"), GoToPage, None),
         KeyBinding::new("enter", DialogConfirm, Some("GodPdfDialog > Input")),
+        KeyBinding::new("enter", DialogConfirm, Some("GodPdfDialog")),
         KeyBinding::new("escape", DialogCancel, Some("GodPdfDialog")),
         KeyBinding::new("escape", DialogCancel, Some("GodPdfDialog > Input")),
         KeyBinding::new("enter", DialogConfirm, Some("CommandPalette > Input")),
@@ -213,12 +216,10 @@ pub fn register(cx: &mut App) {
         }
     });
     cx.on_action(|_: &Booklet, cx| {
-        let done = "Booklet made: print on both sides, turning on the short edge";
-        edit_active(cx, "Make a booklet", Some(done), core::booklet);
+        edit_active_later(cx, "Make a booklet", core::booklet, |_, _| {});
     });
     cx.on_action(|_: &JoinPages, cx| {
-        let done = "Pages joined into one";
-        edit_active(cx, "Join into one long page", Some(done), core::join_pages);
+        edit_active_later(cx, "Join into one long page", core::join_pages, |_, _| {});
     });
     cx.on_action(|_: &RemoveLinks, cx| {
         edit_active(
@@ -307,8 +308,26 @@ pub fn overlay(
     let dialogs = state(cx);
     dialogs.app = Some(app);
     dialogs.tab = tab.map(Entity::downgrade);
-    if let Some(pending) = dialogs.pending.take() {
+    let pending = dialogs.pending.take();
+    let built = pending.is_some();
+    if let Some(pending) = pending {
         build(pending, tab, window, cx);
+    }
+    if opened(cx).is_none() {
+        state(cx).return_focus = None;
+        return None;
+    }
+    let focus = match state(cx).focus.clone() {
+        Some(focus) => focus,
+        None => {
+            let focus = cx.focus_handle();
+            state(cx).focus = Some(focus.clone());
+            focus
+        }
+    };
+    // build() focused a field not drawn yet: only check from the next frame on.
+    if !built && let Some(previous) = hold_focus(&focus, window, cx) {
+        state(cx).return_focus.get_or_insert(previous);
     }
     let colors = Palette::of(cx);
     // The palette hangs 90 below the top, the other dialogs are centered.
@@ -323,6 +342,10 @@ pub fn overlay(
     Some(
         div()
             .id("dialog-backdrop")
+            .track_focus(&focus)
+            .key_context("GodPdfDialog")
+            .on_action(|_: &DialogConfirm, window, cx| confirm(false, window, cx))
+            .on_action(|_: &DialogCancel, window, cx| close(window, cx))
             .absolute()
             .inset_0()
             .occlude()
@@ -336,6 +359,22 @@ pub fn overlay(
             .child(card)
             .into_any_element(),
     )
+}
+
+/// Keep the keyboard in an open modal whose backdrop tracks `focus` (with the
+/// "GodPdfDialog" context, so the document's keys stay off): when focus is outside it, focus
+/// the backdrop and return what had focus, to give it back when the modal closes.
+pub(crate) fn hold_focus(
+    focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<FocusHandle> {
+    if focus.contains_focused(window, cx) {
+        return None;
+    }
+    let previous = window.focused(cx);
+    window.focus(focus, cx);
+    previous
 }
 
 /// The card of a dialog, `width` of content wide: panel fill,
@@ -521,6 +560,50 @@ fn edit_active(
     }
 }
 
+/// Like [`edit_active`] for slow edits: computed in the background (the header spinner
+/// shows meanwhile), then one undo step, unless the document changed in the meantime.
+fn edit_active_later(
+    cx: &mut App,
+    label: &'static str,
+    edit: impl FnOnce(&[u8]) -> core::Result<Vec<u8>> + Send + 'static,
+    done: impl FnOnce(&Entity<DocTab>, &mut App) + 'static,
+) {
+    let Some(tab) = active_tab(cx) else {
+        return;
+    };
+    let doc = tab.read(cx);
+    let (generation, bytes) = (doc.generation(), doc.session.bytes().to_vec());
+    let edited = crate::services::jobs::background(cx, move || {
+        guarded(|| edit(&bytes)).map_err(|err| plain(err.to_string()))
+    });
+    let tab = tab.downgrade();
+    cx.spawn(async move |cx| {
+        let edited = edited.await;
+        cx.update(|cx| {
+            let Some(tab) = tab.upgrade() else { return };
+            match edited {
+                Ok(_) if tab.read(cx).generation() != generation => toasts::note(
+                    cx,
+                    format!("The document changed meanwhile: “{label}” again"),
+                ),
+                Ok(bytes) => {
+                    let applied = tab.update(cx, |tab, cx| {
+                        let applied = tab.apply(label, |_| Ok(bytes));
+                        cx.notify();
+                        applied
+                    });
+                    match applied {
+                        Ok(()) => done(&tab, cx),
+                        Err(err) => toasts::error(cx, plain(err)),
+                    }
+                }
+                Err(err) => toasts::error(cx, err),
+            }
+        });
+    })
+    .detach();
+}
+
 fn rotate_current(degrees: i32, cx: &mut App) {
     if let Some((tab, _, _)) = current(cx) {
         let label = if degrees < 0 {
@@ -543,10 +626,10 @@ fn compress(cx: &mut App) {
         return;
     };
     let before = tab.read(cx).session.bytes().len();
-    if edit_active(cx, "Compress", None, core::compress) {
+    edit_active_later(cx, "Compress", core::compress, move |tab, cx| {
         let after = tab.read(cx).session.bytes().len();
         let saved = 100.0 - after as f64 * 100.0 / before.max(1) as f64;
-        toasts::success(
+        toasts::note(
             cx,
             format!(
                 "{} → {} ({saved:.0} % smaller)",
@@ -554,7 +637,7 @@ fn compress(cx: &mut App) {
                 size_text(after)
             ),
         );
-    }
+    });
 }
 
 fn remove_password(cx: &mut App) {
@@ -563,7 +646,7 @@ fn remove_password(cx: &mut App) {
         return;
     };
     state(cx).passwords.remove(&tab.entity_id());
-    toasts::info(cx, "The document will be saved without a password");
+    toasts::note(cx, "The document will be saved without a password");
 }
 
 /// Print the document in front as it is now (unsaved changes included), in the background.
@@ -578,7 +661,7 @@ fn print_active(cx: &mut App) {
     }
     let doc = tab.read(cx);
     let (name, bytes) = (doc.title().to_owned(), doc.session.bytes().to_vec());
-    let printed = crate::services::jobs::background(cx, async move { print::print(&name, bytes) });
+    let printed = crate::services::jobs::background(cx, move || print::print(&name, bytes));
     cx.spawn(async move |cx| {
         let result = printed.await;
         cx.update(|cx| {

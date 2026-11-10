@@ -47,7 +47,7 @@ actions!(
 );
 
 /// Same context as the single-key tool shortcuts: never while typing in a field.
-const KEYS: &str = "GodPdf && !Input";
+const KEYS: &str = "GodPdf && !Input && !GodPdfDialog";
 /// Fill of selected page text: the active blue, translucent.
 const SELECTION_ALPHA: f32 = 0.3;
 
@@ -233,10 +233,10 @@ fn copy_text(cx: &mut App) {
 /// Run `work` in the background, then `done` with its result.
 fn in_background<T: Send + 'static>(
     cx: &mut App,
-    work: impl FnOnce() -> T + Send + 'static,
-    done: impl FnOnce(T, &mut App) + 'static,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+    done: impl FnOnce(Result<T, String>, &mut App) + 'static,
 ) {
-    let task = crate::services::jobs::background(cx, async move { work() });
+    let task = crate::services::jobs::background(cx, work);
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| done(result, cx));
@@ -264,9 +264,12 @@ fn extract_text(cx: &mut App) {
                     text.push_str(page_text.trim_end());
                     text.push_str("\n\n");
                 }
+                // The page headers are not text of the document: not counted.
+                let chars = pages.iter().map(|page| page.trim().chars().count()).sum();
                 state(cx).windows.text = Some(view::TextView {
                     title,
                     text,
+                    chars,
                     area: None,
                 });
                 cx.refresh_windows();
@@ -299,9 +302,12 @@ fn recognize_text(cx: &mut App) {
             let Some(tab) = weak.upgrade() else { return };
             match result {
                 Ok(_) if tab.read(cx).generation() != generation => {
-                    toasts::info(cx, "The document changed meanwhile: run it again");
+                    toasts::note(
+                        cx,
+                        "The document changed while its text was read: run Recognize text again",
+                    );
                 }
-                Ok(pages) if pages.is_empty() => toasts::info(cx, "Every page already has text"),
+                Ok(pages) if pages.is_empty() => toasts::note(cx, "Every page already has text"),
                 Ok(pages) => {
                     let count = pages.iter().filter(|(_, words)| !words.is_empty()).count();
                     let result = tab.update(cx, |tab, cx| {

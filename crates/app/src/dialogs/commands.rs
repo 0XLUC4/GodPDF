@@ -106,9 +106,6 @@ pub static COMMANDS: &[Command] = &[
         "Each page as a PNG or JPEG picture",
         || Box::new(ExportImages),
     ),
-    command("Export pages…", File, "Copy pages into a new PDF", || {
-        Box::new(ExtractPages)
-    }),
     command("Close tab", File, "", || Box::new(app::CloseTab)),
     command(
         "Reopen closed tab",
@@ -247,7 +244,7 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(NumberPages),
     ),
     command(
-        "Merge PDFs…",
+        "Combine files…",
         Combine,
         "Combine PDFs, images and text files into one",
         || Box::new(MergeFiles),

@@ -20,9 +20,9 @@ fn place(window: &mut Window, cx: &mut App) {
     toasts::info(cx, "Click where your signature goes");
 }
 
-/// The saved signature on white, fitted with a margin of 8.
-fn preview(signature: &Signature) -> AnyElement {
-    let width = PREVIEW_WIDTH;
+/// The saved signature on white, `room` wide at most, fitted with a margin of 8.
+fn preview(signature: &Signature, room: f32) -> AnyElement {
+    let width = PREVIEW_WIDTH.min(room).floor();
     let height = (signature.height() * width).clamp(40.0, 140.0) + 16.0;
     let scale = (width - 16.0).min((height - 16.0) / signature.height().max(0.01));
     let strokes: Vec<Vec<(f32, f32)>> = signature
@@ -55,7 +55,8 @@ fn preview(signature: &Signature) -> AnyElement {
         .into_any_element()
 }
 
-pub fn render(cx: &mut App) -> AnyElement {
+/// The panel, `room` the width its content can take.
+pub fn render(room: f32, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
     let Some(signature) = signature::saved(cx) else {
         return div()
@@ -95,7 +96,7 @@ pub fn render(cx: &mut App) -> AnyElement {
         .flex_col()
         .items_start()
         .gap(px(6.))
-        .child(preview(&signature))
+        .child(preview(&signature, room))
         .child(div().pt(px(2.)).child(crate::widgets::tooltip(
             sign,
             "Then click where the signature goes",

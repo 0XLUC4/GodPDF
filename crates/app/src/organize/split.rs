@@ -32,8 +32,7 @@ pub struct Split {
 
 /// Open the second viewer on the document in front, at its page; or close it.
 pub fn toggle(cx: &mut App) {
-    if state(cx).split.take().is_some() {
-        cx.refresh_windows();
+    if close(cx) {
         return;
     }
     let Some(tab) = super::front(cx) else { return };
@@ -42,6 +41,16 @@ pub fn toggle(cx: &mut App) {
         cx.notify();
     });
     show(&tab.downgrade(), cx);
+}
+
+/// Close the second viewer, freeing its pictures; false when it was not open.
+fn close(cx: &mut App) -> bool {
+    let Some(split) = state(cx).split.take() else {
+        return false;
+    };
+    crate::doc::release(&split.mirror, cx);
+    cx.refresh_windows();
+    true
 }
 
 /// Show `source` in the second viewer, at its current page.
@@ -59,6 +68,7 @@ fn show(source: &WeakEntity<DocTab>, cx: &mut App) {
         mirror.companion = true;
         mirror
     });
+    close(cx);
     state(cx).split = Some(Split {
         source: source.clone(),
         mirror,
@@ -80,7 +90,7 @@ pub fn render(
     let (source, mirror) = (split.source.upgrade(), split.mirror.clone());
     let Some(source) = source else {
         // Its document was closed: back to one viewer.
-        state(cx).split = None;
+        close(cx);
         return None;
     };
     refresh(&source, &mirror, window, cx);
@@ -154,8 +164,7 @@ pub fn render(
                 &palette,
             )
             .on_click(|_, _, cx| {
-                state(cx).split = None;
-                cx.refresh_windows();
+                close(cx);
             }),
         );
     Some(
@@ -194,8 +203,11 @@ fn refresh(source: &Entity<DocTab>, mirror: &Entity<DocTab>, window: &mut Window
     }
     if let Some(page) = jump {
         let ready = mirror.update(cx, |mirror, cx| {
-            let ready = mirror.view.bounds.size.width > px(0.) && !mirror.view.fit_pending;
-            if ready {
+            // A document that cannot show (no pages) never fits: nothing to wait for.
+            let empty = mirror.page_count() == 0;
+            let ready =
+                empty || (mirror.view.bounds.size.width > px(0.) && !mirror.view.fit_pending);
+            if ready && !empty {
                 mirror.scroll_to_page(page);
                 cx.notify();
             }

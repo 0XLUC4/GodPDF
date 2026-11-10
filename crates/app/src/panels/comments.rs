@@ -15,33 +15,48 @@ use crate::widgets;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Highlight,
+    Underline,
+    StrikeOut,
     Note,
     FreeText,
     Rectangle,
+    Ellipse,
+    Line,
     Ink,
     Picture,
+    Stamp,
 }
 
 impl Kind {
     fn label(self) -> &'static str {
         match self {
             Self::Highlight => "Highlight",
+            Self::Underline => "Underline",
+            Self::StrikeOut => "Strikethrough",
             Self::Note => "Note",
             Self::FreeText => "Text box",
             Self::Rectangle => "Rectangle",
+            Self::Ellipse => "Ellipse",
+            Self::Line => "Line",
             Self::Ink => "Ink",
             Self::Picture => "Picture",
+            Self::Stamp => "Stamp",
         }
     }
 
     fn icon(self) -> &'static str {
         match self {
             Self::Highlight => icons::HIGHLIGHTER,
+            Self::Underline => icons::TEXT_UNDERLINE,
+            Self::StrikeOut => icons::TEXT_STRIKETHROUGH,
             Self::Note => icons::NOTE,
             Self::FreeText => icons::TEXT_T,
             Self::Rectangle => icons::RECTANGLE,
+            Self::Ellipse => icons::CIRCLE,
+            Self::Line => icons::LINE_SEGMENT,
             Self::Ink => icons::PENCIL_SIMPLE,
             Self::Picture => icons::IMAGE,
+            Self::Stamp => icons::STAMP,
         }
     }
 }
@@ -56,16 +71,17 @@ pub struct Entry {
 impl Entry {
     fn new(page: usize, annotation: Annotation) -> Self {
         let (kind, text) = match annotation {
-            Annotation::Highlight { .. }
-            | Annotation::Underline { .. }
-            | Annotation::StrikeOut { .. } => (Kind::Highlight, String::new()),
+            Annotation::Highlight { .. } => (Kind::Highlight, String::new()),
+            Annotation::Underline { .. } => (Kind::Underline, String::new()),
+            Annotation::StrikeOut { .. } => (Kind::StrikeOut, String::new()),
             Annotation::Note { text, .. } => (Kind::Note, text),
             Annotation::FreeText { text, .. } => (Kind::FreeText, text),
-            Annotation::Square { .. } | Annotation::Circle { .. } => {
-                (Kind::Rectangle, String::new())
-            }
-            Annotation::Ink { .. } | Annotation::Line { .. } => (Kind::Ink, String::new()),
-            Annotation::Image { .. } | Annotation::Stamp { .. } => (Kind::Picture, String::new()),
+            Annotation::Square { .. } => (Kind::Rectangle, String::new()),
+            Annotation::Circle { .. } => (Kind::Ellipse, String::new()),
+            Annotation::Line { .. } => (Kind::Line, String::new()),
+            Annotation::Ink { .. } => (Kind::Ink, String::new()),
+            Annotation::Image { .. } => (Kind::Picture, String::new()),
+            Annotation::Stamp { .. } => (Kind::Stamp, String::new()),
         };
         Self { page, kind, text }
     }
@@ -107,7 +123,7 @@ fn request(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     }
     tab.panels.comments.0 = Some((generation, None));
     let (bytes, pages) = (tab.session.bytes().to_vec(), tab.page_count());
-    let found = crate::services::jobs::background(cx, async move { collect(&bytes, pages) });
+    let found = crate::services::jobs::background(cx, move || collect(&bytes, pages));
     cx.spawn(async move |this, cx| {
         let result = found.await;
         let _ = this.update(cx, |tab, cx| {
@@ -232,7 +248,8 @@ fn row(
                 .flex_none()
                 .size(px(28.))
                 .rounded(px(14.))
-                .bg(palette.surface)
+                // The current page's rows are `surface` already: the circle takes `bg` there.
+                .bg(if current { palette.bg } else { palette.surface })
                 .flex()
                 .items_center()
                 .justify_center()

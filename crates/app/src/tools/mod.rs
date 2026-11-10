@@ -66,7 +66,7 @@ actions!(
 );
 
 /// Single-key shortcuts must not fire while typing in a text field.
-const CANVAS_KEYS: &str = "GodPdf && !Input";
+const CANVAS_KEYS: &str = "GodPdf && !Input && !GodPdfDialog";
 /// Key context of the text box being typed.
 const TEXT_BOX: &str = "TextBox";
 

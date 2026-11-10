@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    Action, AnyElement, App, ClickEvent, Context, Entity, ObjectFit, RenderImage, SharedString,
-    WeakEntity, Window, canvas, div, img, px, uniform_list, white,
+    Action, AnyElement, App, ClickEvent, Context, Entity, ObjectFit, RenderImage, WeakEntity,
+    Window, canvas, div, img, px, uniform_list, white,
 };
 
 use super::{InsertFile, MoveEarlier, MoveLater, apply_order, move_pages, order};
@@ -116,7 +116,10 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
                 .min_h_0()
                 .bg(palette.bg)
                 .child(measure(tab))
-                .child(cards(tab, count, per_row, &palette)),
+                // Not measured yet (first frame): one column would flash before the real ones.
+                .when(width > 0., |grid| {
+                    grid.child(cards(tab, count, per_row, &palette))
+                }),
         )
         .into_any_element()
 }
@@ -239,25 +242,6 @@ struct DraggedCard {
     page: usize,
 }
 
-/// What follows the pointer while a card is dragged.
-struct DragGhost {
-    label: SharedString,
-    palette: Palette,
-}
-
-impl Render for DragGhost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(10.))
-            .py(px(4.))
-            .rounded(px(6.))
-            .bg(self.palette.accent)
-            .text_color(self.palette.on_accent)
-            .text_sm()
-            .child(self.label.clone())
-    }
-}
-
 /// A page card: 168 × 218, radius 10, surface fill (hover fill when hovered), 1 px border or
 /// 2 px accent when selected; the page fitted in 144 × 180 at 12 from the top, white; its
 /// number (13) 14 above the bottom; earlier / later arrows in the bottom corners.
@@ -320,11 +304,21 @@ fn card(
         .rounded(px(10.))
         .bg(palette.surface)
         .hover(move |style| style.bg(hover))
+        .border_1()
+        .border_color(palette.border)
+        // Selection: a 2 px outline over the hairline, drawn on top so nothing inside moves.
         .when(selected, |card| {
-            card.border_2().border_color(palette.accent)
-        })
-        .when(!selected, |card| {
-            card.border_1().border_color(palette.border)
+            card.child(
+                div()
+                    .absolute()
+                    .top(px(-1.))
+                    .left(px(-1.))
+                    .right(px(-1.))
+                    .bottom(px(-1.))
+                    .rounded(px(10.))
+                    .border_2()
+                    .border_color(palette.accent),
+            )
         })
         .cursor_pointer()
         .child(
@@ -368,7 +362,7 @@ fn card(
             } else {
                 format!("Page {}", page + 1)
             };
-            cx.new(|_| DragGhost {
+            cx.new(|_| widgets::DragGhost {
                 label: label.into(),
                 palette,
             })
@@ -376,28 +370,28 @@ fn card(
         .into_any_element()
 }
 
-/// The page fitted in [`THUMB_BOX`] on white, or a grey box until it is rendered.
+/// The page fitted in [`THUMB_BOX`] on whole pixels on white, or a grey box of the same
+/// size until it is rendered.
 fn thumb(image: Option<Arc<RenderImage>>, size: (f32, f32), palette: &Palette) -> gpui::Div {
+    let scale = (THUMB_BOX.0 / size.0.max(1.)).min(THUMB_BOX.1 / size.1.max(1.));
+    let (width, height) = ((size.0 * scale).round(), (size.1 * scale).round());
     match image {
-        Some(image) => {
-            let scale = (THUMB_BOX.0 / size.0.max(1.)).min(THUMB_BOX.1 / size.1.max(1.));
-            div().bg(white()).child(
-                img(image)
-                    .w(px(size.0 * scale))
-                    .h(px(size.1 * scale))
-                    .object_fit(ObjectFit::Fill),
-            )
-        }
+        Some(image) => div().bg(white()).child(
+            img(image)
+                .w(px(width))
+                .h(px(height))
+                .object_fit(ObjectFit::Fill),
+        ),
         None => div()
-            .w(px(THUMB_BOX.0 - 36.))
-            .h(px(THUMB_BOX.1 - 36.))
+            .w(px(width))
+            .h(px(height))
             .rounded(px(2.))
             .bg(palette.canvas),
     }
 }
 
 /// Half of a card (and of the gap beside it) a dragged card drops on: before the page on the
-/// left half, after it on the right; a 3 px accent line in the gap shows where.
+/// left half, after it on the right; a 2 px accent line in the gap shows where.
 fn drop_zone(
     page: usize,
     after: bool,
@@ -409,14 +403,15 @@ fn drop_zone(
         .absolute()
         .top_0()
         .bottom_0()
-        .w(px(CARD.0 / 2. + GAP / 2. + 1.5))
-        .when(after, |zone| zone.right(px(-GAP / 2. - 1.5)))
-        .when(!after, |zone| zone.left(px(-GAP / 2. - 1.5)))
+        // Whole pixels: the 2 px line sits centred in the gap, sharp.
+        .w(px(CARD.0 / 2. + GAP / 2. + 1.))
+        .when(after, |zone| zone.right(px(-GAP / 2. - 1.)))
+        .when(!after, |zone| zone.left(px(-GAP / 2. - 1.)))
         .drag_over::<DraggedCard>(move |style, _, _, _| {
             if after {
-                style.border_r_3().border_color(accent)
+                style.border_r_2().border_color(accent)
             } else {
-                style.border_l_3().border_color(accent)
+                style.border_l_2().border_color(accent)
             }
         })
         .on_drop(move |dragged: &DraggedCard, _, cx| {

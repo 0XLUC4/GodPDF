@@ -8,7 +8,7 @@ use std::sync::Arc;
 use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, ObjectFit, RenderImage, ScrollStrategy, SharedString,
+    AnyElement, App, Context, Entity, ObjectFit, RenderImage, ScrollStrategy,
     UniformListScrollHandle, WeakEntity, Window, div, img, px, uniform_list, white,
 };
 
@@ -46,25 +46,6 @@ struct DraggedPage {
     page: usize,
 }
 
-/// What follows the pointer while a thumbnail is dragged.
-struct DragGhost {
-    label: SharedString,
-    palette: Palette,
-}
-
-impl Render for DragGhost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(10.))
-            .py(px(4.))
-            .rounded(px(6.))
-            .bg(self.palette.accent)
-            .text_color(self.palette.on_accent)
-            .text_sm()
-            .child(self.label.clone())
-    }
-}
-
 /// New page order after moving page `from` so it ends at index `to`; `None` when nothing moves.
 pub fn move_to(count: usize, from: usize, to: usize) -> Option<Vec<usize>> {
     if from == to || from >= count || to >= count {
@@ -75,7 +56,8 @@ pub fn move_to(count: usize, from: usize, to: usize) -> Option<Vec<usize>> {
     Some(order)
 }
 
-pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyElement {
+/// The thumbnail list; `room` is the width a thumbnail can take in the panel.
+pub fn render(tab: &Entity<DocTab>, room: f32, window: &mut Window, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
     let (count, scroll) = tab.update(cx, |tab, _| {
         tab.panels.thumbs.free_evicted(window);
@@ -100,12 +82,14 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
             rows.map(|page| {
                 let image = thumbnail(tab, page, max_px, cx, PANEL);
                 let current = page == tab.view.current_page;
-                let size = fit(tab.page_sizes.get(page).copied().unwrap_or((612.0, 792.0)));
+                let page_size = tab.page_sizes.get(page).copied().unwrap_or((612.0, 792.0));
+                let size = fit(page_size, room);
                 row(
                     &weak,
                     page,
                     tab.page_count(),
-                    image.map(|image| (image, size)),
+                    image,
+                    size,
                     current,
                     &palette,
                 )
@@ -126,13 +110,14 @@ fn row(
     tab: &WeakEntity<DocTab>,
     page: usize,
     count: usize,
-    image: Option<(Arc<RenderImage>, (f32, f32))>,
+    image: Option<Arc<RenderImage>>,
+    (width, height): (f32, f32),
     current: bool,
     palette: &Palette,
 ) -> impl IntoElement + use<> {
     let palette = *palette;
     let thumb = match image {
-        Some((image, (width, height))) => div()
+        Some(image) => div()
             .bg(white())
             .when(current, |thumb| {
                 // The outline is drawn outside the picture.
@@ -144,9 +129,10 @@ fn row(
                     .h(px(height))
                     .object_fit(ObjectFit::Fill),
             ),
+        // The box the picture will fill, so nothing jumps when it arrives.
         None => div()
-            .w(px(BOX.0 - 48.))
-            .h(px(BOX.1 - 48.))
+            .w(px(width))
+            .h(px(height))
             .rounded(px(2.))
             .bg(palette.canvas),
     };
@@ -229,7 +215,9 @@ fn row(
         .id(("thumb", page))
         .group("thumb-row")
         .h(px(ROW_HEIGHT))
-        .p(px(2.))
+        // A transparent 2 px border the drop target colours, so nothing moves on drag over.
+        .border_2()
+        .border_color(gpui::transparent_black())
         .cursor_pointer()
         .child(inner)
         .on_click(move |_, _, cx| {
@@ -237,11 +225,9 @@ fn row(
         })
         .on_drag(DraggedPage { page }, move |dragged, _, _, cx| {
             let label = format!("Page {}", dragged.page + 1).into();
-            cx.new(|_| DragGhost { label, palette })
+            cx.new(|_| widgets::DragGhost { label, palette })
         })
-        .drag_over::<DraggedPage>(move |style, _, _, _| {
-            style.border_2().border_color(palette.accent)
-        })
+        .drag_over::<DraggedPage>(move |style, _, _, _| style.border_color(palette.accent))
         .on_drop(move |dragged: &DraggedPage, _, cx| {
             reorder(&drop_on, dragged.page, page, cx);
         })
@@ -383,10 +369,14 @@ fn extract(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
     }
 }
 
-/// Logical size of the thumbnail of a page of `size` points, fitted in [`BOX`].
-fn fit(size: (f32, f32)) -> (f32, f32) {
-    let scale = (BOX.0 / size.0.max(1.0)).min(BOX.1 / size.1.max(1.0));
-    (size.0 * scale, size.1 * scale)
+/// Logical size of the thumbnail of a page of `size` points, fitted in [`BOX`] narrowed to
+/// `room`, on whole pixels so its edges stay sharp.
+// shortcut: never wider than BOX, so a wide panel centers landscape thumbnails instead of
+// upscaling them; render them larger if that looks small.
+fn fit(size: (f32, f32), room: f32) -> (f32, f32) {
+    let width = BOX.0.min(room).max(1.0);
+    let scale = (width / size.0.max(1.0)).min(BOX.1 / size.1.max(1.0));
+    ((size.0 * scale).round(), (size.1 * scale).round())
 }
 
 /// Which thumbnail cache of a document: the panel's or the Organize grid's.
@@ -395,6 +385,13 @@ pub type Pick = fn(&mut DocTab) -> &mut Thumbs;
 const PANEL: Pick = |tab| &mut tab.panels.thumbs;
 
 impl Thumbs {
+    /// Every image held, handed over to have their GPU textures freed.
+    pub fn take_images(&mut self) -> Vec<Arc<RenderImage>> {
+        let mut images: Vec<_> = self.images.drain().map(|(_, (image, _))| image).collect();
+        images.append(&mut self.evicted);
+        images
+    }
+
     /// Free the GPU textures of the thumbnails dropped from the cache.
     pub fn free_evicted(&mut self, window: &mut Window) {
         for image in self.evicted.drain(..) {
@@ -495,8 +492,11 @@ mod tests {
     #[test]
     fn thumbnails_fit_their_box() {
         let (width, height) = super::BOX;
-        assert_eq!(fit((612.0, 792.0)).1, height);
-        assert_eq!(fit((800.0, 400.0)), (width, width / 2.0));
+        assert_eq!(fit((612.0, 792.0), width), (121.0, height));
+        assert_eq!(fit((800.0, 400.0), width), (width, width / 2.0));
+        // A narrow panel narrows landscape pages, never widens past the box.
+        assert_eq!(fit((800.0, 400.0), 200.0), (200.0, 100.0));
+        assert_eq!(fit((800.0, 400.0), 999.0), (width, width / 2.0));
     }
 
     #[test]

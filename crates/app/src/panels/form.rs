@@ -15,8 +15,6 @@ use crate::theme::Palette;
 use crate::widgets::{accent_button, framed_button, with_icon};
 use crate::{fonts, icons, toasts, tools};
 
-const INPUT_WIDTH: f32 = 260.0;
-
 /// The form of a document revision and the answers being typed in the panel.
 pub struct FormState {
     generation: Option<u64>,
@@ -82,31 +80,58 @@ fn current(form: &FormState, cx: &App) -> Vec<FieldValue> {
         .collect()
 }
 
-/// Read the form again when the document changed.
+/// For each field of `fresh`, the index in `old` of the same field (name and kind) whose
+/// answer was changed but not written yet: that answer is kept over the file's.
+fn carried(old: &[FormField], answers: &[FieldValue], fresh: &[FormField]) -> Vec<Option<usize>> {
+    fresh
+        .iter()
+        .map(|field| {
+            old.iter().zip(answers).position(|(was, answer)| {
+                was.name == field.name && was.kind == field.kind && was.value != *answer
+            })
+        })
+        .collect()
+}
+
+/// Read the form again when the document changed, keeping the answers typed meanwhile.
 fn refresh(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) {
     let doc = tab.read(cx);
     let generation = doc.generation();
-    if doc.panels.form.generation == Some(generation) {
+    let form = &doc.panels.form;
+    if form.generation == Some(generation) {
         return;
     }
+    let old = form.fields.as_deref().unwrap_or_default().to_vec();
+    let (answers, old_inputs) = (current(form, cx), form.inputs.clone());
     let fields =
         guarded(|| godpdf_core::form_fields(doc.session.bytes())).map_err(|e| e.to_string());
     let list = fields.as_deref().unwrap_or_default();
-    let values: Vec<FieldValue> = list.iter().map(|field| field.value.clone()).collect();
+    let carry = carried(&old, &answers, list);
+    let values: Vec<FieldValue> = list
+        .iter()
+        .zip(&carry)
+        .map(|(field, from)| from.map_or(field.value.clone(), |from| answers[from].clone()))
+        .collect();
     let inputs = list
         .iter()
-        .map(|field| match (&field.kind, &field.value) {
-            (FieldKind::Text { multiline: true }, FieldValue::Text(text)) => {
-                Some(Typed::Area(cx.new(|cx| {
-                    TextareaState::new(window, cx).default_value(text.clone())
-                })))
+        .zip(&carry)
+        .map(|(field, from)| {
+            if let Some(typed) = from.and_then(|from| old_inputs[from].clone()) {
+                return Some(typed);
             }
-            (FieldKind::Text { .. }, FieldValue::Text(text)) => {
-                Some(Typed::Line(cx.new(|cx| {
-                    InputState::new(window, cx).default_value(text.clone())
-                })))
+            match (&field.kind, &field.value) {
+                (FieldKind::Text { multiline: true }, FieldValue::Text(text)) => {
+                    Some(Typed::Area(cx.new(|cx| {
+                        TextareaState::new(window, cx).default_value(text.clone())
+                    })))
+                }
+                (FieldKind::Text { .. }, FieldValue::Text(text)) => {
+                    Some(Typed::Line(cx.new(|cx| {
+                        InputState::new(window, cx).default_value(text.clone())
+                    })))
+                }
+                _ => None,
             }
-            _ => None,
         })
         .collect();
     tab.update(cx, |tab, _| {
@@ -150,11 +175,11 @@ fn input(
     };
     match (typed, value, options) {
         (Some(Typed::Line(state)), ..) => div()
-            .w(px(INPUT_WIDTH))
+            .w_full()
             .child(Input::new(state).disabled(!enabled))
             .into_any_element(),
         (Some(Typed::Area(state)), ..) => div()
-            .w(px(INPUT_WIDTH))
+            .w_full()
             .child(Textarea::new(state).h(px(66.)).disabled(!enabled))
             .into_any_element(),
         (None, FieldValue::Checked(checked), _) => {
@@ -175,7 +200,7 @@ fn input(
             };
             let (tab, chosen) = (tab.clone(), chosen.clone());
             Button::new(("form-choice", index))
-                .w(px(INPUT_WIDTH))
+                .w_full()
                 .h(px(crate::theme::INTERACT_HEIGHT))
                 .text_color(palette.text)
                 .disabled(!enabled)
@@ -374,6 +399,34 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_answers_survive_a_reload() {
+        let field = |name: &str, kind, value| FormField {
+            name: name.to_owned(),
+            label: name.to_owned(),
+            kind,
+            value,
+            page: Some(0),
+            read_only: false,
+        };
+        let text = |value: &str| FieldValue::Text(value.to_owned());
+        let line = || FieldKind::Text { multiline: false };
+        let old = [
+            field("typed", line(), text("")),
+            field("untouched", line(), text("x")),
+            field("gone", line(), text("")),
+            field("now a box", line(), text("")),
+        ];
+        let answers = [text("mine"), text("x"), text("lost"), text("t")];
+        let fresh = [
+            field("new", line(), text("")),
+            field("untouched", line(), text("y")),
+            field("typed", line(), text("")),
+            field("now a box", FieldKind::CheckBox, FieldValue::Checked(false)),
+        ];
+        assert_eq!(carried(&old, &answers, &fresh), [None, None, Some(0), None]);
+    }
 
     #[test]
     fn only_changed_answers_are_written() {

@@ -7,12 +7,14 @@ use gpui::{AnyElement, App, Entity, WeakEntity, div, px};
 use super::{DialogCancel, Open, active_tab, card, close, plain, size_text, state};
 use crate::doc::{DocTab, guarded};
 use crate::theme::Palette;
-use crate::widgets::{framed_button, small_icon_button, with_icon};
+use crate::widgets::{self, framed_button, small_icon_button, with_icon};
 use crate::{files, fonts, icons, toasts};
 
 pub struct Attach {
     tab: WeakEntity<DocTab>,
     files: Vec<Attachment>,
+    /// Shown in the dialog: the error bar would sit dimmed under its backdrop.
+    error: Option<String>,
 }
 
 /// The attached files of `tab`, read again (after an edit, or to open the dialog).
@@ -32,6 +34,7 @@ pub fn open(cx: &mut App) {
             state(cx).open = Some(Open::Attach(Attach {
                 tab: tab.downgrade(),
                 files,
+                error: None,
             }));
             cx.refresh_windows();
         }
@@ -47,9 +50,25 @@ fn refresh(tab: &Entity<DocTab>, cx: &mut App) {
                 attach.files = files;
             }
         }
-        Err(err) => toasts::error(cx, err),
+        Err(err) => report(err, cx),
     }
     cx.refresh_windows();
+}
+
+/// Show `error` in the dialog, or in the error bar once it is closed.
+fn report(error: String, cx: &mut App) {
+    match &mut state(cx).open {
+        Some(Open::Attach(attach)) => attach.error = Some(error),
+        _ => toasts::error(cx, error),
+    }
+    cx.refresh_windows();
+}
+
+/// A new action starts without the error of the last one.
+fn clear_error(cx: &mut App) {
+    if let Some(Open::Attach(attach)) = &mut state(cx).open {
+        attach.error = None;
+    }
 }
 
 fn dialog_tab(cx: &App) -> Option<Entity<DocTab>> {
@@ -62,6 +81,7 @@ fn dialog_tab(cx: &App) -> Option<Entity<DocTab>> {
 /// "Attach files…": any files, each one undo step.
 fn add(cx: &mut App) {
     let Some(tab) = dialog_tab(cx) else { return };
+    clear_error(cx);
     files::pick_any(cx, move |picked, cx| attach_paths(&tab, picked, cx));
 }
 
@@ -70,7 +90,7 @@ fn attach_paths(tab: &Entity<DocTab>, picked: Vec<std::path::PathBuf>, cx: &mut 
         let file = match files::read_file(&path) {
             Ok(file) => file,
             Err(err) => {
-                toasts::error(cx, err);
+                report(err, cx);
                 continue;
             }
         };
@@ -82,7 +102,7 @@ fn attach_paths(tab: &Entity<DocTab>, picked: Vec<std::path::PathBuf>, cx: &mut 
             result
         });
         if let Err(err) = result {
-            toasts::error(cx, plain(err));
+            report(plain(err), cx);
         }
     }
     refresh(tab, cx);
@@ -100,13 +120,14 @@ fn save(index: usize, cx: &mut App) {
         return;
     };
     let (name, bytes) = (file.name.clone(), file.bytes.clone());
+    clear_error(cx);
     files::pick_save(
         cx,
         &name.clone(),
         false,
         move |target, cx| match files::write_atomic(&target, &bytes) {
             Ok(()) => toasts::success(cx, format!("Saved “{name}”")),
-            Err(err) => toasts::error(cx, err),
+            Err(err) => report(err, cx),
         },
     );
 }
@@ -120,6 +141,7 @@ fn remove(index: usize, cx: &mut App) {
         },
         _ => return,
     };
+    clear_error(cx);
     let result = tab.update(cx, |tab, cx| {
         let result = tab.apply(&format!("Remove {name}"), |pdf| {
             core::remove_attachment(pdf, &name)
@@ -128,7 +150,7 @@ fn remove(index: usize, cx: &mut App) {
         result
     });
     if let Err(err) = result {
-        toasts::error(cx, plain(err));
+        report(plain(err), cx);
     }
     refresh(&tab, cx);
 }
@@ -140,11 +162,15 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
             .flex()
             .items_center()
             .gap(px(8.))
+            .child(widgets::icon(icons::FILE, fonts::BODY, palette.text))
             .child(
-                with_icon(icons::FILE, file.name.clone(), fonts::BODY, palette.text)
+                div()
+                    .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap(),
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(file.name.clone()),
             )
             .child(
                 div()
@@ -152,7 +178,6 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
                     .text_color(palette.text_dim)
                     .child(size_text(file.bytes.len())),
             )
-            .child(div().flex_1())
             // Right to left: Remove, then Save a copy.
             .child(
                 small_icon_button(
@@ -193,6 +218,12 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
                 .max_h(px(280.))
                 .overflow_y_scroll()
                 .children(rows),
+        )
+        .children(
+            attach
+                .error
+                .clone()
+                .map(|error| super::error_line(error, &palette)),
         )
         .child(
             super::button_row()

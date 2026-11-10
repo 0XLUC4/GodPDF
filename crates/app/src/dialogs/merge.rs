@@ -34,20 +34,25 @@ fn add_files(cx: &mut App) {
     });
 }
 
-/// Merge into a new tab. `Err` keeps the dialog open.
+/// Combine into a new tab, in the background (big files take a while). `Err` keeps the
+/// dialog open.
 pub fn confirm(merge: &Merge, cx: &mut App) -> Result<(), String> {
     if merge.files.len() < 2 {
         return Err("Add at least two files".to_owned());
     }
-    let inputs: Vec<&[u8]> = merge
-        .files
-        .iter()
-        .map(|file| file.bytes.as_slice())
-        .collect();
-    let bytes =
-        guarded(|| godpdf_core::merge(&inputs)).map_err(|err| format!("Merge failed: {err}"))?;
-    open_tab("merged.pdf".to_owned(), bytes, cx);
-    toasts::success(cx, format!("Merged {} files", merge.files.len()));
+    let inputs: Vec<Vec<u8>> = merge.files.iter().map(|file| file.bytes.clone()).collect();
+    let merged = crate::services::jobs::background(cx, move || {
+        let inputs: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
+        guarded(|| godpdf_core::merge(&inputs)).map_err(|err| format!("Combine failed: {err}"))
+    });
+    cx.spawn(async move |cx| {
+        let merged = merged.await;
+        cx.update(|cx| match merged {
+            Ok(bytes) => open_tab("merged.pdf".to_owned(), bytes, cx),
+            Err(err) => toasts::error(cx, err),
+        });
+    })
+    .detach();
     Ok(())
 }
 

@@ -76,6 +76,8 @@ pub struct GodPdfApp {
     focus: FocusHandle,
     /// Window title last set, to call the platform only on change.
     title: String,
+    /// A close / quit prompt is up: further clicks do not stack another one.
+    prompting: bool,
 }
 
 impl GodPdfApp {
@@ -92,6 +94,7 @@ impl GodPdfApp {
             shell: Shell::default(),
             focus,
             title: String::new(),
+            prompting: false,
         };
         services::start(&mut app, cx);
         for path in paths {
@@ -111,6 +114,8 @@ impl GodPdfApp {
             .position(|tab| tab.read(cx).session.path.as_deref() == Some(path));
         if let Some(index) = already {
             self.active = index;
+            self.shell.home = false;
+            self.shell.remember_recent(path);
             cx.notify();
             return;
         }
@@ -273,6 +278,10 @@ impl GodPdfApp {
             self.remove_tab(index, cx);
             return;
         }
+        if self.prompting {
+            return;
+        }
+        self.prompting = true;
         let message = format!("Save changes to “{}”?", tab.read(cx).title());
         let answer = window.prompt(
             PromptLevel::Warning,
@@ -283,8 +292,10 @@ impl GodPdfApp {
         );
         let tab = tab.downgrade();
         cx.spawn(async move |this, cx| {
-            let Ok(choice) = answer.await else { return };
+            let choice = answer.await;
             let _ = this.update(cx, |app, cx| {
+                app.prompting = false;
+                let Ok(choice) = choice else { return };
                 // The tabs may have moved while the prompt was open.
                 let Some(index) = app.tabs.iter().position(|open| open.downgrade() == tab) else {
                     return;
@@ -308,6 +319,7 @@ impl GodPdfApp {
     pub fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
             let tab = self.tabs.remove(index);
+            crate::doc::release(&tab, cx);
             if let Some(path) = tab.read(cx).session.path.clone() {
                 self.shell.closed.retain(|closed| closed != &path);
                 self.shell.closed.push(path);
@@ -330,6 +342,10 @@ impl GodPdfApp {
         if dirty == 0 {
             return true;
         }
+        if self.prompting {
+            return false;
+        }
+        self.prompting = true;
         let message = format!("{dirty} document(s) have unsaved changes. Quit anyway?");
         let answer = window.prompt(
             PromptLevel::Warning,
@@ -338,8 +354,10 @@ impl GodPdfApp {
             &["Discard and quit", "Cancel"],
             cx,
         );
-        cx.spawn(async move |_, cx| {
-            if let Ok(0) = answer.await {
+        cx.spawn(async move |this, cx| {
+            let choice = answer.await;
+            let _ = this.update(cx, |app, _| app.prompting = false);
+            if let Ok(0) = choice {
                 cx.update(|cx| cx.quit());
             }
         })
@@ -416,6 +434,7 @@ impl Render for GodPdfApp {
         }
 
         services::track(self, window, cx);
+        crate::doc::free_released(window, cx);
         let active = self.active_tab().cloned();
         let hover = palette.hover;
         div()

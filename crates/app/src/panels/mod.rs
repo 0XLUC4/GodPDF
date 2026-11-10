@@ -41,9 +41,8 @@ actions!(
 const PANEL_WIDTH: f32 = 320.;
 const WIDTH_RANGE: (f32, f32) = (240., 520.);
 const PANEL_MARGIN: (f32, f32) = (14., 6.);
-/// Box a page thumbnail is fitted in (row width - 32 by 156).
-// shortcut: sized for the first panel width; a wider panel centers it (portrait pages are
-// limited by the height anyway). Fit to the row if landscape thumbnails look small.
+/// Largest box a page thumbnail is fitted in (row width - 32 by 156 at the first panel
+/// width); a narrower panel narrows it (`thumbs::fit`).
 const BOX: (f32, f32) = (PANEL_WIDTH - 2. * PANEL_MARGIN.0 - 32., 156.);
 
 /// The views of the right rail, in rail order.
@@ -114,10 +113,15 @@ impl Global for PanelState {}
 #[derive(Default)]
 pub struct TabPanels {
     comments: comments::Comments,
-    thumbs: thumbs::Thumbs,
+    pub(crate) thumbs: thumbs::Thumbs,
     pub find: crate::find::FindState,
     bookmarks: bookmarks::Marks,
     form: form::FormState,
+}
+
+/// Width the content of the right panel can take: less its margins and its 1 px border.
+fn content_width(cx: &mut App) -> f32 {
+    (state(cx).width - 2. * PANEL_MARGIN.0 - 1.).floor()
 }
 
 fn state(cx: &mut App) -> &mut PanelState {
@@ -143,11 +147,15 @@ pub fn toggle(panel: Panel, cx: &mut App) {
     } else {
         Some(panel)
     };
+    // Toggle sidebar brings back the panel used last, however it was closed.
+    state.last = panel;
     cx.refresh_windows();
 }
 
 pub fn show(panel: Panel, cx: &mut App) {
-    state(cx).open = Some(panel);
+    let state = state(cx);
+    state.open = Some(panel);
+    state.last = panel;
     cx.refresh_windows();
 }
 
@@ -173,9 +181,8 @@ pub fn register(cx: &mut App) {
     // Hide the right panel, or bring back the last one.
     cx.on_action(|_: &ToggleSidebar, cx| {
         let state = state(cx);
-        match state.open.take() {
-            Some(panel) => state.last = panel,
-            None => state.open = Some(state.last),
+        if state.open.take().is_none() {
+            state.open = Some(state.last);
         }
         cx.refresh_windows();
     });
@@ -212,10 +219,11 @@ pub fn right(
         .flatten();
     let content = match panel {
         Panel::Comments => comments::render(&tab, cx),
-        Panel::Pages => thumbs::render(&tab, window, cx),
+        // The panel less its margins and its 1 px border.
+        Panel::Pages => thumbs::render(&tab, content_width(cx) - 32., window, cx),
         Panel::Bookmarks => bookmarks::render(&tab, window, cx),
         Panel::Form => form::render(&tab, window, cx),
-        Panel::Sign => sign::render(cx),
+        Panel::Sign => sign::render(content_width(cx), cx),
     };
     Some(
         div()

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use godpdf_core as core;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Entity, Global, KeyBinding, MouseButton, WeakEntity, Window, actions, div,
-    hsla, px,
+    AnyElement, App, Entity, FocusHandle, Global, KeyBinding, MouseButton, WeakEntity, Window,
+    actions, div, hsla, px,
 };
 
 use crate::app::GodPdfApp;
@@ -48,7 +48,7 @@ pub struct Grid {
     pub selection: BTreeSet<usize>,
     /// Page a Shift+click selects from.
     anchor: Option<usize>,
-    thumbs: panels::Thumbs,
+    pub(crate) thumbs: panels::Thumbs,
     /// Width of the grid as of the last paint, for the cards per row.
     width: f32,
 }
@@ -65,6 +65,9 @@ struct Organize {
     /// The document in front, as of the last frame (actions have no view at hand).
     front: Option<WeakEntity<DocTab>>,
     interleave: Option<InterleaveDialog>,
+    /// The Interleave backdrop's focus, and what had focus before it opened.
+    focus: Option<FocusHandle>,
+    return_focus: Option<FocusHandle>,
     split: Option<split::Split>,
 }
 
@@ -87,7 +90,7 @@ fn front(cx: &mut App) -> Option<Entity<DocTab>> {
 /// typing.
 pub fn register(cx: &mut App) {
     cx.set_global(Organize::default());
-    let keys = Some("GodPdf && !Input");
+    let keys = Some("GodPdf && !Input && !GodPdfDialog");
     cx.bind_keys([
         KeyBinding::new("alt-left", MoveEarlier, keys),
         KeyBinding::new("alt-right", MoveLater, keys),
@@ -301,7 +304,7 @@ fn remove_blank(cx: &mut App) {
     let doc = tab.read(cx);
     let (generation, bytes) = (doc.generation(), doc.session.bytes().to_vec());
     toasts::info(cx, "Looking for blank pages…");
-    let found = crate::services::jobs::background(cx, async move { blank_pages(bytes) });
+    let found = crate::services::jobs::background(cx, move || blank_pages(bytes));
     let tab = tab.downgrade();
     cx.spawn(async move |cx| {
         let result = found.await;
@@ -309,9 +312,12 @@ fn remove_blank(cx: &mut App) {
             let Some(tab) = tab.upgrade() else { return };
             match result {
                 Ok(_) if tab.read(cx).generation() != generation => {
-                    toasts::info(cx, "The document changed meanwhile: look again");
+                    toasts::note(
+                        cx,
+                        "The document changed while it was read: remove blank pages again",
+                    );
                 }
-                Ok(pages) if pages.is_empty() => toasts::info(cx, "No blank page found"),
+                Ok(pages) if pages.is_empty() => toasts::note(cx, "No blank page found"),
                 Ok(pages) => {
                     let result = tab.update(cx, |tab, cx| {
                         let result =
@@ -361,11 +367,31 @@ fn is_blank(rgba: &[u8]) -> bool {
 
 /// The Interleave dialog over the window, `None` when closed.
 /// Also remembers the document in front for the actions.
-pub fn overlay(front: Option<&Entity<DocTab>>, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
+pub fn overlay(
+    front: Option<&Entity<DocTab>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
     let organize = state(cx);
     organize.front = front.map(Entity::downgrade);
-    let dialog = organize.interleave.as_ref()?;
+    let Some(dialog) = organize.interleave.as_ref() else {
+        if let Some(previous) = organize.return_focus.take() {
+            window.focus(&previous, cx);
+        }
+        return None;
+    };
     let (name, reverse) = (dialog.file.name.clone(), dialog.reverse);
+    let focus = match state(cx).focus.clone() {
+        Some(focus) => focus,
+        None => {
+            let focus = cx.focus_handle();
+            state(cx).focus = Some(focus.clone());
+            focus
+        }
+    };
+    if let Some(previous) = crate::dialogs::hold_focus(&focus, window, cx) {
+        state(cx).return_focus.get_or_insert(previous);
+    }
     let palette = Palette::of(cx);
     let card = crate::dialogs::card(&palette, 360.)
         .child(crate::dialogs::title(crate::widgets::with_icon(
@@ -374,9 +400,9 @@ pub fn overlay(front: Option<&Entity<DocTab>>, _: &mut Window, cx: &mut App) -> 
             19.0,
             palette.text,
         )))
-        .child(format!(
+        .child(div().text_color(palette.text_dim).child(format!(
             "The pages of this document and of “{name}”, taken in turn."
-        ))
+        )))
         .child(
             div().pt(px(6.)).child(crate::widgets::tooltip(
                 div().id("interleave-reverse").child(
@@ -407,6 +433,10 @@ pub fn overlay(front: Option<&Entity<DocTab>>, _: &mut Window, cx: &mut App) -> 
     Some(
         div()
             .id("interleave-backdrop")
+            .track_focus(&focus)
+            .key_context("GodPdfDialog")
+            .on_action(|_: &crate::dialogs::DialogConfirm, _, cx| interleave(cx))
+            .on_action(|_: &crate::dialogs::DialogCancel, _, cx| close_dialog(cx))
             .absolute()
             .inset_0()
             .occlude()

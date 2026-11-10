@@ -13,7 +13,7 @@
 //! `[tools panel][banner over canvas][right panel][rail]`.
 
 mod banner;
-mod header;
+pub(crate) mod header;
 mod leftpanel;
 mod rail;
 mod tabrow;

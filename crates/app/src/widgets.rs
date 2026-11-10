@@ -290,3 +290,23 @@ pub fn dispatch(
 ) -> impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut App) + 'static {
     move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)
 }
+
+/// What follows the pointer while a page (thumbnail or Organize card) is dragged: its label
+/// on an accent pill, body text, button padding.
+pub struct DragGhost {
+    pub label: SharedString,
+    pub palette: Palette,
+}
+
+impl Render for DragGhost {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(12.))
+            .py(px(6.))
+            .rounded(px(theme::RADIUS))
+            .bg(self.palette.accent)
+            .text_color(self.palette.on_accent)
+            .text_size(px(fonts::BODY))
+            .child(self.label.clone())
+    }
+}

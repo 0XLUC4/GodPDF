@@ -225,7 +225,11 @@ never be lost: one error bar (latest wins) in the banner slot, above the banner 
 welcome screen without a document): full width, at least 36 high, `error` at 10 % over the
 fill, hairline `error` at 25 % under it, `WARNING_CIRCLE` 16 in `error`, text 13 `text`,
 small `X` "Dismiss"; it goes after 6 s. Warnings that matter (file changed by another
-program while edited here) go through `error`.
+program while edited here) go through `error`. `toasts::note` uses the same bar, neutral
+(`surface` fill, `border` hairline, `INFO` in `text_dim`), only for an action that changed
+nothing or whose result is only a number ("No blank page found", the Compress sizes): without
+it the click would seem to do nothing. Errors of an open dialog show inside it
+(`dialogs::error_line`), not in the bar dimmed under its backdrop.
 
 ### Welcome: `src/shell/welcome.rs`
 

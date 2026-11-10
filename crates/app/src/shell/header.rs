@@ -309,12 +309,12 @@ impl MenuState {
                         )
                     })
                 });
-                let mut menu = command(menu, "Merge PDFs…", has_doc, cx).separator();
+                let mut menu = command(menu, "Combine files…", has_doc, cx).separator();
                 for label in [
                     "Save",
                     "Save As…",
                     "Print…",
-                    "Export pages…",
+                    "Extract pages…",
                     "Export as images…",
                 ] {
                     menu = command(menu, label, has_doc, cx);
@@ -507,11 +507,13 @@ fn entry(
 
 /// The icon and shortcut text of a command by label.
 /// shortcut: keyed by label, move into `dialogs::Command` once it carries icons.
-fn look(label: &str) -> (&'static str, &'static str) {
+pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
     match label {
         "Open PDF…" => (icons::FOLDER_OPEN, "Ctrl+O"),
         "New PDF" => (icons::FILE_PLUS, ""),
         "Save" => (icons::FLOPPY_DISK, "Ctrl+S"),
+        "Undo" => (icons::ARROW_U_UP_LEFT, "Ctrl+Z"),
+        "Redo" => (icons::ARROW_U_UP_RIGHT, "Ctrl+Y"),
         "Save As…" => (icons::FLOPPY_DISK_BACK, "Ctrl+Shift+S"),
         "Print…" => (icons::PRINTER, "Ctrl+P"),
         "Export as images…" => (icons::FILE_IMAGE, ""),
@@ -523,7 +525,6 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Fit width" => (icons::ARROWS_OUT_LINE_HORIZONTAL, "Ctrl+0"),
         "Fit page" => (icons::FRAME_CORNERS, ""),
         "Toggle sidebar" => (icons::SIDEBAR_SIMPLE, ""),
-        "Export pages…" => (icons::EXPORT, ""),
         "Reopen closed tab" => (icons::CLOCK_COUNTER_CLOCKWISE, "Ctrl+Shift+T"),
         "Command palette" => (icons::COMMAND, "Ctrl+K"),
         "Search text" => (icons::MAGNIFYING_GLASS, "Ctrl+F"),
@@ -556,7 +557,7 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Make a booklet" => (icons::BOOK_OPEN, ""),
         "Join into one long page" => (icons::ROWS, ""),
         "Number pages…" => (icons::LIST_NUMBERS, ""),
-        "Merge PDFs…" => (icons::STACK, ""),
+        "Combine files…" => (icons::STACK, ""),
         "Select" => (icons::CURSOR, "V"),
         "Hand" => (icons::HAND, "H"),
         "Highlight" => (icons::HIGHLIGHTER, ""),
@@ -589,5 +590,20 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "About GodPDF" => (icons::QUESTION, ""),
         "Updates" => (icons::ARROW_CIRCLE_UP, ""),
         _ => (icons::FILE, ""),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_has_its_own_icon() {
+        let missing: Vec<&str> = crate::dialogs::COMMANDS
+            .iter()
+            .map(|command| command.label)
+            .filter(|label| look(label).0 == icons::FILE)
+            .collect();
+        assert!(missing.is_empty(), "no icon for {missing:?}");
     }
 }

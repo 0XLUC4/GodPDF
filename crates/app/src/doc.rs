@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use godpdf_core::{PageGeometry, Session};
 use godpdf_render::{Bitmap, Document};
-use gpui::{Bounds, Context, Pixels, RenderImage, Window};
+use gpui::{App, Bounds, Context, Global, Pixels, RenderImage, Window};
 
 use crate::geometry::{self, Layout};
 
-const PANIC_MESSAGE: &str = "internal error while processing this PDF (malformed file?)";
+pub(crate) const PANIC_MESSAGE: &str = "internal error while processing this PDF (malformed file?)";
 /// A cached page is re-rendered when its scale is off by more than this ratio.
 const SCALE_TOLERANCE: f32 = 0.005;
 /// Keep page bitmaps under typical GPU texture limits.
@@ -26,6 +26,27 @@ const KEEP_AROUND: usize = 3;
 pub fn guarded<T>(work: impl FnOnce() -> godpdf_core::Result<T>) -> godpdf_core::Result<T> {
     catch_unwind(AssertUnwindSafe(work))
         .unwrap_or_else(|_| Err(godpdf_core::Error::Pdf(PANIC_MESSAGE.to_owned())))
+}
+
+/// Images of closed documents whose GPU textures are freed on the next window paint
+/// (dropping an `Arc<RenderImage>` does not free its sprite-atlas texture).
+#[derive(Default)]
+struct Released(Vec<Arc<RenderImage>>);
+
+impl Global for Released {}
+
+/// Free the textures of `tab`'s images on the next paint: call before the tab is dropped.
+pub fn release(tab: &gpui::Entity<DocTab>, cx: &mut App) {
+    let images = tab.update(cx, |tab, _| tab.take_images());
+    cx.default_global::<Released>().0.extend(images);
+}
+
+/// Free the textures [`release`] collected. Called from the main window's render.
+pub fn free_released(window: &mut Window, cx: &mut App) {
+    for image in std::mem::take(&mut cx.default_global::<Released>().0) {
+        // Fails only for an image never painted: nothing to free then.
+        let _ = window.drop_image(image);
+    }
 }
 
 /// A rendered page plus what it was rendered from (older = stale but still shown).
@@ -413,6 +434,18 @@ impl DocTab {
         self.lifted
             .as_ref()
             .is_some_and(|lifted| lifted.generation == self.generation)
+    }
+
+    /// Every image this tab holds (pages, details, lifted page, picture, thumbnails).
+    fn take_images(&mut self) -> Vec<Arc<RenderImage>> {
+        let mut images: Vec<_> = self.pages.drain().map(|(_, cached)| cached.image).collect();
+        images.extend(self.details.drain().map(|(_, detail)| detail.image));
+        images.append(&mut self.evicted);
+        images.extend(self.lifted.take().and_then(|lifted| lifted.image));
+        images.extend(self.canvas.take_picture());
+        images.extend(self.panels.thumbs.take_images());
+        images.extend(self.grid.thumbs.take_images());
+        images
     }
 
     /// Free the GPU texture of `image` on the next paint.

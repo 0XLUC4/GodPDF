@@ -22,13 +22,12 @@ pub fn export_images(
     cx: &mut App,
 ) {
     toasts::info(cx, "Drawing the pages…");
-    let rendered = crate::services::jobs::background(cx, async move {
-        render_images(pdf, &pages, dpi, jpeg, &base)
-    });
+    let rendered =
+        crate::services::jobs::background(cx, move || render_images(pdf, &pages, dpi, jpeg, &base));
     cx.spawn(async move |cx| {
         let result = rendered.await;
         cx.update(|cx| match result {
-            Ok(files) => save_files(files, "pictures", cx),
+            Ok(files) => save_files(files, cx),
             Err(err) => toasts::error(cx, err),
         });
     })
@@ -45,7 +44,7 @@ pub fn split(
     to_disk: bool,
     cx: &mut App,
 ) {
-    let parts = crate::services::jobs::background(cx, async move {
+    let parts = crate::services::jobs::background(cx, move || {
         guarded(|| {
             if every {
                 core::split_every(&pdf, n)
@@ -64,7 +63,7 @@ pub fn split(
                     .enumerate()
                     .map(|(index, bytes)| (part_name(&base, index + 1), bytes))
                     .collect();
-                save_files(files, "files", cx);
+                save_files(files, cx);
             }
             Ok(parts) => {
                 let count = parts.len();
@@ -113,20 +112,23 @@ fn render_images(
         .collect()
 }
 
-/// Ask for a folder and write each `(name, bytes)` there, never over an existing file;
-/// "Saved N `what` to folder" once done.
-fn save_files(files: Vec<(String, Vec<u8>)>, what: &'static str, cx: &mut App) {
+/// Ask for a folder and write each `(name, bytes)` there in the background, never over an
+/// existing file.
+// shortcut: every file is held in memory until written; write each as it is rendered if
+// exports of hundreds of pages at 300 dpi run out of memory.
+fn save_files(files: Vec<(String, Vec<u8>)>, cx: &mut App) {
     crate::files::pick_folder(cx, move |folder, cx| {
-        let written = files
-            .iter()
-            .try_for_each(|(name, bytes)| write_atomic(&free_path(&folder, name), bytes));
-        match written {
-            Ok(()) => toasts::success(
-                cx,
-                format!("Saved {} {what} to {}", files.len(), folder.display()),
-            ),
-            Err(err) => toasts::error(cx, err),
-        }
+        let written = crate::services::jobs::background(cx, move || {
+            files
+                .iter()
+                .try_for_each(|(name, bytes)| write_atomic(&free_path(&folder, name), bytes))
+        });
+        cx.spawn(async move |cx| {
+            if let Err(err) = written.await {
+                cx.update(|cx| toasts::error(cx, err));
+            }
+        })
+        .detach();
     });
 }
 

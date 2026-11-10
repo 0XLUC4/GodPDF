@@ -14,7 +14,7 @@ use crate::theme::Palette;
 use crate::widgets::{self, dispatch};
 use crate::{fonts, icons, toasts};
 
-static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
+pub static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(
         ImageFormat::Png,
         include_bytes!("../../../../assets/logo.png").to_vec(),

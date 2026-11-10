@@ -2521,8 +2521,10 @@ dependencies = [
  "ocrs",
  "rfd",
  "rten",
+ "serde_json",
  "ureq",
  "windows 0.62.2",
+ "winresource",
 ]
 
 [[package]]

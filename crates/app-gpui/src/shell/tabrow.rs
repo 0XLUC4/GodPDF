@@ -131,25 +131,16 @@ pub fn render(
     } else {
         (icons::MOON, "Dark mode")
     };
-    // TODO(tab row): Updates (+ blue dot when one is out, `theme::DOWNLOAD_BLUE`, tooltip
-    // "Update available: <tag>") and About open egui dialogs that have no GPUI port yet.
     let right = div()
         .ml_auto()
         .flex()
         .items_center()
         .gap(px(2.))
-        .child(widgets::icon_button(
-            "updates",
-            icons::ARROW_CIRCLE_UP,
-            "Updates",
-            palette,
-        ))
-        .child(widgets::icon_button(
-            "about",
-            icons::QUESTION,
-            "About GodPDF",
-            palette,
-        ))
+        .child(crate::services::updates_button(palette, cx))
+        .child(
+            widgets::icon_button("about", icons::QUESTION, "About GodPDF", palette)
+                .on_click(dispatch(crate::services::About)),
+        )
         .child(widgets::icon_button("theme", glyph, tip, palette).on_click(dispatch(ToggleTheme)));
 
     div()

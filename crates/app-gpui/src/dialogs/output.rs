@@ -23,9 +23,9 @@ pub fn export_images(
     cx: &mut App,
 ) {
     toasts::info(cx, "Drawing the pages…");
-    let rendered = cx
-        .background_executor()
-        .spawn(async move { render_images(pdf, &pages, dpi, jpeg, &base) });
+    let rendered = crate::services::jobs::background(cx, async move {
+        render_images(pdf, &pages, dpi, jpeg, &base)
+    });
     cx.spawn(async move |cx| {
         let result = rendered.await;
         cx.update(|cx| {
@@ -51,7 +51,7 @@ pub fn split(
     to_disk: bool,
     cx: &mut App,
 ) {
-    let parts = cx.background_executor().spawn(async move {
+    let parts = crate::services::jobs::background(cx, async move {
         guarded(|| {
             if every {
                 core::split_every(&pdf, n)

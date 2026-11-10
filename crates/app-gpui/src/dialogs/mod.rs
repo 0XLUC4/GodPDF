@@ -262,6 +262,15 @@ pub fn has_password(tab: EntityId, cx: &App) -> bool {
         .is_some_and(|dialogs| dialogs.passwords.contains_key(&tab))
 }
 
+/// The document `tab` was opened with `password`: saving keeps it (egui `add_unlocked`).
+pub fn keep_password(tab: EntityId, password: String, cx: &mut App) {
+    let passwords = Passwords {
+        user: password.clone(),
+        owner: password,
+    };
+    state(cx).passwords.insert(tab, passwords);
+}
+
 /// The bytes to write for the document `tab`: encrypted when a password was set for it.
 pub fn bytes_to_save<'a>(
     tab: EntityId,
@@ -557,9 +566,7 @@ fn print_active(cx: &mut App) {
     }
     let doc = tab.read(cx);
     let (name, bytes) = (doc.title().to_owned(), doc.session.bytes().to_vec());
-    let printed = cx
-        .background_executor()
-        .spawn(async move { print::print(&name, bytes) });
+    let printed = crate::services::jobs::background(cx, async move { print::print(&name, bytes) });
     cx.spawn(async move |cx| {
         let result = printed.await;
         cx.update(|cx| {
@@ -618,7 +625,7 @@ pub(crate) fn title(text: impl IntoElement) -> Div {
 }
 
 /// egui `dialogs::error_line`: warning glyph and text in the error colour.
-fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette) -> Div {
+pub(crate) fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette) -> Div {
     crate::widgets::with_icon(
         crate::icons::WARNING_CIRCLE,
         error,

@@ -13,7 +13,7 @@ use crate::doc::{DocTab, guarded};
 use crate::geometry::ZOOM_STEP;
 use crate::shell::{self, FitPage, Shell};
 use crate::theme::{self, Palette};
-use crate::{dialogs, files, fonts, import, organize, panels, text, toasts, tools};
+use crate::{dialogs, files, fonts, import, organize, panels, services, text, toasts, tools};
 
 actions!(
     godpdf,
@@ -60,6 +60,7 @@ pub fn register(cx: &mut App) {
     crate::signature::register(cx);
     panels::register(cx);
     dialogs::register(cx);
+    services::register(cx);
     organize::register(cx);
     // After the tools: its Esc binding takes precedence over theirs.
     text::register(cx);
@@ -90,6 +91,7 @@ impl GodPdfApp {
             focus,
             title: String::new(),
         };
+        services::start(&mut app, cx);
         for path in paths {
             app.open_path(&path, cx);
         }
@@ -120,12 +122,15 @@ impl GodPdfApp {
                 }
                 Err(err) => toasts::error(cx, err),
             },
-            Err(err) => toasts::error(cx, err),
+            Err(err) => {
+                toasts::error(cx, err);
+                self.shell.recent.retain(|recent| recent != path);
+            }
         }
     }
 
     /// Open a document in a new tab. Owner-password-only files open (saved unencrypted);
-    /// files needing a password to read are refused for now.
+    /// files needing a password to read ask for it first.
     pub fn open_bytes(
         &mut self,
         name: String,
@@ -136,16 +141,13 @@ impl GodPdfApp {
         let bytes = if godpdf_core::is_encrypted(&bytes) {
             match guarded(|| godpdf_core::decrypt(&bytes, "")) {
                 Ok(bytes) => {
-                    toasts::info(cx, "Opened without password: it will be saved unencrypted");
+                    toasts::info(
+                        cx,
+                        "This file has usage restrictions; they will be removed when you save.",
+                    );
                     bytes
                 }
-                Err(_) => {
-                    toasts::error(
-                        cx,
-                        format!("“{name}” is password-protected: not supported yet"),
-                    );
-                    return;
-                }
+                Err(_) => return services::ask_password(name, path, bytes, cx),
             }
         } else {
             bytes
@@ -196,6 +198,10 @@ impl GodPdfApp {
         });
         match saved {
             Ok(Some(name)) => {
+                if let Some(path) = tab.read(cx).session.path.clone() {
+                    self.shell.remember_recent(&path);
+                    services::watch::saved(tab.entity_id(), &path, cx);
+                }
                 toasts::success(cx, format!("Saved “{name}”"));
                 true
             }
@@ -360,6 +366,7 @@ impl Render for GodPdfApp {
             self.title = title;
         }
 
+        services::track(self, window, cx);
         let active = self.active_tab().cloned();
         let hover = palette.hover;
         div()
@@ -414,6 +421,7 @@ impl Render for GodPdfApp {
                 cx,
             ))
             .children(text::overlay(active.as_ref(), window, cx))
+            .children(services::overlay(window, cx))
             .children(toasts::render(cx))
     }
 }

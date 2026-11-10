@@ -17,6 +17,7 @@ pub enum Group {
     Comment,
     Protect,
     Document,
+    Help,
 }
 
 impl Group {
@@ -30,6 +31,7 @@ impl Group {
             Self::Comment => "Comment",
             Self::Protect => "Protect",
             Self::Document => "Document",
+            Self::Help => "Help",
         }
     }
 }
@@ -374,6 +376,17 @@ pub static COMMANDS: &[Command] = &[
         "A smaller file that shows the same",
         || Box::new(Compress),
     ),
+    command("About GodPDF", Help, "", || {
+        Box::new(crate::services::About)
+    })
+    .without_doc(),
+    command(
+        "Updates",
+        Help,
+        "New versions of GodPDF and what they bring",
+        || Box::new(crate::services::Updates),
+    )
+    .without_doc(),
 ];
 
 /// Commands matching `query` (words, any case), those the words name first.

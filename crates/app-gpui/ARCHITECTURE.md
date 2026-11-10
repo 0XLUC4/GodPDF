@@ -26,7 +26,7 @@ reference for behavior: port from it.
 | `toasts.rs` | `Global` toast stack: `toasts::error(cx, ..)`, `info`, `success`. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
 | `widgets.rs` | `button`, `action_button`, `primary_button`, `separator` in the palette. |
-| `tools/` | **Hook** (empty): tool bar + per-page canvas interactions. |
+| `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested). |
 | `panels/` | **Hook** (empty): left sidebar, right panels. |
 | `dialogs/` | **Hook** (empty): modal dialogs, command palette. |
 
@@ -55,14 +55,18 @@ around the pointer.
 
 ## A tool
 
-`tools/mod.rs`:
+`tools/` (ported from `crates/app/src/quickbar.rs`, `selection.rs`, `textbox.rs`):
 
-- Keep the active tool in a `Global` (e.g. `struct ToolState { tool: Tool }`), switched by
-  actions (V, H, T, N, D, R, E, I in the egui app, see `crates/app/src/quickbar.rs`).
-- `toolbar(window, cx)` returns the tool bar row (shown under the main tool bar).
-- `page_overlay(tab, page, rect, window, cx)` is called by the viewer for every visible
-  page. Return an element sized to the page: `div().absolute().size_full()`, with mouse
-  handlers. Keep gesture state in the `Global` or add a field to `DocTab`.
+- `ToolState` (a `Global`): active tool, per-tool styles, picture card fields, and the
+  document the viewer shows (set while it renders, so key actions reach it).
+- `DocTab::canvas` (`tools::Canvas`): selection, gesture in progress, text being typed and
+  the annotations of each page, parsed once per `DocTab::generation()`.
+- Hooks: `page_overlay(tab, page, rect, window, cx)` (called by the viewer for every visible
+  page) and `viewer_overlay(tab, window, cx)` (the quick bar, drawn over the viewer's
+  top-left corner). `toolbar` stays `None`.
+- Keys: V H T N D R I E pick a tool, Delete / Backspace delete the selection, Esc drops it,
+  all in the context `GodPdf && !Input` so they never fire while typing. In a text box
+  (context `TextBox`): Ctrl+B / I / U, Ctrl+Enter writes it, Esc cancels.
 
 ## A panel
 
@@ -120,4 +124,4 @@ more than 3 away from the visible ones are evicted (their GPU textures freed).
 ## Not in wave 0
 
 Password dialog (encrypted files needing a password are refused with a toast), recent
-files, persistence of theme / window size, print, every tool, panel and dialog.
+files, persistence of theme / window size, print, every panel and dialog.

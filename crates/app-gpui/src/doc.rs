@@ -64,6 +64,8 @@ pub struct DocTab {
     pub view: ViewState,
     /// Viewer scrollbar drag in progress.
     pub thumb_drag: Option<crate::viewer::ThumbDrag>,
+    /// Canvas tools state: selection, gesture, text being typed.
+    pub canvas: crate::tools::Canvas,
 }
 
 impl DocTab {
@@ -80,6 +82,7 @@ impl DocTab {
             evicted: Vec::new(),
             geometries: HashMap::new(),
             thumb_drag: None,
+            canvas: Default::default(),
             view: ViewState {
                 zoom: 1.0,
                 scroll: (0.0, 0.0),
@@ -98,6 +101,11 @@ impl DocTab {
 
     pub fn is_dirty(&self) -> bool {
         self.session.is_dirty()
+    }
+
+    /// Bumped on every reload: caches of what the bytes contain key on it.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn page_count(&self) -> usize {

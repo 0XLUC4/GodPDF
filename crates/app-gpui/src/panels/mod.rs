@@ -11,6 +11,8 @@ mod comments;
 mod search;
 mod thumbs;
 
+pub use thumbs::{Pick, Thumbs, thumbnail, trim};
+
 use gpui::component::input::InputState;
 use gpui::prelude::*;
 use gpui::{

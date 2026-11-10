@@ -13,7 +13,7 @@ use crate::doc::{DocTab, guarded};
 use crate::geometry::ZOOM_STEP;
 use crate::shell::{self, FitPage, Shell};
 use crate::theme::{self, Palette};
-use crate::{dialogs, files, fonts, panels, toasts, tools};
+use crate::{dialogs, files, fonts, import, organize, panels, toasts, tools};
 
 actions!(
     godpdf,
@@ -59,6 +59,7 @@ pub fn register(cx: &mut App) {
     tools::register(cx);
     panels::register(cx);
     dialogs::register(cx);
+    organize::register(cx);
 }
 
 pub struct GodPdfApp {
@@ -107,10 +108,15 @@ impl GodPdfApp {
             return;
         }
         match files::read_file(path) {
-            Ok(file) => {
-                self.shell.remember_recent(path);
-                self.open_bytes(file.name, Some(file.path), file.bytes, cx)
-            }
+            // A picture or a text file opens as a new PDF with no path: saving asks where.
+            Ok(file) => match import::to_pdf(&file.name, file.bytes) {
+                Ok((name, bytes, true)) => self.open_bytes(name, None, bytes, cx),
+                Ok((name, bytes, false)) => {
+                    self.shell.remember_recent(path);
+                    self.open_bytes(name, Some(file.path), bytes, cx)
+                }
+                Err(err) => toasts::error(cx, err),
+            },
             Err(err) => toasts::error(cx, err),
         }
     }
@@ -397,6 +403,7 @@ impl Render for GodPdfApp {
             .text_size(px(fonts::BODY))
             .children(tools::toolbar(window, cx))
             .child(shell::render(self, active.as_ref(), window, cx))
+            .children(organize::overlay(active.as_ref(), window, cx))
             .children(dialogs::overlay(
                 cx.weak_entity(),
                 active.as_ref(),

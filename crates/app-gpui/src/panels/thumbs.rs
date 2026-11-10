@@ -74,10 +74,7 @@ pub fn move_to(count: usize, from: usize, to: usize) -> Option<Vec<usize>> {
 pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
     let count = tab.update(cx, |tab, _| {
-        for image in tab.panels.thumbs.evicted.drain(..) {
-            // Fails only for an image never painted: nothing to free then.
-            let _ = window.drop_image(image);
-        }
+        tab.panels.thumbs.free_evicted(window);
         tab.page_count()
     });
     let entity = tab.clone();
@@ -85,9 +82,9 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
         let max_px = (BOX.0.max(BOX.1) * window.scale_factor()).round() as u32;
         let weak = entity.downgrade();
         entity.update(cx, |tab, cx| {
-            trim(tab, rows.clone());
+            trim(tab, rows.clone(), PANEL);
             rows.map(|page| {
-                let image = thumbnail(tab, page, max_px, cx);
+                let image = thumbnail(tab, page, max_px, cx, PANEL);
                 let current = page == tab.view.current_page;
                 let size = fit(tab.page_sizes.get(page).copied().unwrap_or((612.0, 792.0)));
                 row(
@@ -352,17 +349,7 @@ fn insert_blank(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
 }
 
 fn insert_file(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
-    let Some(path) = files::pick_pdfs().into_iter().next() else {
-        return;
-    };
-    match files::read_file(&path) {
-        Ok(file) => {
-            edit(tab, cx, "Insert pages", |pdf| {
-                godpdf_core::insert_pdf(pdf, page + 1, &file.bytes)
-            });
-        }
-        Err(err) => toasts::error(cx, err),
-    }
+    crate::organize::insert_files(tab, page + 1, cx);
 }
 
 fn extract(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
@@ -390,11 +377,26 @@ fn fit(size: (f32, f32)) -> (f32, f32) {
     (size.0 * scale, size.1 * scale)
 }
 
+/// Which thumbnail cache of a document: the panel's or the Organize grid's.
+pub type Pick = fn(&mut DocTab) -> &mut Thumbs;
+
+const PANEL: Pick = |tab| &mut tab.panels.thumbs;
+
+impl Thumbs {
+    /// Free the GPU textures of the thumbnails dropped from the cache.
+    pub fn free_evicted(&mut self, window: &mut Window) {
+        for image in self.evicted.drain(..) {
+            // Fails only for an image never painted: nothing to free then.
+            let _ = window.drop_image(image);
+        }
+    }
+}
+
 /// Drop thumbnails far from the visible `rows`, and forget everything on a page count change.
-fn trim(tab: &mut DocTab, rows: std::ops::Range<usize>) {
+pub fn trim(tab: &mut DocTab, rows: std::ops::Range<usize>, pick: Pick) {
     let generation = tab.generation();
     let count = tab.page_count();
-    let thumbs = &mut tab.panels.thumbs;
+    let thumbs = pick(tab);
     if thumbs.generation != generation {
         thumbs.generation = generation;
         thumbs.in_flight.clear();
@@ -416,14 +418,16 @@ fn trim(tab: &mut DocTab, rows: std::ops::Range<usize>) {
 }
 
 /// Thumbnail of `page`, rendering it when missing or stale (the stale one shows meanwhile).
-fn thumbnail(
+pub fn thumbnail(
     tab: &mut DocTab,
     page: usize,
     max_px: u32,
     cx: &mut Context<DocTab>,
+    pick: Pick,
 ) -> Option<Arc<RenderImage>> {
     let generation = tab.generation();
-    let thumbs = &mut tab.panels.thumbs;
+    let renderer = tab.renderer();
+    let thumbs = pick(tab);
     let fresh = thumbs
         .images
         .get(&page)
@@ -431,8 +435,8 @@ fn thumbnail(
     if !fresh
         && !thumbs.failed.contains(&page)
         && thumbs.in_flight.len() < MAX_IN_FLIGHT
-        && let Some(doc) = tab.renderer()
-        && tab.panels.thumbs.in_flight.insert(page)
+        && let Some(doc) = renderer
+        && thumbs.in_flight.insert(page)
     {
         let rendered = cx.background_executor().spawn(async move {
             catch_unwind(AssertUnwindSafe(|| doc.thumbnail(page, max_px)))
@@ -446,7 +450,7 @@ fn thumbnail(
                 if tab.generation() != generation {
                     return;
                 }
-                let thumbs = &mut tab.panels.thumbs;
+                let thumbs = pick(tab);
                 thumbs.in_flight.remove(&page);
                 match result {
                     Ok(image) => {
@@ -466,8 +470,7 @@ fn thumbnail(
         })
         .detach();
     }
-    tab.panels
-        .thumbs
+    pick(tab)
         .images
         .get(&page)
         .map(|(image, _)| Arc::clone(image))

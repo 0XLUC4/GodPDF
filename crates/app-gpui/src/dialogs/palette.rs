@@ -105,7 +105,14 @@ fn look(command: &Command) -> (&'static str, u32) {
         "Rotate left" => ARROW_COUNTER_CLOCKWISE,
         "Rotate right" => ARROW_CLOCKWISE,
         "Rotate all pages" => ARROWS_CLOCKWISE,
-        "Delete page" => TRASH,
+        "Delete pages" => TRASH,
+        "Organize pages" => SQUARES_FOUR,
+        "Side by side" => COLUMNS,
+        "Move earlier" => CARET_LEFT,
+        "Move later" => CARET_RIGHT,
+        "Insert from file…" => FILE_ARROW_DOWN,
+        "Remove blank pages" => FILE_X,
+        "Interleave with…" => SHUFFLE,
         "Insert blank page" => FILE_PLUS,
         "Extract pages…" => EXPORT,
         "Split…" => SCISSORS,
@@ -140,7 +147,10 @@ fn look(command: &Command) -> (&'static str, u32) {
         _ => COMMAND,
     };
     let tint = match (command.label, command.group) {
-        ("Delete page" | "Remove all comments" | "Remove hidden data", _) => RED,
+        (
+            "Delete pages" | "Remove blank pages" | "Remove all comments" | "Remove hidden data",
+            _,
+        ) => RED,
         ("Extract pages…" | "Export as images…", _) => TEAL,
         ("Properties…", _) => BLUE,
         (_, Group::Organize) => GREEN,

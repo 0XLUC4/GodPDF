@@ -32,6 +32,7 @@ use crate::toasts;
 pub use commands::{COMMANDS, Group};
 use form::Form;
 use kinds::Kind;
+pub(crate) use kinds::open_tab;
 use merge::Merge;
 use palette::PaletteState;
 
@@ -162,30 +163,36 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &RotateLeft, cx| rotate_current(-90, cx));
     cx.on_action(|_: &RotateRight, cx| rotate_current(90, cx));
     cx.on_action(|_: &RotateAll, cx| {
-        if let Some((_, _, count)) = current(cx) {
+        if let Some((tab, _, count)) = current(cx) {
             let pages: Vec<usize> = (0..count).collect();
-            edit_active(cx, "Rotate all pages", None, |pdf| {
-                core::rotate_pages(pdf, &pages, 90)
+            crate::organize::keeping_selection(&tab, cx, |cx| {
+                edit_active(cx, "Rotate all pages", None, |pdf| {
+                    core::rotate_pages(pdf, &pages, 90)
+                });
             });
         }
     });
+    // The pages selected in the Organize grid, else the current one (egui `target_pages`).
     cx.on_action(|_: &DeletePage, cx| {
-        if let Some((_, page, _)) = current(cx) {
-            edit_active(cx, "Delete page", Some("Page deleted"), |pdf| {
-                core::delete_pages(pdf, &[page])
+        if let Some((tab, _, _)) = current(cx) {
+            let pages = crate::organize::target_pages(tab.read(cx));
+            let label = format!("Delete {} page(s)", pages.len());
+            edit_active(cx, &label, Some(&label), |pdf| {
+                core::delete_pages(pdf, &pages)
             });
         }
     });
     cx.on_action(|_: &InsertBlankPage, cx| {
-        if let Some((tab, page, _)) = current(cx) {
-            let (width, height) = tab
-                .read(cx)
-                .page_sizes
-                .get(page)
-                .copied()
-                .unwrap_or((595.0, 842.0));
+        if let Some((tab, _, count)) = current(cx) {
+            let doc = tab.read(cx);
+            let after = crate::organize::target_pages(doc)
+                .into_iter()
+                .max()
+                .unwrap_or(0);
+            let (width, height) = doc.page_sizes.get(after).copied().unwrap_or((595.0, 842.0));
+            let at = (after + 1).min(count);
             edit_active(cx, "Insert blank page", None, |pdf| {
-                core::insert_blank_page(pdf, page + 1, width, height)
+                core::insert_blank_page(pdf, at, width, height)
             });
         }
     });
@@ -313,7 +320,7 @@ pub fn overlay(
 /// The card of a dialog, `width` of content wide: egui `Modal` (`Frame::popup`): panel fill,
 /// 1 px border, radius 9, margin 8, popup shadow, item spacing 6. A click in it does not
 /// close it.
-fn card(palette: &Palette, width: f32) -> Div {
+pub(crate) fn card(palette: &Palette, width: f32) -> Div {
     let margin = crate::theme::MENU_MARGIN;
     div()
         .flex()
@@ -475,14 +482,17 @@ fn edit_active(
 }
 
 fn rotate_current(degrees: i32, cx: &mut App) {
-    if let Some((_, page, _)) = current(cx) {
+    if let Some((tab, _, _)) = current(cx) {
         let label = if degrees < 0 {
             "Rotate left"
         } else {
             "Rotate right"
         };
-        edit_active(cx, label, None, |pdf| {
-            core::rotate_pages(pdf, &[page], degrees)
+        let pages = crate::organize::target_pages(tab.read(cx));
+        crate::organize::keeping_selection(&tab, cx, |cx| {
+            edit_active(cx, label, None, |pdf| {
+                core::rotate_pages(pdf, &pages, degrees)
+            });
         });
     }
 }
@@ -584,7 +594,7 @@ mod tests {
 }
 
 /// egui `dialogs::title`: 19 px (strong is only a colour), then 8 of space.
-fn title(text: impl IntoElement) -> Div {
+pub(crate) fn title(text: impl IntoElement) -> Div {
     div().pb(px(2.)).text_size(px(19.)).child(text)
 }
 
@@ -599,7 +609,7 @@ fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette) -> Div {
 }
 
 /// egui `dialogs::buttons` row: 12 of space above, item spacing 8 between.
-fn button_row() -> Div {
+pub(crate) fn button_row() -> Div {
     div()
         .flex()
         .items_center()

@@ -323,8 +323,8 @@ impl MenuState {
                 for cmd in COMMANDS.iter().filter(|cmd| cmd.group == Group::View) {
                     menu = command(menu, cmd.label, has_doc, cx);
                 }
-                // TODO(header): egui also lists Side by side, Toggle sidebar and Organize pages.
-                entry_item(
+                // TODO(header): egui also lists Toggle sidebar.
+                let menu = entry_item(
                     menu,
                     icons::CORNERS_OUT,
                     "Fit page".into(),
@@ -332,7 +332,8 @@ impl MenuState {
                     Box::new(FitPage),
                     has_doc,
                     cx,
-                )
+                );
+                command(menu, "Organize pages", has_doc, cx)
             })
             .submenu("Tools", window, cx, move |menu, window, cx| {
                 let groups = [
@@ -445,7 +446,14 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Rotate left" => (icons::ARROW_COUNTER_CLOCKWISE, ""),
         "Rotate right" => (icons::ARROW_CLOCKWISE, ""),
         "Rotate all pages" => (icons::ARROWS_CLOCKWISE, ""),
-        "Delete page" => (icons::TRASH, ""),
+        "Delete pages" => (icons::TRASH, ""),
+        "Organize pages" => (icons::SQUARES_FOUR, ""),
+        "Side by side" => (icons::COLUMNS, ""),
+        "Move earlier" => (icons::CARET_LEFT, "Alt+Left"),
+        "Move later" => (icons::CARET_RIGHT, "Alt+Right"),
+        "Insert from file…" => (icons::FILE_ARROW_DOWN, ""),
+        "Remove blank pages" => (icons::FILE_X, ""),
+        "Interleave with…" => (icons::SHUFFLE, ""),
         "Insert blank page" => (icons::FILE_PLUS, ""),
         "Extract pages…" => (icons::EXPORT, ""),
         "Split…" => (icons::SCISSORS, ""),

@@ -15,7 +15,7 @@ use crate::dialogs::{
 };
 use crate::theme::{self, Palette, hex};
 use crate::tools::{HighlightTool, InkTool, NoteTool, PictureTool, RectangleTool, TextTool};
-use crate::{fonts, icons, panels, toasts, widgets};
+use crate::{fonts, icons, organize, panels, toasts, widgets};
 
 // shortcut: fixed width, egui lets it be dragged 220..=420; add a drag handle if wanted.
 const WIDTH: f32 = 280.0;
@@ -125,7 +125,7 @@ const ALL_TOOLS: &[Row] = &[
         "Add an empty page",
     ),
     row(
-        Missing,
+        Run(|| Box::new(organize::InsertFile)),
         icons::FILE_ARROW_DOWN,
         GREEN,
         "Insert from file",
@@ -198,9 +198,8 @@ const ALL_TOOLS: &[Row] = &[
 
 /// egui `commands::in_group(Group::Organize)` (`Cmd::short_label`), then "Combine files".
 const ORGANIZE: &[Row] = &[
-    // TODO(organize): egui toggles the page grid here; GPUI has no grid yet.
     row(
-        Missing,
+        Run(|| Box::new(organize::ToggleOrganize)),
         icons::SQUARES_FOUR,
         GREEN,
         "Organize",
@@ -235,14 +234,14 @@ const ORGANIZE: &[Row] = &[
         "Remove pages for good",
     ),
     row(
-        Missing,
+        Run(|| Box::new(organize::MoveEarlier)),
         icons::CARET_LEFT,
         GREEN,
         "Move earlier",
         "Move the selected pages one place earlier",
     ),
     row(
-        Missing,
+        Run(|| Box::new(organize::MoveLater)),
         icons::CARET_RIGHT,
         GREEN,
         "Move later",
@@ -256,7 +255,7 @@ const ORGANIZE: &[Row] = &[
         "Add an empty page",
     ),
     row(
-        Missing,
+        Run(|| Box::new(organize::InsertFile)),
         icons::FILE_ARROW_DOWN,
         GREEN,
         "Insert file",
@@ -326,7 +325,7 @@ const ORGANIZE: &[Row] = &[
         "Every page one under the other, on one page",
     ),
     row(
-        Missing,
+        Run(|| Box::new(organize::RemoveBlank)),
         icons::FILE_X,
         RED,
         "Blank pages",

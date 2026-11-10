@@ -5,7 +5,7 @@
 use gpui::Action;
 
 use super::*;
-use crate::{app, tools};
+use crate::{app, organize, tools};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
@@ -106,8 +106,20 @@ pub static COMMANDS: &[Command] = &[
     command("Zoom out", View, "", || Box::new(app::ZoomOut)),
     command("Fit width", View, "", || Box::new(app::FitWidth)),
     command("Go to page…", View, "", || Box::new(GoToPage)),
+    command(
+        "Side by side",
+        View,
+        "Two PDFs, or two places of one, next to each other",
+        || Box::new(organize::SplitView),
+    ),
     command("Next tab", View, "", || Box::new(app::NextTab)),
     command("Previous tab", View, "", || Box::new(app::PreviousTab)),
+    command(
+        "Organize pages",
+        Organize,
+        "Reorder, rotate and delete pages in a grid",
+        || Box::new(organize::ToggleOrganize),
+    ),
     command(
         "Rotate left",
         Organize,
@@ -126,14 +138,29 @@ pub static COMMANDS: &[Command] = &[
         "Turn every page by 90°",
         || Box::new(RotateAll),
     ),
-    command("Delete page", Organize, "Remove the current page", || {
+    command("Delete pages", Organize, "Remove pages for good", || {
         Box::new(DeletePage)
     }),
     command(
-        "Insert blank page",
+        "Move earlier",
         Organize,
-        "Add an empty page after this one",
-        || Box::new(InsertBlankPage),
+        "Move the selected pages one place earlier",
+        || Box::new(organize::MoveEarlier),
+    ),
+    command(
+        "Move later",
+        Organize,
+        "Move the selected pages one place later",
+        || Box::new(organize::MoveLater),
+    ),
+    command("Insert blank page", Organize, "Add an empty page", || {
+        Box::new(InsertBlankPage)
+    }),
+    command(
+        "Insert from file…",
+        Organize,
+        "Insert another PDF's pages",
+        || Box::new(organize::InsertFile),
     ),
     command(
         "Extract pages…",
@@ -184,15 +211,30 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(JoinPages),
     ),
     command(
+        "Remove blank pages",
+        Organize,
+        "Find the empty pages and take them out",
+        || Box::new(organize::RemoveBlank),
+    ),
+    command(
         "Number pages…",
         Organize,
         "Write its number on every page",
         || Box::new(NumberPages),
     ),
-    command("Merge PDFs…", Combine, "Combine PDFs into one", || {
-        Box::new(MergeFiles)
-    })
+    command(
+        "Merge PDFs…",
+        Combine,
+        "Combine PDFs, images and text files into one",
+        || Box::new(MergeFiles),
+    )
     .without_doc(),
+    command(
+        "Interleave with…",
+        Combine,
+        "Take the pages of two PDFs in turn: fronts and backs of a scan",
+        || Box::new(organize::Interleave),
+    ),
     command(
         "Select",
         Comment,
@@ -317,8 +359,11 @@ mod tests {
         assert_eq!(search("").len(), COMMANDS.len());
         let found = search("page");
         assert!(found.iter().all(|command| command.matches(&["page"])));
-        // "Delete page" is named by the word; "Rotate left" only describes it.
-        let delete = found.iter().position(|c| c.label == "Delete page").unwrap();
+        // "Delete pages" is named by the word; "Rotate left" only describes it.
+        let delete = found
+            .iter()
+            .position(|c| c.label == "Delete pages")
+            .unwrap();
         let rotate = found.iter().position(|c| c.label == "Rotate left").unwrap();
         assert!(delete < rotate);
         assert!(search("zzzz").is_empty());

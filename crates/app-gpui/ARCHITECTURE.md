@@ -30,6 +30,8 @@ reference for behavior: port from it.
 | `widgets.rs` | egui widgets at egui sizes: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested). |
 | `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`); Form / Signature are placeholders. |
+| `organize/` | Organize page grid with selection, drag reorder and page commands (`grid.rs`, orders in `order.rs`, tested), move earlier / later (Alt+Left / Alt+Right), insert from file, remove blank pages, interleave dialog (`mod.rs`), "Side by side" second viewer (`split.rs`). |
+| `import.rs` | Pictures (JPEG, PNG) and text files made into PDFs: Open, drag-drop, Combine and Insert accept them. |
 | `dialogs/` | Command list (`commands.rs`, feeds the palette and the tool bar menus), command palette Ctrl+K (`palette.rs`), form dialogs (`form.rs` rows + `kinds.rs` what each does), merge (`merge.rs`), background export / split (`output.rs`), print (`print.rs`), page ranges (`ranges.rs`). |
 
 Each hook module has a `register(cx)` (called from `app::register`) for its actions and key

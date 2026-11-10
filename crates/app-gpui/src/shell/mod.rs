@@ -163,7 +163,9 @@ impl GodPdfApp {
         if mode != Mode::Read {
             self.shell.show_tools = true;
         }
-        // TODO(organize): egui switches the viewer to the page grid in Organize mode.
+        if let Some(tab) = self.active_tab().cloned() {
+            crate::organize::set_grid(&tab, mode == Mode::Organize, cx);
+        }
         if mode == Mode::Comment {
             panels::show(panels::Panel::Comments, cx);
         }
@@ -179,6 +181,9 @@ pub fn render(
     cx: &mut Context<GodPdfApp>,
 ) -> AnyElement {
     let palette = Palette::of(cx);
+    if let Some(tab) = active.filter(|_| app.doc_view()) {
+        crate::organize::sync_mode(&mut app.shell.mode, tab, cx);
+    }
     let tab_row = tabrow::render(app, &palette, window, cx);
     let header = header::render(app, &palette, cx);
     let body = match active.filter(|_| app.doc_view()) {
@@ -194,7 +199,12 @@ pub fn render(
                     .flex()
                     .flex_col()
                     .children(banner::render(app, tab, &palette, cx))
-                    .child(div().flex_1().min_h_0().child(tab.clone())),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(crate::organize::center(app, tab, window, cx)),
+                    ),
             )
             .children(panels::right(Some(tab), window, cx))
             .child(rail::render(tab, &palette, cx))

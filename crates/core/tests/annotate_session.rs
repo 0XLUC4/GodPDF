@@ -50,6 +50,7 @@ fn all_kinds() -> Vec<Annotation> {
             rect: RECT,
             color: RED,
             width: 2.0,
+            fill: None,
         },
         Annotation::Ink {
             strokes: vec![

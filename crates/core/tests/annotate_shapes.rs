@@ -53,6 +53,7 @@ fn ellipse_round_trips_with_curves() {
         rect: RECT,
         color: RED,
         width: 2.0,
+        fill: None,
     };
     let (pdf, rect, back) = round_trip(&circle);
     assert_eq!(back, circle);
@@ -227,4 +228,89 @@ fn bad_line_is_refused() {
         arrow: true,
     };
     assert!(add_annotation(&make_pdf(1, None), 0, &line).is_err());
+}
+
+const BLUE: Color = Color {
+    r: 0.1,
+    g: 0.2,
+    b: 0.9,
+};
+
+#[test]
+fn filled_rectangle_round_trips_its_interior_colour() {
+    let square = Annotation::Square {
+        rect: RECT,
+        color: RED,
+        width: 2.0,
+        fill: Some(BLUE),
+    };
+    let (pdf, _, back) = round_trip(&square);
+    assert_eq!(back, square);
+    let (dict, appearance) = written(&pdf);
+    let ic: Vec<f32> = dict
+        .get(b"IC")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_float().unwrap())
+        .collect();
+    assert_eq!(ic, [0.1, 0.2, 0.9]);
+    // Interior colour set, then the path filled and stroked.
+    assert!(appearance.contains("0.100 0.200 0.900 rg"));
+    assert!(appearance.ends_with(" re B"));
+}
+
+#[test]
+fn filled_ellipse_without_border_only_fills() {
+    let circle = Annotation::Circle {
+        rect: RECT,
+        color: RED,
+        width: 0.0,
+        fill: Some(BLUE),
+    };
+    let (pdf, _, back) = round_trip(&circle);
+    assert_eq!(back, circle);
+    assert!(written(&pdf).1.ends_with(" h f"));
+}
+
+#[test]
+fn hollow_shape_writes_no_interior_colour() {
+    let square = Annotation::Square {
+        rect: RECT,
+        color: RED,
+        width: 1.0,
+        fill: None,
+    };
+    let (pdf, _, back) = round_trip(&square);
+    assert_eq!(back, square);
+    let (dict, appearance) = written(&pdf);
+    assert!(dict.get(b"IC").is_err());
+    assert!(appearance.ends_with(" re S"));
+}
+
+#[test]
+fn restyling_keeps_the_fill() {
+    let pdf = add_annotation(
+        &make_pdf(1, None),
+        0,
+        &Annotation::Circle {
+            rect: RECT,
+            color: RED,
+            width: 1.0,
+            fill: None,
+        },
+    )
+    .unwrap();
+    let id = annotations(&pdf, 0).unwrap().remove(0).id;
+    let filled = Annotation::Circle {
+        rect: RECT,
+        color: RED,
+        width: 1.0,
+        fill: Some(BLUE),
+    };
+    let pdf = replace_annotation(&pdf, 0, &id, &filled).unwrap();
+    let back = annotations(&pdf, 0).unwrap().remove(0).annotation.unwrap();
+    assert_eq!(back, filled);
+    assert_eq!(back.translated(5.0, 5.0).fitted(RECT, RECT), filled);
 }

@@ -72,6 +72,7 @@ fn translated_moves_rect_and_ink_points() {
         rect,
         color: BLACK,
         width: 1.0,
+        fill: None,
     };
     assert_eq!(
         square.translated(5.0, -10.0),
@@ -84,6 +85,7 @@ fn translated_moves_rect_and_ink_points() {
             },
             color: BLACK,
             width: 1.0,
+            fill: None,
         }
     );
     let ink = Annotation::Ink {

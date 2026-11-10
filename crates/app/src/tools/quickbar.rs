@@ -49,6 +49,8 @@ enum Kind {
     Text,
     /// Colour + stroke width.
     Stroke,
+    /// Colour + stroke width + fill colour (rectangles, ellipses).
+    Shape,
     /// Colour only.
     Fill,
 }
@@ -72,6 +74,7 @@ enum Target {
 #[derive(Clone, Copy)]
 enum Change {
     Color(Color),
+    Fill(Option<Color>),
     /// One step up (+1) or down (-1) of the font size or line width.
     Step(f32),
     Font(Font),
@@ -90,6 +93,7 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
         width,
         font_size,
         font,
+        fill: None,
     };
     match canvas::selected_item(tab, cx) {
         Some((page, item)) => match item.annotation {
@@ -112,15 +116,27 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
                 Some(common_style(&styles, 0..text.chars().count())),
             ),
             Some(
-                Annotation::Square { color, width, .. }
-                | Annotation::Circle { color, width, .. }
-                | Annotation::Line { color, width, .. }
-                | Annotation::Ink { color, width, .. },
+                Annotation::Square {
+                    color, width, fill, ..
+                }
+                | Annotation::Circle {
+                    color, width, fill, ..
+                },
             ) => Target::Selected(
-                Kind::Stroke,
-                style(color, width, 14.0, Font::Helvetica),
+                Kind::Shape,
+                Style {
+                    fill,
+                    ..style(color, width, 14.0, Font::Helvetica)
+                },
                 None,
             ),
+            Some(Annotation::Line { color, width, .. } | Annotation::Ink { color, width, .. }) => {
+                Target::Selected(
+                    Kind::Stroke,
+                    style(color, width, 14.0, Font::Helvetica),
+                    None,
+                )
+            }
             Some(
                 Annotation::Highlight { color, .. }
                 | Annotation::Underline { color, .. }
@@ -137,6 +153,7 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
 fn change_style(style: &mut Style, kind: Kind, change: Change) {
     match change {
         Change::Color(color) => style.color = color,
+        Change::Fill(fill) => style.fill = fill,
         Change::Step(sign) if kind == Kind::Text => {
             style.font_size = (style.font_size + sign).clamp(6.0, 72.0);
         }
@@ -183,11 +200,13 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
             rect,
             color,
             width: style.width,
+            fill: style.fill,
         },
         Annotation::Circle { rect, .. } => Annotation::Circle {
             rect,
             color,
             width: style.width,
+            fill: style.fill,
         },
         Annotation::Line {
             start, end, arrow, ..
@@ -236,7 +255,8 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
 fn tool_kind(tool: Tool) -> Option<Kind> {
     match tool {
         Tool::Text => Some(Kind::Text),
-        Tool::Ink => Some(Kind::Stroke),
+        Tool::Ink | Tool::Line | Tool::Arrow => Some(Kind::Stroke),
+        Tool::Rectangle | Tool::Ellipse => Some(Kind::Shape),
         shape if shape.is_shape() => Some(Kind::Stroke),
         Tool::Highlight | Tool::Underline | Tool::StrikeOut => Some(Kind::Fill),
         _ => None,
@@ -405,17 +425,30 @@ fn style_card(
         cx.listener(move |tab, _: &ClickEvent, window, cx| apply(tab, change, window, cx))
     };
 
-    let mut colors = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(2.))
-        .w(px(BUTTON));
+    let column = || {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(2.))
+            .w(px(BUTTON))
+    };
+    // Shapes have two colour columns: name them.
+    let heading = |text: &'static str| {
+        div()
+            .h(px(12.))
+            .text_size(px(9.))
+            .text_color(palette.text_dim)
+            .child(text)
+    };
+    let mut colors = column().when(kind == Kind::Shape, |column| {
+        column.child(heading("Stroke"))
+    });
     for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
         colors = colors.child(widgets::tooltip(
             swatch(
                 ("swatch", index),
-                color,
+                Some(color),
                 same_color(color, style.color),
                 palette,
             )
@@ -423,6 +456,22 @@ fn style_card(
             name,
         ));
     }
+    let fills = (kind == Kind::Shape).then(|| {
+        let mut fills = column().child(heading("Fill")).child(widgets::tooltip(
+            swatch("fill-none", None, style.fill.is_none(), palette)
+                .on_click(on(Change::Fill(None))),
+            "No fill",
+        ));
+        for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
+            let current = style.fill.is_some_and(|fill| same_color(color, fill));
+            fills = fills.child(widgets::tooltip(
+                swatch(("fill", index), Some(color), current, palette)
+                    .on_click(on(Change::Fill(Some(color)))),
+                name,
+            ));
+        }
+        fills
+    });
     let mut controls = div()
         .flex()
         .flex_col()
@@ -465,7 +514,7 @@ fn style_card(
                 }
             }
         }
-        Kind::Stroke => {
+        Kind::Stroke | Kind::Shape => {
             controls = stepper(
                 controls,
                 format!("{:.1}", style.width),
@@ -510,6 +559,7 @@ fn style_card(
             .gap(px(4.))
             .children(group)
             .child(colors)
+            .children(fills)
             .when(kind != Kind::Fill, |card| card.child(controls))
             .into_any_element(),
     )
@@ -659,11 +709,21 @@ fn circle_radius(side: f32) -> f32 {
 /// into strips).
 fn swatch(
     id: impl Into<ElementId>,
-    color: Color,
+    color: Option<Color>,
     current: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
     let hover = palette.border;
+    let dot = div()
+        .size(px(DOT))
+        .rounded(px(circle_radius(DOT)))
+        .border_1()
+        .border_color(palette.border);
+    let dot = match color {
+        Some(color) => dot.bg(hsla(color)),
+        // No colour: white with a red slash, as in design tools.
+        None => dot.bg(gpui::white()).child(no_color_slash()),
+    };
     div()
         .id(id)
         .flex_none()
@@ -679,14 +739,29 @@ fn swatch(
         .when(!current, |ring| {
             ring.hover(move |style| style.border_color(hover))
         })
-        .child(
-            div()
-                .size(px(DOT))
-                .rounded(px(circle_radius(DOT)))
-                .bg(hsla(color))
-                .border_1()
-                .border_color(palette.border),
-        )
+        .child(dot)
+}
+
+/// Red diagonal from the dot's bottom-left to its top-right rim.
+fn no_color_slash() -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        |bounds, _, window, _| {
+            let side = f32::from(bounds.size.width);
+            let (center, reach) = (
+                side / 2.0,
+                (side / 2.0 - 1.0) * std::f32::consts::FRAC_1_SQRT_2,
+            );
+            let at = |x: f32, y: f32| bounds.origin + gpui::point(px(x), px(y));
+            let mut path = gpui::PathBuilder::stroke(px(1.5));
+            path.move_to(at(center - reach, center + reach));
+            path.line_to(at(center + reach, center - reach));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, gpui::rgb(0xD9_2D_20));
+            }
+        },
+    )
+    .size_full()
 }
 
 /// Vertical `+ / value / -` stepper.
@@ -969,5 +1044,45 @@ mod tests {
             }
         }
         assert_eq!(circle_radius(18.0), 8.5);
+    }
+
+    #[test]
+    fn fill_swatch_restyles_rectangles_and_ellipses_only() {
+        use super::{Change, Kind, Style, Tool, change_style, restyled, tool_kind};
+        use godpdf_core::{Annotation, Color, Font, Rect};
+        let blue = Color {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+        };
+        let mut style = Style {
+            color: blue,
+            width: 2.0,
+            font_size: 14.0,
+            font: Font::Helvetica,
+            fill: None,
+        };
+        change_style(&mut style, Kind::Shape, Change::Fill(Some(blue)));
+        assert_eq!(style.fill, Some(blue));
+        let rect = Rect {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 10.0,
+            y1: 10.0,
+        };
+        let square = Annotation::Square {
+            rect,
+            color: blue,
+            width: 1.0,
+            fill: None,
+        };
+        let Annotation::Square { fill, width, .. } =
+            restyled(&square, style, Change::Fill(Some(blue)))
+        else {
+            panic!("not a rectangle");
+        };
+        assert_eq!((fill, width), (Some(blue), 2.0));
+        assert!(tool_kind(Tool::Ellipse) == Some(Kind::Shape));
+        assert!(tool_kind(Tool::Line) == Some(Kind::Stroke));
     }
 }

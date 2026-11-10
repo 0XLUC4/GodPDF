@@ -258,6 +258,8 @@ pub struct Style {
     pub width: f32,
     pub font_size: f32,
     pub font: Font,
+    /// Interior of rectangles and ellipses; `None` leaves them hollow.
+    pub fill: Option<Color>,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -307,6 +309,7 @@ impl Default for Styles {
             width: 2.0,
             font_size: 14.0,
             font: Font::Helvetica,
+            fill: None,
         };
         Self {
             text: style(SWATCHES[0].0),

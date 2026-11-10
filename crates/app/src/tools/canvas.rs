@@ -620,8 +620,24 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
         Tool::Highlight => ("Highlight", Annotation::Highlight { rect, color }),
         Tool::Underline => ("Underline", Annotation::Underline { rect, color }),
         Tool::StrikeOut => ("Strikethrough", Annotation::StrikeOut { rect, color }),
-        Tool::Rectangle => ("Rectangle", Annotation::Square { rect, color, width }),
-        Tool::Ellipse => ("Ellipse", Annotation::Circle { rect, color, width }),
+        Tool::Rectangle => (
+            "Rectangle",
+            Annotation::Square {
+                rect,
+                color,
+                width,
+                fill: style.fill,
+            },
+        ),
+        Tool::Ellipse => (
+            "Ellipse",
+            Annotation::Circle {
+                rect,
+                color,
+                width,
+                fill: style.fill,
+            },
+        ),
         Tool::Line => ("Line", line(false)),
         Tool::Arrow => ("Arrow", line(true)),
         Tool::Ink if points.len() >= 2 => {
@@ -1067,16 +1083,18 @@ pub fn page_overlay(
 /// What the drag in progress will draw.
 fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Option<AnyElement> {
     let style = cx.try_global::<super::ToolState>()?.styles.of(tool);
-    shape(tool, points, hsla(style.color), style.width, zoom)
+    let fill = style.fill.map(hsla);
+    shape(tool, points, hsla(style.color), style.width, fill, zoom)
 }
 
 /// What `tool` draws from `points` (the drag, or the points of an ink stroke) in `color`,
-/// lines `width` points wide.
+/// lines `width` points wide, rectangles and ellipses painted inside with `fill`.
 fn shape(
     tool: Tool,
     points: &[(f32, f32)],
     color: Hsla,
     width: f32,
+    fill: Option<Hsla>,
     zoom: f32,
 ) -> Option<AnyElement> {
     let (&first, &last) = (points.first()?, points.last()?);
@@ -1106,6 +1124,7 @@ fn shape(
             .into_any_element()
         }
         Tool::Rectangle => boxed(rect, zoom, 0.0)
+            .when_some(fill, |area, fill| area.bg(fill))
             .border(px(width * zoom))
             .border_color(color)
             .into_any_element(),
@@ -1118,16 +1137,22 @@ fn shape(
             .border_dashed()
             .border_color(black())
             .into_any_element(),
-        Tool::Ellipse => strokes(vec![geom::ellipse_points(rect, 64)], width, color, zoom),
-        Tool::Line => strokes(vec![vec![first, last]], width, color, zoom),
+        Tool::Ellipse => strokes(
+            vec![geom::ellipse_points(rect, 64)],
+            width,
+            color,
+            fill,
+            zoom,
+        ),
+        Tool::Line => strokes(vec![vec![first, last]], width, color, None, zoom),
         Tool::Arrow => {
             let mut lines = vec![vec![first, last]];
             if let Some([a, b]) = geom::arrow_wings(first, last, (width * 4.0).max(8.0)) {
                 lines.push(vec![a, last, b]);
             }
-            strokes(lines, width, color, zoom)
+            strokes(lines, width, color, None, zoom)
         }
-        Tool::Ink => strokes(vec![points.to_vec()], width, color, zoom),
+        Tool::Ink => strokes(vec![points.to_vec()], width, color, None, zoom),
         _ => return None,
     };
     Some(element)
@@ -1177,20 +1202,34 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement>
             )
         }
         Annotation::Highlight { color, .. } => {
-            shape(Tool::Highlight, &corners, hsla(*color), 0.0, zoom)
+            shape(Tool::Highlight, &corners, hsla(*color), 0.0, None, zoom)
         }
         Annotation::Underline { color, .. } => {
-            shape(Tool::Underline, &corners, hsla(*color), 0.0, zoom)
+            shape(Tool::Underline, &corners, hsla(*color), 0.0, None, zoom)
         }
         Annotation::StrikeOut { color, .. } => {
-            shape(Tool::StrikeOut, &corners, hsla(*color), 0.0, zoom)
+            shape(Tool::StrikeOut, &corners, hsla(*color), 0.0, None, zoom)
         }
-        Annotation::Square { color, width, .. } => {
-            shape(Tool::Rectangle, &corners, hsla(*color), *width, zoom)
-        }
-        Annotation::Circle { color, width, .. } => {
-            shape(Tool::Ellipse, &corners, hsla(*color), *width, zoom)
-        }
+        Annotation::Square {
+            color, width, fill, ..
+        } => shape(
+            Tool::Rectangle,
+            &corners,
+            hsla(*color),
+            *width,
+            fill.map(hsla),
+            zoom,
+        ),
+        Annotation::Circle {
+            color, width, fill, ..
+        } => shape(
+            Tool::Ellipse,
+            &corners,
+            hsla(*color),
+            *width,
+            fill.map(hsla),
+            zoom,
+        ),
         Annotation::Line {
             start,
             end,
@@ -1204,6 +1243,7 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement>
                 &[shown(*start), shown(*end)],
                 hsla(*color),
                 *width,
+                None,
                 zoom,
             )
         }
@@ -1216,7 +1256,7 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement>
                 .iter()
                 .map(|line| line.iter().map(|&point| shown(point)).collect())
                 .collect();
-            Some(strokes(lines, *width, hsla(*color), zoom))
+            Some(strokes(lines, *width, hsla(*color), None, zoom))
         }
         _ => tab
             .cached_page(ghost.page)
@@ -1243,22 +1283,27 @@ fn cut_out(picture: Arc<RenderImage>, ghost: &Ghost, page: (f32, f32), zoom: f32
         .into_any_element()
 }
 
-/// Polylines (displayed points) stroked `width` points wide, over the whole page.
-fn strokes(lines: Vec<Vec<(f32, f32)>>, width: f32, color: Hsla, zoom: f32) -> AnyElement {
+/// Polylines (displayed points) stroked `width` points wide, over the whole page; with
+/// `fill`, each one is first painted inside as a closed area.
+fn strokes(
+    lines: Vec<Vec<(f32, f32)>>,
+    width: f32,
+    color: Hsla,
+    fill: Option<Hsla>,
+    zoom: f32,
+) -> AnyElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
-            let mut path = PathBuilder::stroke(px(width * zoom));
-            for line in &lines {
-                for (index, &(x, y)) in line.iter().enumerate() {
-                    let at = bounds.origin + point(px(x * zoom), px(y * zoom));
-                    if index == 0 {
-                        path.move_to(at);
-                    } else {
-                        path.line_to(at);
-                    }
+            if let Some(fill) = fill {
+                let mut area = PathBuilder::fill();
+                trace(&mut area, &lines, bounds.origin, zoom);
+                if let Ok(area) = area.build() {
+                    window.paint_path(area, fill);
                 }
             }
+            let mut path = PathBuilder::stroke(px(width * zoom));
+            trace(&mut path, &lines, bounds.origin, zoom);
             // A single point makes no path: nothing to show yet.
             if let Ok(path) = path.build() {
                 window.paint_path(path, color);
@@ -1270,4 +1315,18 @@ fn strokes(lines: Vec<Vec<(f32, f32)>>, width: f32, color: Hsla, zoom: f32) -> A
     .left_0()
     .size_full()
     .into_any_element()
+}
+
+/// Add `lines` (displayed points) to `path`, offset to `origin`.
+fn trace(path: &mut PathBuilder, lines: &[Vec<(f32, f32)>], origin: Point<Pixels>, zoom: f32) {
+    for line in lines {
+        for (index, &(x, y)) in line.iter().enumerate() {
+            let at = origin + point(px(x * zoom), px(y * zoom));
+            if index == 0 {
+                path.move_to(at);
+            } else {
+                path.line_to(at);
+            }
+        }
+    }
 }

@@ -720,10 +720,12 @@ pub fn render(
             ))
             .top(px(rect.y0 * zoom))
             .w(px(NOTE_CARD_WIDTH))
+            // No grey outlines: the card's shadow alone sets it off the page.
+            .border_0()
             .text_size(px(crate::fonts::BODY))
             .key_context(TEXT_BOX)
             .on_action(escape)
-            .child(Textarea::new(&editor.state).h(px(88.)))
+            .child(Textarea::new(&editor.state).bordered(false).h(px(88.)))
             .into_any_element(),
     };
     Some(element)

@@ -477,6 +477,7 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Page colours…" => (icons::PALETTE, ""),
         "Remove all comments" => (icons::ERASER, ""),
         "Flatten comments and forms" => (icons::STACK_SIMPLE, ""),
+        "Attached files…" => (icons::PAPERCLIP, ""),
         "Compress" => (icons::ARROWS_IN, ""),
         _ => (icons::FILE, ""),
     }

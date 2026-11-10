@@ -288,6 +288,12 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(Flatten),
     ),
     command(
+        "Attached files…",
+        Document,
+        "Files carried inside the PDF: add, save, remove",
+        || Box::new(AttachedFiles),
+    ),
+    command(
         "Compress",
         Document,
         "A smaller file that shows the same",

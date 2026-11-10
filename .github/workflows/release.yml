@@ -63,7 +63,7 @@ jobs:
 
   macos:
     # GPUI compiles its Metal shaders with the Xcode of the runner.
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

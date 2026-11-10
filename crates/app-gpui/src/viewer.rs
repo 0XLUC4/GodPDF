@@ -85,6 +85,7 @@ impl Render for DocTab {
             let error = self
                 .page_error(page)
                 .map(|err| format!("Page {}: {err}", page + 1));
+            let hits = crate::panels::page_overlay(self, page, cx);
             let overlay = tools::page_overlay(self, page, rect, window, cx);
             pages.push(
                 div()
@@ -105,6 +106,7 @@ impl Render for DocTab {
                             .text_color(gpui::black())
                             .child(error)
                     })
+                    .children(hits)
                     .children(overlay),
             );
         }

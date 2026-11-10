@@ -8,8 +8,8 @@ use std::sync::Arc;
 use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, ObjectFit, RenderImage, SharedString, WeakEntity, Window,
-    div, img, px, uniform_list, white,
+    AnyElement, App, Context, Entity, ObjectFit, RenderImage, ScrollStrategy, SharedString,
+    UniformListScrollHandle, WeakEntity, Window, div, img, px, uniform_list, white,
 };
 
 use super::{BOX, menu_entry};
@@ -35,6 +35,10 @@ pub struct Thumbs {
     failed: HashSet<usize>,
     /// Images dropped from the cache; their GPU textures are freed on the next render.
     evicted: Vec<Arc<RenderImage>>,
+    /// The list scroll, kept per document; it follows the page being read.
+    scroll: UniformListScrollHandle,
+    /// Page the list last scrolled to (`None` before the first render).
+    followed: Option<usize>,
 }
 
 /// Payload of a thumbnail being dragged.
@@ -73,9 +77,19 @@ pub fn move_to(count: usize, from: usize, to: usize) -> Option<Vec<usize>> {
 
 pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
-    let count = tab.update(cx, |tab, _| {
+    let (count, scroll) = tab.update(cx, |tab, _| {
         tab.panels.thumbs.free_evicted(window);
-        tab.page_count()
+        // Keep the page being read in sight, only when it changes (the list scrolls freely).
+        let current = tab.view.current_page;
+        let thumbs = &mut tab.panels.thumbs;
+        if thumbs.followed != Some(current) {
+            thumbs.followed = Some(current);
+            thumbs
+                .scroll
+                .scroll_to_item(current, ScrollStrategy::Nearest);
+        }
+        let scroll = thumbs.scroll.clone();
+        (tab.page_count(), scroll)
     });
     let entity = tab.clone();
     uniform_list("thumbs", count, move |rows, window, cx| {
@@ -99,6 +113,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
             .collect::<Vec<_>>()
         })
     })
+    .track_scroll(&scroll)
     .flex_1()
     .into_any_element()
 }

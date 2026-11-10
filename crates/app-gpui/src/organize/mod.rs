@@ -293,9 +293,7 @@ fn remove_blank(cx: &mut App) {
     let doc = tab.read(cx);
     let (generation, bytes) = (doc.generation(), doc.session.bytes().to_vec());
     toasts::info(cx, "Looking for blank pages…");
-    let found = cx
-        .background_executor()
-        .spawn(async move { blank_pages(bytes) });
+    let found = crate::services::jobs::background(cx, async move { blank_pages(bytes) });
     let tab = tab.downgrade();
     cx.spawn(async move |cx| {
         let result = found.await;

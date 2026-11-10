@@ -29,6 +29,7 @@ mod icons;
 mod import;
 mod organize;
 mod panels;
+mod resize;
 mod services;
 mod shell;
 mod signature;

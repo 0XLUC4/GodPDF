@@ -41,10 +41,13 @@ actions!(
 );
 
 /// Right panel (egui `right_panel`): default width, inner margin.
-// shortcut: fixed width, egui lets it be dragged 240..=520; add a drag handle if wanted.
+/// egui: 320 at first, dragged 240..=520 by its left edge.
 const PANEL_WIDTH: f32 = 320.;
+const WIDTH_RANGE: (f32, f32) = (240., 520.);
 const PANEL_MARGIN: (f32, f32) = (14., 6.);
 /// Box a page thumbnail is fitted in (egui `sidebar::pages`: row width - 32 by 156).
+// shortcut: sized for the first panel width; a wider panel centers it (portrait pages are
+// limited by the height anyway). Fit to the row if landscape thumbnails look small.
 const BOX: (f32, f32) = (PANEL_WIDTH - 2. * PANEL_MARGIN.0 - 32., 156.);
 
 /// The views of the right rail (egui `sidebar::Tab`), in rail order.
@@ -100,6 +103,10 @@ pub struct PanelState {
     search_input: Option<(Entity<InputState>, Subscription)>,
     /// Focus the search field on the next render (Ctrl+F has no window at hand).
     focus_search: bool,
+    /// The document whose search text the field shows.
+    search_tab: Option<gpui::EntityId>,
+    /// Panel width, dragged by its left edge.
+    width: f32,
 }
 
 impl Default for PanelState {
@@ -109,6 +116,8 @@ impl Default for PanelState {
             active: None,
             search_input: None,
             focus_search: false,
+            search_tab: None,
+            width: PANEL_WIDTH,
         }
     }
 }
@@ -223,8 +232,15 @@ pub fn right(
     };
     Some(
         div()
-            .w(px(PANEL_WIDTH))
+            .relative()
+            .w(px(state(cx).width))
             .flex_none()
+            .on_drag_move(crate::resize::on_move(
+                crate::resize::Edge::Right,
+                WIDTH_RANGE,
+                |width, cx| state(cx).width = width,
+            ))
+            .child(crate::resize::handle(crate::resize::Edge::Right))
             .h_full()
             .flex()
             .flex_col()

@@ -105,6 +105,8 @@ pub struct Shell {
     pub closed: Vec<PathBuf>,
     /// Files opened, newest first (welcome screen, Menu > File > Open recent).
     pub recent: Vec<PathBuf>,
+    /// Width of the tools panel (egui: resizable 220..=420, 280 at first).
+    pub tools_width: f32,
 }
 
 impl Default for Shell {
@@ -117,6 +119,7 @@ impl Default for Shell {
             dismissed: Vec::new(),
             closed: Vec::new(),
             recent: Vec::new(),
+            tools_width: 280.0,
         }
     }
 }

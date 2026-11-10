@@ -361,8 +361,11 @@ pub fn render(
         .map_or(0.0, |size| size.0 * zoom);
     let element = match &editor.kind {
         Kind::Text { anchor, width, .. } => {
-            let font_px = style.font_size * zoom;
             let format = editor.format;
+            // Sub / superscript: smaller, moved off the baseline (core's size and rise).
+            let font_px = format.size(style.font_size) * zoom;
+            let line_px = style.font_size * FREE_TEXT_LINE_HEIGHT * zoom;
+            let rise = format.rise(style.font_size) * zoom;
             let min_width = (MIN_WIDTH_EMS * style.font_size).min(*width);
             div()
                 .id("text-box")
@@ -387,15 +390,17 @@ pub fn render(
                     toggle_format(tab, Format::Underline, window, cx)
                 }))
                 .child(
-                    Textarea::new(&editor.state)
-                        .appearance(false)
-                        .text_size(px(font_px))
-                        .line_height(px(font_px * FREE_TEXT_LINE_HEIGHT))
-                        .font_family(font_family(style.font))
-                        .text_color(hsla(style.color))
-                        .when(format.bold, |text| text.font_weight(FontWeight::BOLD))
-                        .when(format.italic, |text| text.italic())
-                        .when(format.underline, |text| text.underline()),
+                    div().relative().top(px(-rise)).child(
+                        Textarea::new(&editor.state)
+                            .appearance(false)
+                            .text_size(px(font_px))
+                            .line_height(px(line_px))
+                            .font_family(font_family(style.font))
+                            .text_color(hsla(style.color))
+                            .when(format.bold, |text| text.font_weight(FontWeight::BOLD))
+                            .when(format.italic, |text| text.italic())
+                            .when(format.underline, |text| text.underline()),
+                    ),
                 )
                 .into_any_element()
         }

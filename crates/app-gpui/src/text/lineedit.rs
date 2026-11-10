@@ -344,12 +344,17 @@ pub fn render(
     // egui: a popup frame (margin 4) 6 px above the line, its three toggles 2 px apart.
     let active = line.active(cx);
     let bar_height = widgets::ICON_BUTTON + 8.0 + 2.0;
-    let toggles = Format::ALL.into_iter().map(|format| {
-        let (glyph, tip) = match format {
-            Format::Bold => (icons::TEXT_B, "Bold (Ctrl+B)"),
-            Format::Italic => (icons::TEXT_ITALIC, "Italic (Ctrl+I)"),
-            Format::Underline => (icons::TEXT_UNDERLINE, "Underline (Ctrl+U)"),
-        };
+    let toggles = [
+        (Format::Bold, icons::TEXT_B, "Bold (Ctrl+B)"),
+        (Format::Italic, icons::TEXT_ITALIC, "Italic (Ctrl+I)"),
+        (
+            Format::Underline,
+            icons::TEXT_UNDERLINE,
+            "Underline (Ctrl+U)",
+        ),
+    ]
+    .into_iter()
+    .map(|(format, glyph, tip)| {
         let selected = palette.selected;
         let id = SharedString::from(format!("line-format-{format:?}"));
         widgets::tooltip(

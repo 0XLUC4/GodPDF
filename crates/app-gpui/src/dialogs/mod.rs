@@ -6,6 +6,7 @@
 //! focuses the first one. Confirming runs a `godpdf-core` edit on the document through
 //! `DocTab::apply` (one undo step). Errors keep the dialog open, saying why, or are toasts.
 
+mod attach;
 mod commands;
 mod form;
 mod kinds;
@@ -68,6 +69,7 @@ actions!(
         RemoveLinks,
         RemoveComments,
         Flatten,
+        AttachedFiles,
         ContentsPage,
         Compress,
         Print,
@@ -95,6 +97,7 @@ pub enum Open {
     Form(Form),
     Merge(Merge),
     Signature(signpad::Pad),
+    Attach(attach::Attach),
 }
 
 #[derive(Default)]
@@ -159,6 +162,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &SetPassword, cx| open_form(Kind::Encrypt, cx));
     cx.on_action(|_: &Properties, cx| open_form(Kind::Properties, cx));
     cx.on_action(|_: &MergeFiles, cx| open_merge(cx));
+    cx.on_action(|_: &AttachedFiles, cx| attach::open(cx));
     cx.on_action(|_: &RemovePassword, cx| remove_password(cx));
     cx.on_action(|_: &Print, cx| print_active(cx));
     cx.on_action(|_: &Compress, cx| compress(cx));
@@ -231,7 +235,12 @@ pub fn register(cx: &mut App) {
     });
     cx.on_action(|_: &Flatten, cx| {
         let done = "Comments and form fields are now part of the pages";
-        edit_active(cx, "Flatten", Some(done), core::flatten_annotations);
+        edit_active(
+            cx,
+            "Flatten comments and forms",
+            Some(done),
+            core::flatten_annotations,
+        );
     });
     cx.on_action(|_: &RemoveHiddenData, cx| {
         let done = "Properties, scripts and attached files removed";
@@ -310,6 +319,7 @@ pub fn overlay(
         Open::Form(form) => form::render(form, &colors),
         Open::Merge(merge) => merge::render(merge, &colors),
         Open::Signature(pad) => signpad::render(pad, &colors),
+        Open::Attach(attach) => attach::render(attach, &colors),
     };
     Some(
         div()
@@ -418,7 +428,7 @@ fn build(pending: Pending, tab: Option<&Entity<DocTab>>, window: &mut Window, cx
     let input = match &open {
         Open::Palette(palette) => Some(palette.query.clone()),
         Open::Form(form) => form.first_input(),
-        Open::Merge(_) | Open::Signature(_) => None,
+        Open::Merge(_) | Open::Signature(_) | Open::Attach(_) => None,
     };
     let focused = window.focused(cx);
     let dialogs = state(cx);
@@ -448,7 +458,7 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
     let result = match &open {
         Open::Form(form) => kinds::confirm(form, secondary, cx),
         Open::Merge(merge) => merge::confirm(merge, cx),
-        Open::Palette(_) => Ok(()),
+        Open::Palette(_) | Open::Attach(_) => Ok(()),
         Open::Signature(pad) => signpad::confirm_pad(pad, window, cx),
     };
     match (result, &mut open) {
@@ -464,7 +474,7 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
             state(cx).open = Some(open);
             window.refresh();
         }
-        (Err(error), Open::Palette(_)) => toasts::error(cx, error),
+        (Err(error), Open::Palette(_) | Open::Attach(_)) => toasts::error(cx, error),
     }
 }
 

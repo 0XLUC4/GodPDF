@@ -141,8 +141,6 @@ egui: `doc_panels` (Panel::left "tools-panel") + `tools::panel`, rows `widgets::
 - Organize / Comment / Protect: `commands::in_group(group)` rows with `Cmd::icon`,
   `Cmd::tint`, `Cmd::short_label`; Organize adds "Combine files" (`STACK`, purple); Comment
   ends with 10 px and "Comments are listed in the panel on the right." 13 dim.
-- Commands not ported yet are listed as in egui; a click shows the toast "Not available
-  yet".
 
 ### Organize grid and Side by side: `src/organize/`
 
@@ -160,7 +158,7 @@ egui: `organize.rs` (`show`, `card`), `GodApp::companion`.
 - Side by side (`split.rs`): the right half, a `border` line on its left; a row (10 in): the
   document picker (outline button, 80..240 wide), page box 38 × 26, "/ n" dim, the small
   `X` "Close the second view" 6 from the right; then a read-only viewer.
-- Left to do: drag to resize.
+- Drag its right edge to resize (`resize.rs`, 220..420).
 
 ### Right rail: `src/shell/rail.rs` (+ the panel it opens: `panels::right` in `src/panels/mod.rs`)
 
@@ -188,8 +186,8 @@ egui: `doc_panels` (Panel::right "rail") + `GodApp::rail`, `right_panel`.
   button, status label, 4 px, hits as 26 px selectable rows). Menus use Phosphor glyphs
   (`panels::menu_entry`).
 - Page box: drag right / up for later pages (1 per point), click to type (Enter or blur).
-- Left to do: bookmark tree collapse arrows (GPUI shows the whole
-  tree flat, indented), drag to resize the panel.
+- Bookmark branches have an open / close caret in their indent slot (open at first when they
+  hold the bookmark of the page read); the panel is resized by its left edge (`resize.rs`).
 
 ### Banner: `src/shell/banner.rs`
 

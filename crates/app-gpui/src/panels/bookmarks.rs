@@ -1,9 +1,11 @@
 //! Bookmarks panel (ported from `crates/app/src/bookmarks.rs`): the tree with page numbers;
 //! a click goes to the page, a double-click renames, right-click moves, nests or deletes.
 
+use std::collections::HashMap;
+
 use godpdf_core::OutlineItem;
 use gpui::component::button::{Button, ButtonVariants};
-use gpui::component::input::{Input, InputEvent, InputState};
+use gpui::component::input::{Escape, Input, InputEvent, InputState};
 use gpui::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui::prelude::*;
 use gpui::{
@@ -27,6 +29,17 @@ pub struct Marks {
     /// The outline as read at a document generation.
     outline: Option<(u64, Result<Vec<OutlineItem>, String>)>,
     renaming: Option<Renaming>,
+    /// Branches opened or closed by a click on their arrow; the others start open only when
+    /// they hold the bookmark of the page being read (egui `CollapsingState` default).
+    toggled: HashMap<Path, bool>,
+}
+
+/// Is the branch at `path` open: as last clicked, else when it holds the `active` bookmark.
+fn is_open(toggled: &HashMap<Path, bool>, active: Option<&[usize]>, path: &[usize]) -> bool {
+    toggled
+        .get(path)
+        .copied()
+        .unwrap_or_else(|| active.is_some_and(|active| active.starts_with(path)))
 }
 
 /// A bookmark being renamed; its field is created on the next render (it needs a window).
@@ -264,23 +277,32 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
             .into_any_element();
     }
     let active = active_path(&items, current);
+    let toggled = tab.read(cx).panels.bookmarks.toggled.clone();
     let mut rows = Vec::new();
-    flatten(&items, &mut Vec::new(), &mut |path, item, siblings| {
-        let renaming = field
-            .as_ref()
-            .filter(|(at, _)| at == path)
-            .map(|(_, field)| field.clone());
-        rows.push(row(
-            &weak,
-            path,
-            item,
-            siblings,
-            current,
-            active.as_deref() == Some(path),
-            renaming,
-            &palette,
-        ));
-    });
+    let open = |path: &[usize]| is_open(&toggled, active.as_deref(), path);
+    shown(
+        &items,
+        &mut Vec::new(),
+        &open,
+        &mut |path, item, siblings| {
+            let renaming = field
+                .as_ref()
+                .filter(|(at, _)| at == path)
+                .map(|(_, field)| field.clone());
+            let arrow = (!item.children.is_empty()).then(|| open(path));
+            rows.push(row(
+                &weak,
+                path,
+                item,
+                siblings,
+                current,
+                active.as_deref() == Some(path),
+                arrow,
+                renaming,
+                &palette,
+            ));
+        },
+    );
     div()
         .flex_1()
         .min_h_0()
@@ -311,6 +333,23 @@ fn flatten(
         path.push(index);
         visit(path, item, items.len());
         flatten(&item.children, path, visit);
+        path.pop();
+    }
+}
+
+/// Like [`flatten`], but the children of closed branches are skipped.
+fn shown(
+    items: &[OutlineItem],
+    path: &mut Path,
+    open: &dyn Fn(&[usize]) -> bool,
+    visit: &mut impl FnMut(&[usize], &OutlineItem, usize),
+) {
+    for (index, item) in items.iter().enumerate() {
+        path.push(index);
+        visit(path, item, items.len());
+        if open(path) {
+            shown(&item.children, path, open, visit);
+        }
         path.pop();
     }
 }
@@ -370,17 +409,69 @@ fn row(
     siblings: usize,
     current: usize,
     active: bool,
+    arrow: Option<bool>,
     renaming: Option<Entity<InputState>>,
     palette: &Palette,
 ) -> AnyElement {
-    // egui indents leaves by `indent` and nests a collapsing body one `indent` further.
-    let indent = px(INDENT * path.len() as f32);
+    // egui: an `indent` wide slot (a branch's open / close arrow, blank for a leaf), the body
+    // of a branch one `indent` further in.
+    let indent = px(INDENT * (path.len() - 1) as f32);
+    let slot = div()
+        .flex_none()
+        .w(px(INDENT))
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .justify_center();
     if let Some(field) = renaming {
+        // Esc gives the old name back: the rename is dropped before the field loses focus.
+        let cancel_tab = tab.clone();
         return div()
+            .flex()
             .pl(indent)
-            .child(Input::new(&field).h(px(24.)))
+            .child(slot)
+            .child(
+                div()
+                    .flex_1()
+                    .on_action(move |_: &Escape, _, cx| {
+                        let _ = cancel_tab.update(cx, |tab, cx| {
+                            tab.panels.bookmarks.renaming = None;
+                            cx.notify();
+                        });
+                    })
+                    .child(Input::new(&field).h(px(24.))),
+            )
             .into_any_element();
     }
+    let slot = match arrow {
+        Some(open) => {
+            let (arrow_tab, arrow_path) = (tab.clone(), path.to_vec());
+            slot.id(gpui::ElementId::Name(
+                format!("bookmark-arrow-{path:?}").into(),
+            ))
+            .cursor_pointer()
+            .child(widgets::icon(
+                if open {
+                    icons::CARET_DOWN
+                } else {
+                    icons::CARET_RIGHT
+                },
+                11.0,
+                palette.text,
+            ))
+            .on_click(move |_, _, cx| {
+                let _ = arrow_tab.update(cx, |tab, cx| {
+                    tab.panels
+                        .bookmarks
+                        .toggled
+                        .insert(arrow_path.clone(), !open);
+                    cx.notify();
+                });
+            })
+            .into_any_element()
+        }
+        None => slot.into_any_element(),
+    };
     let hover = palette.hover;
     let number = item
         .page
@@ -404,8 +495,8 @@ Goes nowhere",
     };
     let row = div()
         .id(gpui::ElementId::Name(format!("bookmark-{path:?}").into()))
-        .flex_none()
-        .ml(indent)
+        .flex_1()
+        .min_w_0()
         .h(px(24.))
         .px(px(6.))
         .flex()
@@ -432,7 +523,7 @@ Goes nowhere",
                 .text_color(palette.text_dim)
                 .child(number),
         );
-    widgets::tooltip(row, hint)
+    let row = widgets::tooltip(row, hint)
         .on_click(move |event: &ClickEvent, _, cx| {
             let _ = click_tab.update(cx, |tab, cx| {
                 if event.click_count() >= 2 {
@@ -453,7 +544,13 @@ Goes nowhere",
                 current,
                 &menu_palette,
             )
-        })
+        });
+    div()
+        .flex_none()
+        .flex()
+        .pl(indent)
+        .child(slot)
+        .child(row)
         .into_any_element()
 }
 
@@ -714,6 +811,23 @@ mod tests {
         assert!(changed(Change::Indent(vec![0])).is_none());
         assert!(changed(Change::Outdent(vec![1])).is_none());
         assert!(changed(Change::Delete(vec![7])).is_none());
+    }
+
+    #[test]
+    fn branches_open_on_the_page_read_or_as_clicked() {
+        let items = tree();
+        let active = active_path(&items, 4);
+        let mut toggled = HashMap::new();
+        let count = |toggled: &HashMap<Path, bool>| {
+            let mut rows = 0;
+            let open = |path: &[usize]| is_open(toggled, active.as_deref(), path);
+            shown(&items, &mut Vec::new(), &open, &mut |_, _, _| rows += 1);
+            rows
+        };
+        assert_eq!(count(&toggled), 5);
+        toggled.insert(vec![1], false);
+        assert_eq!(count(&toggled), 3);
+        assert!(!is_open(&toggled, None, &[2]));
     }
 
     #[test]

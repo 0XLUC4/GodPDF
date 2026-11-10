@@ -447,6 +447,8 @@ fn style_card(
                         Format::Bold => (icons::TEXT_B, "Bold (Ctrl+B)"),
                         Format::Italic => (icons::TEXT_ITALIC, "Italic (Ctrl+I)"),
                         Format::Underline => (icons::TEXT_UNDERLINE, "Underline (Ctrl+U)"),
+                        Format::Sub => (icons::TEXT_SUBSCRIPT, "Subscript"),
+                        Format::Super => (icons::TEXT_SUPERSCRIPT, "Superscript"),
                     };
                     controls = controls.child(widgets::tooltip(
                         icon_button(

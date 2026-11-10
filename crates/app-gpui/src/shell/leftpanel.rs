@@ -15,10 +15,10 @@ use crate::dialogs::{
 };
 use crate::theme::{self, Palette, hex};
 use crate::tools::{HighlightTool, InkTool, NoteTool, PictureTool, RectangleTool, TextTool};
-use crate::{fonts, icons, organize, panels, text, toasts, widgets};
+use crate::{fonts, icons, organize, panels, text, widgets};
 
-// shortcut: fixed width, egui lets it be dragged 220..=420; add a drag handle if wanted.
-const WIDTH: f32 = 280.0;
+/// egui: resizable 220..=420 (280 at first, `Shell::tools_width`).
+const WIDTH_RANGE: (f32, f32) = (220.0, 420.0);
 /// "All tools" rows past this count hide behind "View more".
 const FOLDED: usize = 11;
 
@@ -27,8 +27,6 @@ const FOLDED: usize = 11;
 enum Do {
     Run(fn() -> Box<dyn Action>),
     Mode(Mode),
-    /// Not ported to GPUI yet: listed as in egui, a click says so in a toast.
-    Missing,
 }
 
 struct Row {
@@ -56,7 +54,7 @@ const fn row(
     }
 }
 
-use Do::{Missing, Run};
+use Do::Run;
 use theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
 
 /// egui `tools::ALL_TOOLS`, with each command's icon and tint (`Cmd::icon`, `Cmd::tint`).
@@ -451,6 +449,7 @@ pub fn render(
     if !shell.show_tools || shell.mode == Mode::Read {
         return None;
     }
+    let resize_app = cx.entity().downgrade();
     let mode = shell.mode;
     let all = rows_of(mode);
     let shown = if mode == Mode::AllTools && !shell.tools_expanded {
@@ -500,7 +499,19 @@ pub fn render(
     Some(
         div()
             .id("tools-panel")
-            .w(px(WIDTH))
+            .relative()
+            .w(px(shell.tools_width))
+            .on_drag_move(crate::resize::on_move(
+                crate::resize::Edge::Left,
+                WIDTH_RANGE,
+                move |width, cx| {
+                    let _ = resize_app.update(cx, |app, cx| {
+                        app.shell.tools_width = width;
+                        cx.notify();
+                    });
+                },
+            ))
+            .child(crate::resize::handle(crate::resize::Edge::Left))
             .flex_none()
             .h_full()
             .flex()
@@ -556,7 +567,6 @@ fn tool_row(index: usize, row: &Row, palette: &Palette, cx: &mut Context<GodPdfA
         Do::Mode(mode) => {
             element.on_click(cx.listener(move |app, _, _, cx| app.set_mode(mode, cx)))
         }
-        Missing => element.on_click(|_, _, cx| toasts::info(cx, "Not available yet")),
     };
     if row.hint.is_empty() {
         return element.into_any_element();

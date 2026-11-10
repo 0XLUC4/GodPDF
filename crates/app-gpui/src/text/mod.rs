@@ -222,7 +222,7 @@ fn in_background<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
     done: impl FnOnce(T, &mut App) + 'static,
 ) {
-    let task = cx.background_executor().spawn(async move { work() });
+    let task = crate::services::jobs::background(cx, async move { work() });
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| done(result, cx));

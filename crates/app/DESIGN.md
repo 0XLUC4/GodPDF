@@ -45,8 +45,9 @@ blur 16 alpha 3/4 of that. Spacing scale 4 / 8 / 12 / 16 / 24; button padding 12
 button / field height 28 (`theme::INTERACT_HEIGHT`), larger actions 32.
 
 Polish rules: whole-pixel sizes, paddings and gaps (`with_icon` rounds its gap); icons 16
-(14 in 22 px buttons, 18 / 20 in rail and tool rows); no `rounded_full` on small boxes: a
-radius half a pixel under half the side (`circle_radius` in quickbar); separators are 1 px
+(14 in 22 px buttons, 18 / 20 in rail and tool rows); circles get exactly half their side
+as radius (`circle_radius` in quickbar; gpui clamps it to the painted size, a smaller one leaves
+flat, jagged sides); separators are 1 px
 `border` hairlines; secondary text `text_dim`; scrollbar thumbs 6 wide, `text_dim` at 35 %.
 
 Tool colours (`commands.rs`, `theme::{GREEN, ...}`): Organize green #3FB950, Combine purple
@@ -248,10 +249,9 @@ Highlight Ink Rectangle Picture Stamp | Redact Eraser | undo `ARROW_U_UP_LEFT` /
 `ARROW_U_UP_RIGHT`, split by 1 px dividers 20 wide. Tooltips carry the shortcut.
 Style card 8 px to its right, top-aligned, same card; columns one button wide, 4 apart, each
 under a 9 px `text_dim` heading 14 high (Type, Colour / Stroke, Fill, Size / Width). Colours
-are dots 18 (1 px `border`) in a 26 ring, 2 apart: 2 px `text` stroke with a 2 px gap on the
-current one, `border` on hover. Circles get a radius half a pixel under half their side
-(`circle_radius`): layout snaps sides to device pixels, and a radius over half the snapped
-side makes lumpy edges. The Fill column opens with No fill: a white dot with a red slash.
+are dots 18 in a 26 ring, 2 apart: 2 px `text_dim` stroke with a 2 px gap on the current one,
+`border` on hover. Only light colours (and No fill) get a 1 px `border` outline. Circles get
+exactly half their side as radius (`circle_radius`). The Fill column opens with No fill: a white dot with a red slash.
 Each colour column ends with the custom swatch: `PLUS` 12 on a `surface` dot, or the current
 colour when it is none of the presets (ringed as current). It opens the picker card
 (`tools/picker.rs`) 8 px right of the style card (in its place when the viewer is too narrow

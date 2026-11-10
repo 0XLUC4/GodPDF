@@ -435,7 +435,7 @@ pub fn updates_button(palette: &Palette, cx: &App) -> AnyElement {
                     .top(px(6. - 4.))
                     .right(px(6. - 4.))
                     .size(px(8.))
-                    .rounded(px(3.5))
+                    .rounded(px(4.))
                     .bg(theme::hex(theme::DOWNLOAD_BLUE))
             });
             widgets::icon_button("updates", icons::ARROW_CIRCLE_UP, tip, &palette)

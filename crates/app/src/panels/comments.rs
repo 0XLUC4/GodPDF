@@ -231,7 +231,7 @@ fn row(
             div()
                 .flex_none()
                 .size(px(28.))
-                .rounded(px(13.5))
+                .rounded(px(14.))
                 .bg(palette.surface)
                 .flex()
                 .items_center()

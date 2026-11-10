@@ -871,11 +871,16 @@ fn same_color(a: Color, b: Color) -> bool {
 const DOT: f32 = 18.0;
 const RING: f32 = 26.0;
 
-/// Corner radius of a circle `side` px wide: half a pixel under half the side. Layout snaps
-/// edges to device pixels after the radius is resolved, so a box can lose 1 dp; a radius over
-/// half the snapped side bends the edge into lumps, which read as pixelation on small dots.
+/// Corner radius of a circle `side` px wide. Exactly half: a smaller one leaves flat sides
+/// that look jagged, and gpui clamps a radius to the painted size itself.
 pub(super) fn circle_radius(side: f32) -> f32 {
-    side / 2.0 - 0.5
+    side / 2.0
+}
+
+/// Light colours get a hairline so they still show on the card; others none, which would
+/// only blur their edge.
+fn needs_outline(color: Color) -> bool {
+    0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b > 0.85
 }
 
 /// Round colour dot; the current one gets a `text` ring, hovered ones a `border` ring. The
@@ -887,20 +892,18 @@ pub(super) fn swatch(
     current: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let dot = div()
-        .size(px(DOT))
-        .rounded(px(circle_radius(DOT)))
-        .border_1()
-        .border_color(palette.border);
+    let dot = div().size(px(DOT)).rounded(px(circle_radius(DOT)));
+    let outlined = |dot: Div| dot.border_1().border_color(palette.border);
     let dot = match color {
+        Some(color) if needs_outline(color) => outlined(dot).bg(hsla(color)),
         Some(color) => dot.bg(hsla(color)),
         // No colour: white with a red slash, as in design tools.
-        None => dot.bg(gpui::white()).child(no_color_slash()),
+        None => outlined(dot).bg(gpui::white()).child(no_color_slash()),
     };
     ring(id, current, palette).child(dot)
 }
 
-/// The 26 px ring of a swatch: `text` around the current one, `border` when hovered.
+/// The 26 px ring of a swatch: grey around the current one, `border` when hovered.
 fn ring(id: impl Into<ElementId>, current: bool, palette: &Palette) -> Stateful<Div> {
     let hover = palette.border;
     div()
@@ -913,7 +916,11 @@ fn ring(id: impl Into<ElementId>, current: bool, palette: &Palette) -> Stateful<
         .rounded(px(circle_radius(RING)))
         .bg(palette.panel)
         .border(px(2.))
-        .border_color(if current { palette.text } else { palette.panel })
+        .border_color(if current {
+            palette.text_dim
+        } else {
+            palette.panel
+        })
         .cursor_pointer()
         .when(!current, |ring| {
             ring.hover(move |style| style.border_color(hover))
@@ -1253,18 +1260,18 @@ fn picture_card(
 
 #[cfg(test)]
 mod tests {
-    use super::{DOT, RING, circle_radius};
+    use super::{DOT, RING, circle_radius, needs_outline};
 
     #[test]
-    fn circle_radius_stays_under_half_the_snapped_side() {
-        // Snapping rounds a fractional side down to the device pixel; the radius must fit it.
-        for scale in [1.0_f32, 1.25, 1.5, 1.75, 2.0] {
-            for side in [DOT, RING] {
-                let snapped = (side * scale).floor();
-                assert!(circle_radius(side) * scale <= snapped / 2.0);
-            }
-        }
-        assert_eq!(circle_radius(18.0), 8.5);
+    fn circles_are_round_and_only_light_colours_are_outlined() {
+        use godpdf_core::Color;
+        assert_eq!(circle_radius(DOT), DOT / 2.0);
+        assert_eq!(circle_radius(RING), RING / 2.0);
+        let rgb = |r, g, b| Color { r, g, b };
+        assert!(needs_outline(rgb(1.0, 1.0, 1.0)));
+        assert!(needs_outline(rgb(1.0, 1.0, 0.0)));
+        assert!(!needs_outline(rgb(0.9, 0.1, 0.1)));
+        assert!(!needs_outline(rgb(0.0, 0.0, 0.0)));
     }
 
     #[test]

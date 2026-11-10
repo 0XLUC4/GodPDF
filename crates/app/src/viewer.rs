@@ -265,8 +265,7 @@ impl DocTab {
                         .right(px(2.))
                         .w(px(SCROLLBAR_WIDTH - 4.))
                         .h(px(height))
-                        // Half the 6 px side, less 0.5: see quickbar's `circle_radius`.
-                        .rounded(px(2.5))
+                        .rounded(px(3.))
                         .bg(thumb_color),
                 ),
         )

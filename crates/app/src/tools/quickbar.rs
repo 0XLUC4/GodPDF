@@ -16,19 +16,30 @@ use gpui::{
 
 use super::canvas::{self, rewrite};
 use super::geom::{self, DRect, PictureField};
+use super::picker::{self, Column, color_to_rgb};
 use super::{
     Format, SWATCHES, Style, Tool, common_style, current_tool, editor, hsla, toggle_all,
     tool_state, with_active,
 };
 use crate::doc::DocTab;
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::{fonts, icons, toasts, widgets};
 
 /// Distance of the bar from the viewer's top-left corner.
-const INSET: f32 = 16.0;
-/// Button side: tool toggles, format toggles, card columns.
-const BUTTON: f32 = widgets::ICON_BUTTON;
-const CARD_RADIUS: f32 = 10.0;
+const INSET: f32 = 12.0;
+/// Room kept free on the viewer's right: the inset and the page scroll bar.
+const RIGHT_CLEAR: f32 = INSET + 14.0;
+/// Button side: tool toggles, format toggles, card columns; glyphs 18 in them.
+const BUTTON: f32 = 32.0;
+const GLYPH: f32 = 18.0;
+/// Card padding and gap between the buttons of the bar; radius = button radius + padding.
+const PAD: f32 = 6.0;
+const BAR_GAP: f32 = 4.0;
+const BUTTON_RADIUS: f32 = 6.0;
+const CARD_RADIUS: f32 = BUTTON_RADIUS + PAD;
+/// Between the bar and the cards beside it, and between the style card's columns.
+const CARD_GAP: f32 = 8.0;
+const COLUMN_GAP: f32 = 4.0;
 const LABEL_WIDTH: f32 = 44.0;
 const FIELD_WIDTH: f32 = 100.0;
 /// Stamp and redact cards.
@@ -263,12 +274,12 @@ fn tool_kind(tool: Tool) -> Option<Kind> {
     }
 }
 
-/// A card: panel fill, 1 px border, radius 10, margin 4, shadow 0/4/16 at
+/// A card: panel fill, 1 px border, radius 12, padding 6, shadow 0/4/16 at
 /// black alpha 28 (both themes).
-fn card(palette: &Palette) -> Div {
+pub(super) fn card(palette: &Palette) -> Div {
     div()
         .flex_none()
-        .p(px(4.))
+        .p(px(PAD))
         .rounded(px(CARD_RADIUS))
         .shadow(widgets::shadow(4.0, 16.0, 28.0 / 255.0))
         .bg(palette.panel)
@@ -279,18 +290,19 @@ fn card(palette: &Palette) -> Div {
         .block_mouse_except_scroll()
 }
 
-/// Divider: 7 px tall, a 1 px line inset 4 px each side.
+/// Divider between groups: a 1 px line, 6 px shorter than a button each side (the column
+/// gap spaces it).
 fn divider(palette: &Palette) -> Div {
     div()
         .flex_none()
-        .w(px(BUTTON - 8.))
+        .w(px(BUTTON - 12.))
         .h(px(1.))
-        .mx(px(4.))
-        .my(px(3.))
+        .mx(px(6.))
         .bg(palette.border)
 }
 
-/// Square icon button; `active` sits on the selected grey, disabled ones are dimmed.
+/// Square icon button; `active` gets the accent tint (blue glyph on a light blue square),
+/// others the hover fill under the pointer, disabled ones are dimmed.
 fn icon_button(
     id: impl Into<ElementId>,
     content: impl IntoElement,
@@ -299,6 +311,7 @@ fn icon_button(
     palette: &Palette,
 ) -> Stateful<Div> {
     let hover = palette.hover;
+    let tint = theme::hex(theme::BLUE);
     div()
         .id(id)
         .flex_none()
@@ -306,14 +319,15 @@ fn icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(6.))
-        .text_size(px(16.))
-        .text_color(if enabled {
-            palette.text
-        } else {
-            palette.disabled()
+        .rounded(px(BUTTON_RADIUS))
+        .text_size(px(GLYPH))
+        .line_height(px(GLYPH))
+        .text_color(match (active, enabled) {
+            (true, _) => tint,
+            (false, true) => palette.text,
+            (false, false) => palette.disabled(),
         })
-        .when(active, |button| button.bg(palette.selected))
+        .when(active, |button| button.bg(tint.opacity(0.16)))
         .when(enabled && !active, |button| {
             button.cursor_pointer().hover(move |style| style.bg(hover))
         })
@@ -337,14 +351,15 @@ pub fn render(
     let tool = current_tool(cx);
     let can_undo = tab.session.undo_label().is_some();
     let can_redo = tab.session.redo_label().is_some();
-    let view_height = f32::from(tab.view.bounds.size.height);
+    let max_height = max_height(tab);
 
+    // Too short a viewer: the bar scrolls.
     let mut tools = card(&palette)
         .id("quick-tools")
         .flex()
         .flex_col()
-        .gap(px(2.))
-        .max_h(px((view_height - 2.0 * INSET).max(BUTTON * 3.0)))
+        .gap(px(BAR_GAP))
+        .max_h(px(max_height))
         .overflow_y_scroll();
     let (shape, markup) = (tool_state(cx).shape, tool_state(cx).markup);
     for candidate in Tool::BAR {
@@ -354,6 +369,10 @@ pub fn render(
             Some(group) => (markup, group.contains(&tool)),
             None => (candidate, candidate == tool),
         };
+        // Groups: navigate | comment and insert | remove.
+        if matches!(candidate, Tool::Text | Tool::Redact) {
+            tools = tools.child(divider(&palette));
+        }
         tools = tools.child(widgets::tooltip(
             icon_button(
                 SharedString::from(format!("tool-{:?}", candidate)),
@@ -366,8 +385,9 @@ pub fn render(
             candidate.tooltip(),
         ));
     }
-    let undo_redo =
-        |id, glyph, enabled| widgets::icon_widget(id, glyph, BUTTON, 16.0, enabled, &palette);
+    let undo_redo = |id: &'static str, glyph, enabled| {
+        icon_button(id, widgets::glyph(glyph), false, enabled, &palette)
+    };
     let mut undo = undo_redo("quick-undo", icons::ARROW_U_UP_LEFT, can_undo);
     if can_undo {
         undo = undo.on_click(dispatch(Box::new(crate::app::Undo)));
@@ -389,11 +409,22 @@ pub fn render(
             .left(px(INSET))
             .flex()
             .items_start()
-            .gap(px(6.))
+            .gap(px(CARD_GAP))
             .child(tools)
             .children(style_card)
             .into_any_element(),
     )
+}
+
+/// Tallest a card may be: the viewer less the inset above and below (cards scroll past it).
+fn max_height(tab: &DocTab) -> f32 {
+    (f32::from(tab.view.bounds.size.height) - 2.0 * INSET).max(BUTTON * 3.0)
+}
+
+/// Width of a card of `columns` columns.
+fn card_width(columns: usize) -> f32 {
+    let columns = columns as f32;
+    columns * BUTTON + (columns - 1.0).max(0.0) * COLUMN_GAP + 2.0 * PAD + 2.0
 }
 
 fn style_card(
@@ -421,63 +452,81 @@ fn style_card(
             natural,
         } => return picture_card(tab, page, id, rect, natural, palette, window, cx),
     };
+    // Using a tool of a group (shapes, text markup): pick another one, Adobe style, in the
+    // same card.
+    let group = match target(tab, cx) {
+        Target::Tool(tool) => tool.group().map(|group| (tool, group)),
+        _ => None,
+    };
+    let picker_open = tool_state(cx).picker.open;
     let on = |change: Change| {
         cx.listener(move |tab, _: &ClickEvent, window, cx| apply(tab, change, window, cx))
     };
 
-    let column = || {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(2.))
-            .w(px(BUTTON))
-    };
-    // Shapes have two colour columns: name them.
-    let heading = |text: &'static str| {
-        div()
-            .h(px(12.))
-            .text_size(px(9.))
-            .text_color(palette.text_dim)
-            .child(text)
-    };
-    let mut colors = column().when(kind == Kind::Shape, |column| {
-        column.child(heading("Stroke"))
-    });
-    for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
-        colors = colors.child(widgets::tooltip(
-            swatch(
-                ("swatch", index),
-                Some(color),
-                same_color(color, style.color),
-                palette,
-            )
-            .on_click(on(Change::Color(color))),
-            name,
-        ));
-    }
-    let fills = (kind == Kind::Shape).then(|| {
-        let mut fills = column().child(heading("Fill")).child(widgets::tooltip(
-            swatch("fill-none", None, style.fill.is_none(), palette)
-                .on_click(on(Change::Fill(None))),
-            "No fill",
-        ));
+    let swatch_column = |column: Column| {
+        // Presets, then the custom swatch: the current colour when it is none of them.
+        let (current, id) = match column {
+            Column::Stroke => (Some(style.color), "swatch"),
+            Column::Fill => (style.fill, "fill"),
+        };
+        let mut swatches = column_of(
+            match (column, kind) {
+                (Column::Fill, _) => "Fill",
+                (Column::Stroke, Kind::Shape) => "Stroke",
+                (Column::Stroke, _) => "Colour",
+            },
+            palette,
+        );
+        if column == Column::Fill {
+            swatches = swatches.child(widgets::tooltip(
+                swatch("fill-none", None, style.fill.is_none(), palette)
+                    .on_click(on(Change::Fill(None))),
+                "No fill",
+            ));
+        }
         for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
-            let current = style.fill.is_some_and(|fill| same_color(color, fill));
-            fills = fills.child(widgets::tooltip(
-                swatch(("fill", index), Some(color), current, palette)
-                    .on_click(on(Change::Fill(Some(color)))),
+            let change = match column {
+                Column::Stroke => Change::Color(color),
+                Column::Fill => Change::Fill(Some(color)),
+            };
+            swatches = swatches.child(widgets::tooltip(
+                swatch(
+                    (id, index),
+                    Some(color),
+                    current.is_some_and(|current| same_color(color, current)),
+                    palette,
+                )
+                .on_click(on(change)),
                 name,
             ));
         }
-        fills
-    });
-    let mut controls = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(4.))
-        .w(px(BUTTON));
+        let custom = current.filter(|&current| {
+            !SWATCHES
+                .iter()
+                .any(|&(preset, _)| same_color(preset, current))
+        });
+        let shown = current.map_or(0xFF_FF_FF, color_to_rgb);
+        swatches.child(widgets::tooltip(
+            custom_swatch(
+                (id, SWATCHES.len()),
+                custom,
+                picker_open == Some(column),
+                palette,
+            )
+            .on_click(move |_: &ClickEvent, _, cx: &mut App| {
+                picker::toggle(column, shown, cx);
+                cx.refresh_windows();
+            }),
+            match custom {
+                Some(color) => format!("Custom colour {}", picker::format_hex(color_to_rgb(color))),
+                None => "Custom colour…".to_owned(),
+            },
+        ))
+    };
+    let colors = swatch_column(Column::Stroke);
+    let fills = (kind == Kind::Shape).then(|| swatch_column(Column::Fill));
+    let mut controls =
+        column_of(if kind == Kind::Text { "Size" } else { "Width" }, palette).gap(px(4.));
     match kind {
         Kind::Text => {
             controls = stepper(
@@ -525,44 +574,76 @@ fn style_card(
         }
         Kind::Fill => {}
     }
-    // Using a tool of a group (shapes, text markup): pick another one, Adobe style, in the
-    // same card.
-    let group = match target(tab, cx) {
-        Target::Tool(tool) => tool.group().map(|group| {
-            let mut column = div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(2.))
-                .w(px(BUTTON));
-            for &member in group {
-                column = column.child(widgets::tooltip(
-                    icon_button(
-                        SharedString::from(format!("group-{member:?}")),
-                        widgets::glyph(member.icon()),
-                        member == tool,
-                        true,
-                        palette,
-                    )
-                    .on_click(dispatch(member.action())),
-                    member.tooltip(),
-                ));
-            }
-            column
-        }),
-        _ => None,
+    let group = group.map(|(tool, group)| {
+        let mut column = column_of("Type", palette);
+        for &member in group {
+            column = column.child(widgets::tooltip(
+                icon_button(
+                    SharedString::from(format!("group-{member:?}")),
+                    widgets::glyph(member.icon()),
+                    member == tool,
+                    true,
+                    palette,
+                )
+                .on_click(dispatch(member.action())),
+                member.tooltip(),
+            ));
+        }
+        column
+    });
+    let columns = usize::from(group.is_some())
+        + 1
+        + usize::from(fills.is_some())
+        + usize::from(kind != Kind::Fill);
+    let style_card = card(palette)
+        .id("style-card")
+        .flex()
+        .items_start()
+        .gap(px(COLUMN_GAP))
+        .max_h(px(max_height(tab)))
+        .overflow_y_scroll()
+        .children(group)
+        .child(colors)
+        .children(fills)
+        .when(kind != Kind::Fill, |card| card.child(controls));
+    let Some(column) = picker_open.filter(|&open| open == Column::Stroke || kind == Kind::Shape)
+    else {
+        return Some(style_card.into_any_element());
     };
+    let picker = picker::card(column, palette, window, cx);
+    // No room for both beside the bar: the picker stands in for the style card.
+    let room = f32::from(tab.view.bounds.size.width) - INSET - RIGHT_CLEAR;
+    let needed = card_width(1) + card_width(columns) + picker::CARD_WIDTH + 2.0 * CARD_GAP;
+    if room < needed {
+        return Some(picker);
+    }
     Some(
-        card(palette)
+        div()
             .flex()
             .items_start()
-            .gap(px(4.))
-            .children(group)
-            .child(colors)
-            .children(fills)
-            .when(kind != Kind::Fill, |card| card.child(controls))
+            .gap(px(CARD_GAP))
+            .child(style_card)
+            .child(picker)
             .into_any_element(),
     )
+}
+
+/// A column of the style card, one button wide, under its 9 px `text_dim` heading.
+fn column_of(heading: &'static str, palette: &Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(2.))
+        .w(px(BUTTON))
+        .child(
+            div()
+                .h(px(14.))
+                .text_size(px(9.))
+                .line_height(px(14.))
+                .text_color(palette.text_dim)
+                .child(heading),
+        )
 }
 
 /// Card title: body text (Ubuntu Light has no bold).
@@ -570,9 +651,10 @@ fn card_title(text: &'static str) -> Div {
     div().text_size(px(fonts::BODY)).child(text)
 }
 
-/// The column of a text card (card margin 4, item spacing 6).
+/// The column of a text card (padding 10, item spacing 6).
 fn text_card(palette: &Palette) -> Div {
     card(palette)
+        .p(px(10.))
         .flex()
         .flex_col()
         .gap(px(6.))
@@ -700,20 +782,19 @@ const RING: f32 = 26.0;
 /// Corner radius of a circle `side` px wide: half a pixel under half the side. Layout snaps
 /// edges to device pixels after the radius is resolved, so a box can lose 1 dp; a radius over
 /// half the snapped side bends the edge into lumps, which read as pixelation on small dots.
-fn circle_radius(side: f32) -> f32 {
+pub(super) fn circle_radius(side: f32) -> f32 {
     side / 2.0 - 0.5
 }
 
 /// Round colour dot; the current one gets a `text` ring, hovered ones a `border` ring. The
 /// ring is filled with the card colour so it paints as one quad (a border-only quad is split
 /// into strips).
-fn swatch(
+pub(super) fn swatch(
     id: impl Into<ElementId>,
     color: Option<Color>,
     current: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let hover = palette.border;
     let dot = div()
         .size(px(DOT))
         .rounded(px(circle_radius(DOT)))
@@ -724,6 +805,12 @@ fn swatch(
         // No colour: white with a red slash, as in design tools.
         None => dot.bg(gpui::white()).child(no_color_slash()),
     };
+    ring(id, current, palette).child(dot)
+}
+
+/// The 26 px ring of a swatch: `text` around the current one, `border` when hovered.
+fn ring(id: impl Into<ElementId>, current: bool, palette: &Palette) -> Stateful<Div> {
+    let hover = palette.border;
     div()
         .id(id)
         .flex_none()
@@ -739,7 +826,34 @@ fn swatch(
         .when(!current, |ring| {
             ring.hover(move |style| style.border_color(hover))
         })
-        .child(dot)
+}
+
+/// Last swatch of a colour column: a `+` on the surface grey that opens the picker, or the
+/// current custom colour (ringed as the current swatch). Ringed in `border` while the picker
+/// is open on it.
+fn custom_swatch(
+    id: impl Into<ElementId>,
+    custom: Option<Color>,
+    open: bool,
+    palette: &Palette,
+) -> Stateful<Div> {
+    match custom {
+        Some(_) => swatch(id, custom, true, palette),
+        None => ring(id, false, palette)
+            .when(open, |ring| ring.border_color(palette.text_dim))
+            .child(
+                div()
+                    .size(px(DOT))
+                    .rounded(px(circle_radius(DOT)))
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.surface)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(widgets::icon(icons::PLUS, 12.0, palette.text)),
+            ),
+    }
 }
 
 /// Red diagonal from the dot's bottom-left to its top-right rim.
@@ -827,8 +941,9 @@ fn font_menu(current: Font, palette: &Palette) -> AnyElement {
     let (family, name) = editor::font_label(current);
     let label = div().font_family(family).text_size(px(15.)).child("Aa");
     Button::new("font-menu")
-        .h(px(crate::theme::INTERACT_HEIGHT))
-        .px(px(crate::theme::BUTTON_PADDING.0))
+        .w(px(BUTTON))
+        .h(px(BUTTON))
+        .px(px(0.))
         .text_color(palette.text)
         .child(label)
         .tooltip(format!("Font: {name}"))
@@ -850,10 +965,24 @@ fn font_menu(current: Font, palette: &Palette) -> AnyElement {
 
 /// A font picked in the font menu: applied to whatever the style card edits.
 fn choose_font(font: Font, window: &mut Window, cx: &mut App) {
+    apply_to_active(Change::Font(font), window, cx);
+}
+
+/// A colour of the picker: applied like a preset swatch of the colour (or fill) column.
+pub(super) fn apply_custom(fill: bool, color: Color, window: &mut Window, cx: &mut App) {
+    let change = if fill {
+        Change::Fill(Some(color))
+    } else {
+        Change::Color(color)
+    };
+    apply_to_active(change, window, cx);
+}
+
+fn apply_to_active(change: Change, window: &mut Window, cx: &mut App) {
     let Some(tab) = tool_state(cx).active.clone().and_then(|tab| tab.upgrade()) else {
         return;
     };
-    tab.update(cx, |tab, cx| apply(tab, Change::Font(font), window, cx));
+    tab.update(cx, |tab, cx| apply(tab, change, window, cx));
 }
 
 /// The fields of the picture card, created the first time one is shown.

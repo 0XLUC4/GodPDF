@@ -96,6 +96,7 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
     let remembered = settings::load();
     app.shell.show_tools = remembered.tools_panel;
     app.shell.recent = remembered.recent;
+    crate::tools::set_recent_colors(remembered.recent_colors, cx);
     if !remembered.sidebar {
         crate::panels::close(cx);
     }
@@ -124,6 +125,7 @@ pub fn track(app: &GodPdfApp, window: &Window, cx: &App) {
         recent: app.shell.recent.clone(),
         size: Some((bounds.size.width.into(), bounds.size.height.into())),
         maximized,
+        recent_colors: crate::tools::recent_colors(cx),
     });
 }
 

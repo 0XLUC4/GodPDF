@@ -164,9 +164,18 @@ egui: `doc_panels` (Panel::right "rail") + `GodApp::rail`, `right_panel`.
 - Right panel: width 320 (egui resizable 240..520), fill `bg`, margin 14 × 6, separator on
   its left; 10 px, title 17 (+ comment count 15 dim for Comments) and `X` "Close panel",
   8 px, the view. Open on Pages by default (egui `show_sidebar` defaults to on).
-- Left to do: page box typing / dragging (opens Go to page for now), Comments / Form /
-  Signature views, Lucide icons still inside thumbs / bookmarks / search (`IconName`), drag
-  to resize.
+- Views as egui `sidebar.rs` / `comments.rs` / `bookmarks.rs`: Comments (per page: "Page N"
+  + count 13 dim, rows margin 8 radius 8 with a 28 px `surface` badge and glyph 15, kind 13
+  dim, text; current row `surface`); Pages (rows 196, fill 2 px in radius 8, current accent
+  at 18 %, page fitted in (row - 32) × 156 centered 84 px down, 2 px accent outline, number
+  13, Move up / down `CARET_UP` / `CARET_DOWN` small buttons on hover 10 px from the right);
+  Bookmarks (framed "Add" `BOOKMARK_SIMPLE` + framed `DOTS_THREE_VERTICAL` menu, 6 px, rows
+  24 radius 4, title 14 at 6, number 12.5 dim, indent 18); Search (field + `MAGNIFYING_GLASS`
+  button, status label, 4 px, hits as 26 px selectable rows). Menus use Phosphor glyphs
+  (`panels::menu_entry`).
+- Page box: drag right / up for later pages (1 per point), click to type (Enter or blur).
+- Left to do: Form / Signature views, bookmark tree collapse arrows (GPUI shows the whole
+  tree flat, indented), drag to resize the panel.
 
 ### Banner: `src/shell/banner.rs`
 

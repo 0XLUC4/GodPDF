@@ -2,25 +2,24 @@
 //! a click goes to the page, a double-click renames, right-click moves, nests or deletes.
 
 use godpdf_core::OutlineItem;
-use gpui::assets::IconName;
-use gpui::component::Sizable;
 use gpui::component::button::{Button, ButtonVariants};
 use gpui::component::input::{Input, InputEvent, InputState};
-use gpui::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
+use gpui::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, Subscription, WeakEntity, Window, div, px,
 };
 
-use super::{AddBookmark, note};
+use super::{AddBookmark, label, menu_entry};
 use crate::doc::{DocTab, guarded};
-use crate::theme::Palette;
-use crate::toasts;
+use crate::theme::{self, Palette};
+use crate::{fonts, icons, toasts, widgets};
 
 /// Where a bookmark is in the tree: its index at each level.
 type Path = Vec<usize>;
 
-const INDENT: f32 = 14.;
+/// egui `spacing.indent`.
+const INDENT: f32 = 18.;
 
 /// Bookmark state of one document.
 #[derive(Default)]
@@ -166,60 +165,101 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     let (read, current) = tab.update(cx, |tab, _| (outline(tab), tab.view.current_page));
     let field = rename_field(tab, window, cx);
     let more_of = weak.clone();
+    let has_items = read.as_ref().is_ok_and(|items| !items.is_empty());
+    // egui: framed `ui.button(with_icon(BOOKMARK_SIMPLE, "Add"))`, a framed `menu_button`
+    // (DOTS_THREE_VERTICAL) on the right, then 6 px.
+    let (surface, border, hover) = (palette.surface, palette.border, palette.hover);
+    let framed = |button: gpui::Stateful<gpui::Div>| {
+        button
+            .h(px(theme::INTERACT_HEIGHT))
+            .px(px(theme::BUTTON_PADDING.0))
+            .flex()
+            .items_center()
+            .rounded(px(theme::RADIUS))
+            .bg(surface)
+            .border_1()
+            .border_color(border)
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+    };
+    let add = widgets::tooltip(
+        framed(div().id("bookmark-add"))
+            .child(widgets::with_icon(
+                icons::BOOKMARK_SIMPLE,
+                "Add",
+                fonts::BODY,
+                palette.text,
+            ))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(AddBookmark), cx)),
+        format!("Bookmark page {}", current + 1),
+    );
+    let menu_palette = palette;
+    let more = Button::new("bookmark-more")
+        .ghost()
+        .h(px(theme::INTERACT_HEIGHT))
+        .px(px(theme::BUTTON_PADDING.0))
+        .rounded(px(theme::RADIUS))
+        .bg(surface)
+        .border_1()
+        .border_color(border)
+        .child(widgets::icon(
+            icons::DOTS_THREE_VERTICAL,
+            fonts::BODY,
+            palette.text,
+        ))
+        .dropdown_menu(move |menu, _, _| {
+            let item = |glyph: &'static str,
+                        label: &'static str,
+                        enabled: bool,
+                        run: fn(&WeakEntity<DocTab>, &mut App)| {
+                let tab = more_of.clone();
+                menu_entry(glyph, label, enabled, &menu_palette)
+                    .on_click(move |_, _, cx| run(&tab, cx))
+            };
+            menu.item(item(
+                icons::LIST_BULLETS,
+                "Contents page",
+                true,
+                contents_page,
+            ))
+            .item(item(
+                icons::FILES,
+                "One bookmark per page",
+                true,
+                |tab, cx| replace_all(tab, "Bookmark every page", true, cx),
+            ))
+            .item(item(
+                icons::TRASH,
+                "Remove all bookmarks",
+                has_items,
+                |tab, cx| replace_all(tab, "Remove all bookmarks", false, cx),
+            ))
+        });
     let header = div()
         .flex()
         .items_center()
         .justify_between()
-        .px(px(10.))
-        .pb(px(4.))
-        .child(
-            Button::new("bookmark-add")
-                .small()
-                .ghost()
-                .icon(IconName::BookmarkPlus)
-                .label("Add")
-                .tooltip(format!("Bookmark page {} (Ctrl+D)", current + 1))
-                .on_click(|_, window, cx| window.dispatch_action(Box::new(AddBookmark), cx)),
-        )
-        .child(
-            Button::new("bookmark-more")
-                .small()
-                .ghost()
-                .icon(IconName::EllipsisVertical)
-                .dropdown_menu(move |menu, _, _| {
-                    let item =
-                        |label: &'static str,
-                         icon: IconName,
-                         run: fn(&WeakEntity<DocTab>, &mut App)| {
-                            let tab = more_of.clone();
-                            PopupMenuItem::new(label)
-                                .icon(icon)
-                                .on_click(move |_, _, cx| run(&tab, cx))
-                        };
-                    menu.item(item("Contents page", IconName::ListTree, contents_page))
-                        .item(item("One bookmark per page", IconName::Files, |tab, cx| {
-                            replace_all(tab, "Bookmark every page", true, cx)
-                        }))
-                        .item(item("Remove all bookmarks", IconName::Trash, |tab, cx| {
-                            replace_all(tab, "Remove all bookmarks", false, cx)
-                        }))
-                }),
-        );
+        .mb(px(6.))
+        .child(add)
+        .child(more);
     let items = match read {
         Ok(items) => items,
         Err(err) => {
             return div()
                 .child(header)
-                .child(note(format!("Cannot read bookmarks: {err}"), &palette))
+                .child(label(
+                    format!("Cannot read bookmarks: {err}"),
+                    palette.error,
+                ))
                 .into_any_element();
         }
     };
     if items.is_empty() {
         return div()
             .child(header)
-            .child(note(
+            .child(label(
                 "No bookmarks yet. “Add” marks the page you are reading.",
-                &palette,
+                palette.text_dim,
             ))
             .into_any_element();
     }
@@ -253,7 +293,9 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(6.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
                 .children(rows),
         )
         .into_any_element()
@@ -331,12 +373,12 @@ fn row(
     renaming: Option<Entity<InputState>>,
     palette: &Palette,
 ) -> AnyElement {
-    let indent = px(INDENT * (path.len() - 1) as f32 + 4.);
+    // egui indents leaves by `indent` and nests a collapsing body one `indent` further.
+    let indent = px(INDENT * path.len() as f32);
     if let Some(field) = renaming {
         return div()
             .pl(indent)
-            .py(px(2.))
-            .child(Input::new(&field).small())
+            .child(Input::new(&field).h(px(24.)))
             .into_any_element();
     }
     let hover = palette.hover;
@@ -346,19 +388,34 @@ fn row(
     let (click_tab, path_owned) = (tab.clone(), path.to_vec());
     let (title, page) = (item.title.clone(), item.page);
     let (menu_tab, menu_path, menu_item) = (tab.clone(), path.to_vec(), item.clone());
-    div()
+    let menu_palette = *palette;
+    let hint = match item.page {
+        Some(page) => format!(
+            "{}
+Page {} · double-click to rename",
+            item.title,
+            page + 1
+        ),
+        None => format!(
+            "{}
+Goes nowhere",
+            item.title
+        ),
+    };
+    let row = div()
         .id(gpui::ElementId::Name(format!("bookmark-{path:?}").into()))
-        .h(px(26.))
-        .pl(indent)
-        .pr(px(6.))
+        .flex_none()
+        .ml(indent)
+        .h(px(24.))
+        .px(px(6.))
         .flex()
         .items_center()
-        .gap(px(6.))
-        .rounded(px(5.))
-        .text_sm()
+        .gap(px(8.))
+        .rounded(px(4.))
+        .text_size(px(14.))
         .cursor_pointer()
         .when(active, |row| row.bg(palette.selected))
-        .hover(move |style| style.bg(hover))
+        .when(!active, |row| row.hover(move |style| style.bg(hover)))
         .child(
             div()
                 .flex_1()
@@ -371,10 +428,11 @@ fn row(
         .child(
             div()
                 .flex_none()
-                .text_xs()
+                .text_size(px(12.5))
                 .text_color(palette.text_dim)
                 .child(number),
-        )
+        );
+    widgets::tooltip(row, hint)
         .on_click(move |event: &ClickEvent, _, cx| {
             let _ = click_tab.update(cx, |tab, cx| {
                 if event.click_count() >= 2 {
@@ -386,7 +444,15 @@ fn row(
             });
         })
         .context_menu(move |menu, _, _| {
-            bookmark_menu(menu, &menu_tab, &menu_path, &menu_item, siblings, current)
+            bookmark_menu(
+                menu,
+                &menu_tab,
+                &menu_path,
+                &menu_item,
+                siblings,
+                current,
+                &menu_palette,
+            )
         })
         .into_any_element()
 }
@@ -398,70 +464,67 @@ fn bookmark_menu(
     item: &OutlineItem,
     siblings: usize,
     current: usize,
+    palette: &Palette,
 ) -> PopupMenu {
     let index = path[path.len() - 1];
-    let entry = |label: String, icon: IconName, enabled: bool, change: Change| {
+    let entry = |label: String, glyph: &'static str, enabled: bool, change: Change| {
         let tab = tab.clone();
-        PopupMenuItem::new(label)
-            .icon(icon)
-            .disabled(!enabled)
+        menu_entry(glyph, label, enabled, palette)
             .on_click(move |_, _, cx| run_change(&tab, change.clone(), cx))
     };
     let rename_tab = tab.clone();
     let (rename_path, rename_title) = (path.to_vec(), item.title.clone());
     let path = path.to_vec();
     menu.item(
-        PopupMenuItem::new("Rename")
-            .icon(IconName::Pencil)
-            .on_click(move |_, _, cx| {
-                let _ = rename_tab.update(cx, |tab, cx| {
-                    tab.panels.bookmarks.renaming = Some(Renaming::of(&rename_path, &rename_title));
-                    cx.notify();
-                });
-            }),
+        menu_entry(icons::PENCIL_SIMPLE, "Rename", true, palette).on_click(move |_, _, cx| {
+            let _ = rename_tab.update(cx, |tab, cx| {
+                tab.panels.bookmarks.renaming = Some(Renaming::of(&rename_path, &rename_title));
+                cx.notify();
+            });
+        }),
     )
     .separator()
     .item(entry(
         format!("Point to page {}", current + 1),
-        IconName::Crosshair,
+        icons::CROSSHAIR,
         item.page != Some(current),
         Change::SetPage(path.clone()),
     ))
     .item(entry(
         format!("Add inside, for page {}", current + 1),
-        IconName::Plus,
+        icons::PLUS,
         true,
         Change::AddInside(path.clone()),
     ))
     .separator()
     .item(entry(
         "Move up".into(),
-        IconName::ArrowUp,
+        icons::ARROW_UP,
         index > 0,
         Change::MoveUp(path.clone()),
     ))
     .item(entry(
         "Move down".into(),
-        IconName::ArrowDown,
+        icons::ARROW_DOWN,
         index + 1 < siblings,
         Change::MoveDown(path.clone()),
     ))
     .item(entry(
         "Put inside the one above".into(),
-        IconName::ArrowRight,
+        icons::ARROW_RIGHT,
         index > 0,
         Change::Indent(path.clone()),
     ))
     .item(entry(
         "Take out one level".into(),
-        IconName::ArrowLeft,
+        icons::ARROW_LEFT,
         path.len() > 1,
         Change::Outdent(path.clone()),
     ))
     .separator()
     .item(entry(
         "Delete".into(),
-        IconName::Trash,
+        icons::TRASH,
         true,
         Change::Delete(path),
     ))

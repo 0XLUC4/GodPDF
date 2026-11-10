@@ -17,8 +17,8 @@ use crate::theme::{self, Palette, hex};
 use crate::tools::{HighlightTool, InkTool, NoteTool, PictureTool, RectangleTool, TextTool};
 use crate::{fonts, icons, panels, toasts, widgets};
 
-// shortcut: fixed width, egui lets it be dragged 220..=420; add a drag handle if wanted.
-const WIDTH: f32 = 280.0;
+/// egui: resizable 220..=420 (280 at first, `Shell::tools_width`).
+const WIDTH_RANGE: (f32, f32) = (220.0, 420.0);
 /// "All tools" rows past this count hide behind "View more".
 const FOLDED: usize = 11;
 
@@ -452,6 +452,7 @@ pub fn render(
     if !shell.show_tools || shell.mode == Mode::Read {
         return None;
     }
+    let resize_app = cx.entity().downgrade();
     let mode = shell.mode;
     let all = rows_of(mode);
     let shown = if mode == Mode::AllTools && !shell.tools_expanded {
@@ -501,7 +502,19 @@ pub fn render(
     Some(
         div()
             .id("tools-panel")
-            .w(px(WIDTH))
+            .relative()
+            .w(px(shell.tools_width))
+            .on_drag_move(crate::resize::on_move(
+                crate::resize::Edge::Left,
+                WIDTH_RANGE,
+                move |width, cx| {
+                    let _ = resize_app.update(cx, |app, cx| {
+                        app.shell.tools_width = width;
+                        cx.notify();
+                    });
+                },
+            ))
+            .child(crate::resize::handle(crate::resize::Edge::Left))
             .flex_none()
             .h_full()
             .flex()

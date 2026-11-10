@@ -27,6 +27,8 @@ mod fonts;
 mod geometry;
 mod icons;
 mod panels;
+mod resize;
+mod settings;
 mod shell;
 #[allow(dead_code)]
 mod theme;
@@ -47,7 +49,7 @@ fn main() {
         .run(move |cx: &mut App| {
             gpui::init(cx);
             fonts::load(cx);
-            theme::set_dark(false, cx);
+            theme::set_dark(settings::get("dark_mode").as_deref() == Some("1"), cx);
             app::register(cx);
             let bounds = Bounds::centered(None, size(px(1280.), px(860.)), cx);
             let options = WindowOptions {

@@ -391,15 +391,15 @@ pub fn render(
                 }))
                 .child(
                     div().relative().top(px(-rise)).child(
-                    Textarea::new(&editor.state)
-                        .appearance(false)
-                        .text_size(px(font_px))
-                        .line_height(px(line_px))
-                        .font_family(font_family(style.font))
-                        .text_color(hsla(style.color))
-                        .when(format.bold, |text| text.font_weight(FontWeight::BOLD))
-                        .when(format.italic, |text| text.italic())
-                        .when(format.underline, |text| text.underline()),
+                        Textarea::new(&editor.state)
+                            .appearance(false)
+                            .text_size(px(font_px))
+                            .line_height(px(line_px))
+                            .font_family(font_family(style.font))
+                            .text_color(hsla(style.color))
+                            .when(format.bold, |text| text.font_weight(FontWeight::BOLD))
+                            .when(format.italic, |text| text.italic())
+                            .when(format.underline, |text| text.underline()),
                     ),
                 )
                 .into_any_element()

@@ -174,6 +174,9 @@ fn apply_to_components(cx: &mut App) {
     });
 }
 
+/// Switch theme and remember it for the next run (egui `dark_mode`).
 pub fn toggle(cx: &mut App) {
-    set_dark(!Palette::is_dark(cx), cx);
+    let dark = !Palette::is_dark(cx);
+    set_dark(dark, cx);
+    crate::settings::set("dark_mode", if dark { "1" } else { "0" });
 }

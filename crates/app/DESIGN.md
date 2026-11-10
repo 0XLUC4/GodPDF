@@ -199,17 +199,16 @@ text 13, right: pill button (fill `bg`, 1 px `text_dim`, radius 14: "Remove pass
 
 ### Welcome: `src/shell/welcome.rs`
 
-Centered column (max 980), 24 apart: the recent files, then three buttons 170 × 44 radius 10,
-text 16, 8 apart: "Open PDF" `FOLDER_OPEN` (fill `accent`, text `on_accent`), "New PDF"
-`FILE_PLUS` and "Merge PDFs" `STACK` (1 px `accent` stroke).
-Recent files: "RECENT" (small, `accent_text`), then a wrapping grid of cards (columns from the
-width, `welcome::columns`), 14 apart: card 160 wide, padding 8, radius 10, `surface` (hover
-`hover`), 1 px `border`; first page preview fitted in 144 × 204 on `canvas` (rendered in the
+From the top left, padding 24, scrolls: "RECENT" (small, `accent_text`), 12 under it a
+wrapping row of recent files, 20 apart, no card: the first page preview 208 × 294 on `canvas`,
+radius 4, 1 px `border` (hover `accent`), shadow (0, 2) blur 8 alpha 20 (rendered in the
 background, cached per path + modified time; `LOCK` for encrypted files, `FILE_PDF` for
-unreadable ones, empty while rendering); name 13 and folder 11 dim, both with ellipsis;
-tooltip the path. Click opens; `X` small button on hover (top-right, 4 in) or right-click
-"Remove from recent" removes it. A missing file: 50 % opacity, `FILE_X`, "File not found",
-only removable. No recent file: logo 56 radius 12 and "Open a PDF to see it here" 15 dim.
+unreadable ones, empty while rendering); 8 under it name 13 and folder 11 dim, both with
+ellipsis; tooltip the path, pointer cursor. Click opens; `X` small button on hover (preview's
+top-right, 6 in) or right-click "Remove from recent" removes it. A missing file: 50 % opacity,
+`FILE_X`, "File not found", only removable. No recent file: logo 56 radius 12 and "Open a PDF
+(Ctrl+O) to see it here" 15 dim, centered. No buttons: Open, New and Merge are in Menu > File,
+the palette and the tab row's "+ Open".
 Recent files: `Shell::recent` (newest first, 8), kept in `services::settings`; also Menu >
 File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
 
@@ -218,7 +217,10 @@ File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
 Card 16 px from the canvas' top-left: fill `panel`, 1 px `border`,
 radius 10, margin 4, shadow (0, 4) blur 16 black alpha 28; tool toggles 28 × 28 (glyph 16)
 2 px apart, `selected` fill when on; divider 7 high; undo `ARROW_U_UP_LEFT` / redo
-`ARROW_U_UP_RIGHT`. Style card 6 px to its right. Tool glyphs: Select `CURSOR`, Hand `HAND`,
+`ARROW_U_UP_RIGHT`. Style card 6 px to its right; its colours are dots 18 (1 px `border`)
+in a 26 ring, 2 apart: 2 px `text` stroke with a 2 px gap on the current one, `border` on
+hover. Circles get a radius half a pixel under half their side (`circle_radius`): layout
+snaps sides to device pixels, and a radius over half the snapped side makes lumpy edges. Tool glyphs: Select `CURSOR`, Hand `HAND`,
 Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`, Rectangle `SQUARE`,
 Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
 GPUI already uses these glyphs (plus its own shapes); left to do: 28 px buttons (GPUI: 32),

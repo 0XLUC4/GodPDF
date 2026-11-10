@@ -247,6 +247,7 @@ impl MenuState {
             .separator()
             .submenu("File", window, cx, move |menu, window, cx| {
                 let menu = command(menu, "Open PDF…", has_doc, cx);
+                let menu = command(menu, "New PDF", has_doc, cx);
                 let (recent, app) = (recent.clone(), app.clone());
                 let menu = menu.submenu("Open recent", window, cx, move |menu, _, cx| {
                     if recent.is_empty() {
@@ -421,6 +422,7 @@ fn entry(
 fn look(label: &str) -> (&'static str, &'static str) {
     match label {
         "Open PDF…" => (icons::FOLDER_OPEN, "Ctrl+O"),
+        "New PDF" => (icons::FILE_PLUS, ""),
         "Save" => (icons::FLOPPY_DISK, "Ctrl+S"),
         "Save As…" => (icons::FLOPPY_DISK_BACK, "Ctrl+Shift+S"),
         "Print…" => (icons::PRINTER, "Ctrl+P"),

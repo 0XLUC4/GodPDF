@@ -1,7 +1,7 @@
-//! Start screen: the recent files as a grid of cards (first page preview, name, folder),
-//! then Open / New / Merge buttons (170 × 44, radius 10, text 16). Without recent files, a
-//! small logo and "Open a PDF to see it here" instead of the grid.
-//! Shown without a document or when the home tab is in front. Fill `bg`, centered in the view.
+//! Start screen: the recent files from the top left, 24 px in, each a bare first-page preview
+//! (thin outline and shadow, no card) with its name and folder under it. Without recent files,
+//! a small logo and a hint, centered. Open / New / Merge live in the Menu and the palette.
+//! Shown without a document or when the home tab is in front. Fill `bg`.
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -16,11 +16,9 @@ use gpui::{
     div, img, px,
 };
 
-use crate::app::{GodPdfApp, Open};
-use crate::dialogs::MergeFiles;
+use crate::app::GodPdfApp;
 use crate::theme::Palette;
-use crate::widgets::{self, dispatch};
-use crate::{icons, toasts};
+use crate::{icons, widgets};
 
 pub static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(
@@ -31,14 +29,12 @@ pub static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
 
 /// Small text size.
 const SMALL: f32 = 9.0;
-/// Card width, gap between cards, inner padding.
-const CARD: f32 = 160.0;
-const GAP: f32 = 14.0;
-const CARD_PAD: f32 = 8.0;
-/// The preview box inside a card: A4 proportions.
-const PREVIEW: (f32, f32) = (CARD - 2.0 * CARD_PAD, (CARD - 2.0 * CARD_PAD) * 1.414);
-/// Widest the column gets.
-const MAX_WIDTH: f32 = 980.0;
+/// Preview width, gap between files, padding of the screen.
+const ITEM: f32 = 208.0;
+const GAP: f32 = 20.0;
+const PAD: f32 = 24.0;
+/// The preview box: A4 proportions, whole pixels.
+const PREVIEW: (f32, f32) = (ITEM, 294.0);
 
 /// What a card shows in its preview box.
 enum Preview {
@@ -65,12 +61,6 @@ impl Previews {
             self.evicted.push(image);
         }
     }
-}
-
-/// How many cards fit in a row of `width` px, at least 1 and no more than `count`.
-fn columns(width: f32, count: usize) -> usize {
-    let fit = ((width + GAP) / (CARD + GAP)).floor().max(1.0) as usize;
-    fit.min(count.max(1))
 }
 
 /// Render the first page of `path`, at most `max_px` a side (blocking: run it off the UI thread).
@@ -168,106 +158,41 @@ pub fn render(
     window: &mut Window,
     cx: &mut Context<GodPdfApp>,
 ) -> AnyElement {
-    let button = |id: &'static str, glyph, label: &'static str, primary: bool| {
-        // Open has a fixed `accent` fill; the others the widget fills (surface, hover,
-        // pressed `selected`) inside a 1 px `accent` stroke.
-        let (hover, pressed) = (palette.hover, palette.selected);
-        let text = if primary {
-            palette.on_accent
-        } else {
-            palette.text
-        };
-        div()
-            .id(id)
-            .w(px(170.))
-            .h(px(44.))
+    let recent = app.shell.recent.clone();
+    let modified = sync_previews(&recent, window, cx);
+    if recent.is_empty() {
+        return div()
+            .flex_1()
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(10.))
-            .when(primary, |button| button.bg(palette.accent))
-            .when(!primary, |button| {
-                button
-                    .bg(palette.surface)
-                    .border_1()
-                    .border_color(palette.accent)
-                    .hover(move |style| style.bg(hover))
-                    .active(move |style| style.bg(pressed))
-            })
-            .child(widgets::with_icon(glyph, label, 16.0, text))
-    };
-    let new_pdf = cx.listener(|app, _, _, cx| {
-        // One empty A4 page to write, draw and insert into.
-        match godpdf_core::blank_document(595.0, 842.0) {
-            Ok(bytes) => {
-                app.open_bytes("Untitled.pdf".to_owned(), None, bytes, cx);
-                app.shell.home = false;
-            }
-            Err(err) => toasts::error(cx, err.to_string()),
-        }
-    });
-    let open = cx.listener(|app, _, window, cx| {
-        app.shell.home = false;
-        window.dispatch_action(Box::new(Open), cx);
-    });
-    let buttons = div()
-        .flex()
-        .gap(px(8.))
-        .child(button("welcome-open", icons::FOLDER_OPEN, "Open PDF", true).on_click(open))
-        .child(button("welcome-new", icons::FILE_PLUS, "New PDF", false).on_click(new_pdf))
-        .child(
-            button("welcome-merge", icons::STACK, "Merge PDFs", false)
-                .on_click(dispatch(MergeFiles)),
-        );
-
-    let recent = app.shell.recent.clone();
-    let modified = sync_previews(&recent, window, cx);
-    let top = if recent.is_empty() {
-        empty_state(palette)
-    } else {
-        let width = (f32::from(window.viewport_size().width) - 2.0 * 32.0).min(MAX_WIDTH);
-        let cols = columns(width, recent.len());
-        let grid_width = cols as f32 * CARD + (cols - 1) as f32 * GAP;
-        let cards: Vec<AnyElement> = recent
-            .iter()
-            .zip(modified)
-            .enumerate()
-            .map(|(index, (path, time))| card(index, path, time.is_some(), palette, cx))
-            .collect();
-        div()
-            .w(px(grid_width))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_size(px(SMALL))
-                    .text_color(palette.accent_text)
-                    .child("RECENT"),
-            )
-            .child(div().flex().flex_wrap().gap(px(GAP)).children(cards))
-            .into_any_element()
-    };
-
+            .bg(palette.bg)
+            .child(empty_state(palette))
+            .into_any_element();
+    }
+    let items: Vec<AnyElement> = recent
+        .iter()
+        .zip(modified)
+        .enumerate()
+        .map(|(index, (path, time))| item(index, path, time.is_some(), palette, cx))
+        .collect();
     div()
         .id("welcome")
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
         .bg(palette.bg)
+        .p(px(PAD))
+        .flex()
+        .flex_col()
+        .gap(px(12.))
         .child(
-            // The column is centered in the view, 24 px at least from the top.
             div()
-                .min_h_full()
-                .py(px(24.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(24.))
-                .child(top)
-                .child(buttons),
+                .text_size(px(SMALL))
+                .text_color(palette.accent_text)
+                .child("RECENT"),
         )
+        .child(div().flex().flex_wrap().gap(px(GAP)).children(items))
         .into_any_element()
 }
 
@@ -283,14 +208,14 @@ fn empty_state(palette: &Palette) -> AnyElement {
             div()
                 .text_size(px(15.))
                 .text_color(palette.text_dim)
-                .child("Open a PDF to see it here"),
+                .child("Open a PDF (Ctrl+O) to see it here"),
         )
         .into_any_element()
 }
 
 /// One recent file: preview, name, folder; click opens it, the cross or the right-click
 /// menu removes it from the list. A missing file is greyed and only removable.
-fn card(
+fn item(
     index: usize,
     path: &Path,
     exists: bool,
@@ -345,8 +270,8 @@ fn card(
             &palette,
         )
         .absolute()
-        .top(px(4.))
-        .right(px(4.))
+        .top(px(6.))
+        .right(px(6.))
         .bg(palette.panel)
         .invisible()
         .group_hover("recent-card", |style| style.visible())
@@ -358,31 +283,32 @@ fn card(
     let menu_app = cx.weak_entity();
     let menu_path = path.to_path_buf();
     let open_path = path.to_path_buf();
-    let hover = palette.hover;
+    let accent = palette.accent;
     let card = div()
         .id(("recent", index))
         .group("recent-card")
         .relative()
         .flex_none()
-        .w(px(CARD))
-        .p(px(CARD_PAD))
+        .w(px(ITEM))
         .flex()
         .flex_col()
         .gap(px(2.))
-        .rounded(px(10.))
-        .bg(palette.surface)
-        .border_1()
-        .border_color(palette.border)
-        .hover(move |style| style.bg(hover))
         .when(!exists, |card| card.opacity(0.5))
         .child(
+            // The page itself: a thin outline and shadow so a white page shows on white.
             div()
                 .w(px(PREVIEW.0))
                 .h(px(PREVIEW.1))
-                .mb(px(6.))
+                .mb(px(8.))
                 .rounded(px(4.))
                 .overflow_hidden()
                 .bg(palette.canvas)
+                .border_1()
+                .border_color(palette.border)
+                .shadow(widgets::shadow(2.0, 8.0, 20.0 / 255.0))
+                .when(exists, |page| {
+                    page.group_hover("recent-card", move |style| style.border_color(accent))
+                })
                 .flex()
                 .items_center()
                 .justify_center()
@@ -425,21 +351,4 @@ fn card(
             )
         })
         .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CARD, GAP, columns};
-
-    #[test]
-    fn grid_columns_follow_the_width() {
-        assert_eq!(columns(CARD, 8), 1);
-        assert_eq!(columns(10.0, 8), 1);
-        assert_eq!(columns(2.0 * CARD + GAP, 8), 2);
-        assert_eq!(columns(2.0 * CARD + GAP - 1.0, 8), 1);
-        assert_eq!(columns(980.0, 8), 5);
-        // Never more columns than cards.
-        assert_eq!(columns(980.0, 2), 2);
-        assert_eq!(columns(980.0, 0), 1);
-    }
 }

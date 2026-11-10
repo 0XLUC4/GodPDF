@@ -2,7 +2,8 @@
 //! field, a preview chip and the last custom colours (kept in the settings).
 //!
 //! Dragging only moves the picker; the colour is applied on release (or Enter in the field,
-//! or a click on a recent colour), so each choice is one undo step.
+//! or a click on a recent colour), so each choice is one undo step. A hex left without Enter
+//! is dropped: a swatch clicked meanwhile stays the last choice.
 
 use godpdf_core::Color;
 use gpui::component::Sizable;
@@ -165,7 +166,14 @@ fn hex_field(window: &mut Window, cx: &mut Context<DocTab>) -> Entity<InputState
         cx,
         &field,
         move |field: Entity<InputState>, event: &InputEvent, cx: &mut App| {
-            if !matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+            let picker = &mut tool_state(cx).picker;
+            if matches!(event, InputEvent::Blur) {
+                // Show the picker's colour again.
+                picker.sync = true;
+                cx.refresh_windows();
+                return;
+            }
+            if !matches!(event, InputEvent::PressEnter { .. }) {
                 return;
             }
             let text = field.read(cx).value().to_string();
@@ -221,10 +229,18 @@ fn drag_layer(area: Area) -> impl IntoElement {
                 }
             });
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && tool_state(cx).picker.drag == Some(area) {
-                    pick(area, bounds, event.position, cx);
-                    window.refresh();
+                if phase != DispatchPhase::Bubble || tool_state(cx).picker.drag != Some(area) {
+                    return;
                 }
+                pick(area, bounds, event.position, cx);
+                // Released outside the window: that was the release.
+                if event.pressed_button != Some(MouseButton::Left) {
+                    let picker = &mut tool_state(cx).picker;
+                    picker.drag = None;
+                    let rgb = hsv_to_rgb(picker.hsv);
+                    commit(rgb, window, cx);
+                }
+                window.refresh();
             });
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && tool_state(cx).picker.drag == Some(area) {
@@ -391,27 +407,20 @@ pub fn card(
             SharedString::from(format_hex(color)),
         ));
     }
-    let recent_row = div()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .child(
-            div()
-                .text_size(px(9.))
-                .text_color(palette.text_dim)
-                .child("Recent"),
-        )
-        .child(if recent.is_empty() {
-            div()
-                .h(px(26.))
-                .flex()
-                .items_center()
-                .text_size(px(11.))
-                .text_color(palette.text_dim)
-                .child("Colours you pick show here")
-        } else {
-            swatches
-        });
+    // Shown once a colour has been picked.
+    let recent_row = (!recent.is_empty()).then(|| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                div()
+                    .text_size(px(9.))
+                    .text_color(palette.text_dim)
+                    .child("Recent"),
+            )
+            .child(swatches)
+    });
     quickbar::card(palette)
         .id("color-picker")
         .p(px(10.))
@@ -422,7 +431,7 @@ pub fn card(
         .child(square(hsv))
         .child(hue_slider(hsv[0]))
         .child(hex_row)
-        .child(recent_row)
+        .children(recent_row)
         .into_any_element()
 }
 

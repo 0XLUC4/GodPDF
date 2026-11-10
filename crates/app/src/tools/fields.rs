@@ -317,7 +317,7 @@ pub fn editor(
             .py(px(1.))
             .rounded(px(2.))
             .bg(white())
-            .border(px(1.5))
+            .border_1()
             .border_color(gpui::rgb(EDGE))
             .occlude()
             .on_action(cx.listener(|tab, _: &Escape, _, cx| {

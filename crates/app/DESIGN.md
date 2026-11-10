@@ -272,7 +272,7 @@ chip 40 × 26 and a hex field (`#RRGGBB`, `RRGGBB`, `#RGB`); "Recent" (9 dim) an
 custom colours (settings `recent_colors`). A colour is applied on release, Enter or a click
 (one undo step). Tool glyphs: Select `CURSOR`,
 Hand `HAND`, Text `TEXT_T`, Note `NOTE`, Highlight `HIGHLIGHTER`, Ink `PENCIL_SIMPLE`,
-Rectangle `SQUARE`, Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
+Rectangle `RECTANGLE`, Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `ERASER`.
 
 ### Not covered yet
 

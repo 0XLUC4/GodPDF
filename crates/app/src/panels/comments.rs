@@ -27,7 +27,7 @@ impl Kind {
         match self {
             Self::Highlight => "Highlight",
             Self::Note => "Note",
-            Self::FreeText => "Text box",
+            Self::FreeText => "Free text",
             Self::Rectangle => "Rectangle",
             Self::Ink => "Ink",
             Self::Picture => "Picture",

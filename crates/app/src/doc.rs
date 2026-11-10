@@ -276,15 +276,17 @@ impl DocTab {
         self.render.clone()
     }
 
-    /// Rotation and origin of `page`, parsed once per document revision.
+    /// Rotation and origin of `page`, every page parsed at once per document revision.
     pub fn page_geom(&mut self, page: usize) -> Result<PageGeometry, String> {
-        if let Some(geom) = self.geometries.get(&page) {
-            return Ok(*geom);
+        if self.geometries.is_empty() {
+            let all = guarded(|| godpdf_core::page_geometries(self.session.bytes()))
+                .map_err(|err| err.to_string())?;
+            self.geometries = all.into_iter().enumerate().collect();
         }
-        let geom = guarded(|| godpdf_core::page_geometry(self.session.bytes(), page))
-            .map_err(|err| err.to_string())?;
-        self.geometries.insert(page, geom);
-        Ok(geom)
+        self.geometries
+            .get(&page)
+            .copied()
+            .ok_or_else(|| format!("no page {}", page + 1))
     }
 
     /// Page layout at the current zoom and viewer width.
@@ -629,6 +631,18 @@ impl DocTab {
         for page in gone {
             if let Some(detail) = self.details.remove(&page) {
                 self.evicted.push(detail.image);
+            }
+        }
+        // The page without a lifted annotation, once off screen or once its page shows the
+        // newer document (a drop has settled).
+        let lift_done = self.lifted.as_ref().is_some_and(|lifted| {
+            !keep.contains(&lifted.page)
+                || (lifted.generation != self.generation && self.page_settled(lifted.page))
+        });
+        if lift_done {
+            self.lift_wanted = None;
+            if let Some(image) = self.lifted.take().and_then(|lifted| lifted.image) {
+                self.evicted.push(image);
             }
         }
         for image in self.evicted.drain(..) {

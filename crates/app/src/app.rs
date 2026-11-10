@@ -380,7 +380,11 @@ impl GodPdfApp {
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        match self.with_tab(cx, |tab, _| tab.undo()) {
+        // The text being typed is written first: it is the step undone then.
+        match self.with_tab(cx, |tab, cx| {
+            tools::finish_editing(tab, cx);
+            tab.undo()
+        }) {
             Some(Some(label)) => toasts::info(cx, format!("Undone: {label}")),
             Some(None) => toasts::info(cx, "Nothing to undo"),
             None => {}
@@ -388,7 +392,10 @@ impl GodPdfApp {
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        match self.with_tab(cx, |tab, _| tab.redo()) {
+        match self.with_tab(cx, |tab, cx| {
+            tools::finish_editing(tab, cx);
+            tab.redo()
+        }) {
             Some(Some(label)) => toasts::info(cx, format!("Redone: {label}")),
             Some(None) => toasts::info(cx, "Nothing to redo"),
             None => {}

@@ -135,8 +135,11 @@ pub fn element(layout: Rc<Layout>, look: Look, zoom: f32) -> AnyElement {
                 let blue: Hsla = gpui::rgb(SELECTION).into();
                 if selection.is_empty() {
                     let (x, line) = layout.caret(selection.start);
-                    let top = at(x, layout.line_top(line));
-                    let caret = Bounds::new(top, size(px(1.5), px(line_height * zoom)));
+                    let mut top = at(x, layout.line_top(line));
+                    // One crisp pixel wide, on a whole device pixel.
+                    let scale = window.scale_factor();
+                    top.x = px((f32::from(top.x) * scale).round() / scale);
+                    let caret = Bounds::new(top, size(px(1.0), px(line_height * zoom)));
                     window.paint_quad(fill(caret, look.color));
                 }
                 for (line, range) in layout.lines.iter().enumerate() {

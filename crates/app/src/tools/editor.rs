@@ -4,7 +4,7 @@
 //! keeps the keys, the caret and the selection) and the text is drawn over it by
 //! [`richtext`], each character in its own style (bold, italic, underline, sub / superscript).
 //!
-//! Ctrl+Enter or a click on the page outside writes it; Esc restores an edited text as it was.
+//! Ctrl+Enter or a click on the page outside writes it; Esc leaves an edited text as it was.
 //! The grip on its right edge widens or narrows the box.
 
 use std::ops::Range;
@@ -16,20 +16,19 @@ use godpdf_core::{
 use gpui::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, CursorStyle, DispatchPhase, Div, Entity, FontWeight, Hsla,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Subscription, Window,
+    AnyElement, App, Context, CursorStyle, DispatchPhase, Div, Entity, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Subscription, Window,
     canvas, div, px, rgb,
 };
 
 use super::canvas::{self, report};
-use super::geom::DRect;
+use super::geom::{self, DRect};
 use super::{
     Format, Style, TEXT_BOX, ToggleBold, ToggleItalic, ToggleUnderline, common_style, hsla,
     richtext, toggle_all, tool_state,
 };
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::toasts;
 
 /// Width of a new text box, in points (narrowed to the page).
 const DEFAULT_WIDTH: f32 = 220.0;
@@ -42,16 +41,18 @@ const NOTE_CARD_WIDTH: f32 = 240.0;
 const BORDER: u32 = 0x222222;
 /// The width grip on the right edge: handle size, and how far either side of the edge the
 /// strip that grabs it reaches (screen pixels).
-const GRIP: (f32, f32) = (7.0, 18.0);
+const GRIP: (f32, f32) = (8.0, 18.0);
 pub(super) const GRIP_REACH: f32 = 5.0;
 
 pub enum Kind {
-    /// A text box: top-left corner and width in displayed points. `original` is the
-    /// annotation it was opened from, already removed from the page while it is typed.
+    /// A text box: top-left corner and width in displayed points. `original` is the id and
+    /// the annotation it edits, left on the page (drawn lifted off it) until the box is written;
+    /// `style` is that text's own style (a new box uses the text tool's).
     Text {
         anchor: (f32, f32),
         width: f32,
-        original: Option<Annotation>,
+        original: Option<(String, Annotation)>,
+        style: Option<Style>,
     },
     /// A sticky note at `rect` (displayed points); `id` when it edits an existing one.
     Note { rect: DRect, id: Option<String> },
@@ -90,6 +91,26 @@ impl Editor {
             return self.typing.unwrap_or(style_at(&self.styles, before));
         }
         common_style(&self.styles, range)
+    }
+}
+
+/// Size, colour and font of the box being typed: the edited text's own, else the text tool's.
+pub(super) fn text_style(tab: &DocTab, cx: &mut App) -> Style {
+    match tab.canvas.editor.as_ref().map(|editor| &editor.kind) {
+        Some(Kind::Text {
+            style: Some(style), ..
+        }) => *style,
+        _ => tool_state(cx).styles.text,
+    }
+}
+
+/// The style the style card changes while a box is typed (see [`text_style`]).
+pub(super) fn text_style_mut<'a>(tab: &'a mut DocTab, cx: &'a mut App) -> &'a mut Style {
+    match tab.canvas.editor.as_mut().map(|editor| &mut editor.kind) {
+        Some(Kind::Text {
+            style: Some(style), ..
+        }) => style,
+        _ => &mut tool_state(cx).styles.text,
     }
 }
 
@@ -202,27 +223,25 @@ pub fn open_text(
         else {
             return;
         };
-        let text_style = &mut tool_state(cx).styles.text;
-        text_style.font_size = *font_size;
-        text_style.color = *color;
-        text_style.font = *font;
-        let result = tab.apply("Edit text", |pdf| {
-            godpdf_core::remove_annotation(pdf, page, &item.id)
-        });
-        if let Err(err) = result {
-            toasts::error(cx, format!("Cannot edit this text: {err}"));
-            return;
-        }
+        let style = Style {
+            font_size: *font_size,
+            color: *color,
+            font: *font,
+            ..tool_state(cx).styles.text
+        };
         let kind = Kind::Text {
             anchor: (item.rect.x0, item.rect.y0),
             width: godpdf_core::free_text_width(*rect, *rotation),
             original: None,
+            style: Some(style),
         };
-        let text = text.clone();
+        let (text, styles) = (text.clone(), styles.clone());
+        // The page shows without it while it is typed.
+        tab.lift(page, &item.id, cx);
         let mut editor = open(tab, page, kind, text, window, cx);
-        editor.styles = styles.clone();
+        editor.styles = styles;
         if let Kind::Text { original: slot, .. } = &mut editor.kind {
-            *slot = Some(original);
+            *slot = Some((item.id, original));
         }
         tab.canvas.editor = Some(editor);
     } else if new_allowed {
@@ -236,6 +255,7 @@ pub fn open_text(
             anchor,
             width,
             original: None,
+            style: None,
         };
         tab.canvas.editor = Some(open(tab, page, kind, String::new(), window, cx));
     }
@@ -264,16 +284,25 @@ pub fn open_note(
         }
         None => {
             let rect = DRect::span(point, (point.0 + NOTE_SIZE, point.1 + NOTE_SIZE));
+            let displayed = tab.page_sizes.get(page).copied().unwrap_or_default();
+            let rect = rect.translate(geom::clamp_offset(rect, displayed, (0.0, 0.0)));
             (None, rect, String::new())
         }
     };
     tab.canvas.editor = Some(open(tab, page, Kind::Note { rect, id }, text, window, cx));
 }
 
-/// Write what was typed. An emptied existing text stays removed: its "Edit text" step did it.
+/// Write what was typed: an edited text is replaced only when something changed, and removed
+/// when emptied.
 pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     let Some(editor) = tab.canvas.editor.take() else {
         return;
+    };
+    let style = match &editor.kind {
+        Kind::Text {
+            style: Some(style), ..
+        } => *style,
+        _ => tool_state(cx).styles.text,
     };
     let typed = editor.state.read(cx).value().to_string();
     let Some((geom, displayed)) = canvas::page_frame(tab, editor.page) else {
@@ -297,9 +326,14 @@ pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
         } => {
             let text = typed.trim_end().to_owned();
             if text.trim().is_empty() {
+                if let Some((id, _)) = original {
+                    let result = tab.apply("Delete text", |pdf| {
+                        godpdf_core::remove_annotation(pdf, page, &id)
+                    });
+                    report(result, cx);
+                }
                 return;
             }
-            let style: Style = tool_state(cx).styles.text;
             styles.truncate(text.chars().count());
             if styles.iter().all(|style| *style == CharStyle::default()) {
                 styles.clear();
@@ -322,11 +356,14 @@ pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
                 font: style.font,
                 styles,
             };
-            let add = |pdf: &[u8]| godpdf_core::add_annotation(pdf, page, &annotation);
-            if original.is_some() {
-                tab.amend("Edit text", add)
-            } else {
-                tab.apply("Add text", add)
+            match original {
+                Some((_, original)) if same_text(&original, &annotation, width) => return,
+                Some((id, _)) => tab.apply("Edit text", |pdf| {
+                    godpdf_core::replace_annotation(pdf, page, &id, &annotation)
+                }),
+                None => tab.apply("Add text", |pdf| {
+                    godpdf_core::add_annotation(pdf, page, &annotation)
+                }),
             }
         }
         Kind::Note { rect, id } => {
@@ -349,28 +386,51 @@ pub fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     report(result, cx);
 }
 
-/// Esc: put an edited text back as it was; a new box is kept if it has text; a note is dropped.
+/// Esc: an edited text stays as it was; a new box is kept if it has text; a note is dropped.
 fn cancel(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     let Some(editor) = tab.canvas.editor.take() else {
         return;
     };
-    match &editor.kind {
-        Kind::Text {
-            original: Some(original),
-            ..
-        } => {
-            let page = editor.page;
-            let result = tab.amend("Edit text", |pdf| {
-                godpdf_core::add_annotation(pdf, page, original)
-            });
-            report(result, cx);
-        }
-        Kind::Text { .. } => {
-            tab.canvas.editor = Some(editor);
-            commit(tab, cx);
-        }
-        Kind::Note { .. } => {}
+    if let Kind::Text { original: None, .. } = editor.kind {
+        tab.canvas.editor = Some(editor);
+        commit(tab, cx);
     }
+}
+
+/// The text box typed from `original`, `width` points wide, says and looks the same.
+fn same_text(original: &Annotation, typed: &Annotation, width: f32) -> bool {
+    let (
+        Annotation::FreeText {
+            rect: was,
+            text: old_text,
+            font_size: old_size,
+            color: old_color,
+            rotation: old_rotation,
+            font: old_font,
+            styles: old_styles,
+        },
+        Annotation::FreeText {
+            text,
+            font_size,
+            color,
+            rotation,
+            font,
+            styles,
+            ..
+        },
+    ) = (original, typed)
+    else {
+        return false;
+    };
+    (
+        old_text,
+        old_size,
+        old_color,
+        old_rotation,
+        old_font,
+        old_styles,
+    ) == (text, font_size, color, rotation, font, styles)
+        && (godpdf_core::free_text_width(*was, *old_rotation) - width).abs() < 0.01
 }
 
 /// Flip a format on the selected characters, or for what is typed next, and give the box
@@ -439,7 +499,7 @@ fn drag_grip(tab: &mut DocTab, position: Point<Pixels>, cx: &mut Context<DocTab>
     ) else {
         return;
     };
-    let font_size = tool_state(cx).styles.text.font_size;
+    let font_size = text_style(tab, cx).font_size;
     if let Some(Editor {
         kind: Kind::Text { anchor, width, .. },
         ..
@@ -496,8 +556,8 @@ pub(super) fn grip(height: f32) -> Div {
             div()
                 .absolute()
                 .top_0()
-                .left(px(GRIP_REACH - 1.5))
-                .w(px(3.0))
+                .left(px(GRIP_REACH - 1.0))
+                .w(px(2.0))
                 .h_full()
                 .bg(border),
         )
@@ -505,18 +565,36 @@ pub(super) fn grip(height: f32) -> Div {
             div()
                 .absolute()
                 .left(px(GRIP_REACH - GRIP.0 / 2.0))
-                .top(px((height - handle) / 2.0))
+                .top(px(((height - handle) / 2.0).round()))
                 .w(px(GRIP.0))
                 .h(px(handle))
                 .rounded(px(2.0))
                 .bg(gpui::white())
-                .border(px(1.5))
+                .border_1()
                 .border_color(border),
         )
 }
 
 fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
     Hsla { a: alpha, ..color }
+}
+
+/// Where the text being edited on `page` was, from the page rendered without it (once ready):
+/// drawn under the box, as the text stays on the page until the box is written.
+pub(super) fn lifted_page(tab: &mut DocTab, page: usize, zoom: f32) -> Option<AnyElement> {
+    let editor = tab.canvas.editor.as_ref().filter(|editor| editor.page == page)?;
+    let Kind::Text {
+        original: Some((id, Annotation::FreeText { rect, .. })),
+        ..
+    } = &editor.kind
+    else {
+        return None;
+    };
+    let rect = *rect;
+    let image = tab.lifted(page, id)?;
+    let (geom, displayed) = canvas::page_frame(tab, page)?;
+    let area = DRect::from_pdf(&geom, displayed, &rect);
+    Some(canvas::cut_out(image, area, area, displayed, zoom))
 }
 
 /// The box being typed on its page, `zoom` logical pixels per point.
@@ -526,9 +604,9 @@ pub fn render(
     _window: &mut Window,
     cx: &mut Context<DocTab>,
 ) -> Option<AnyElement> {
+    let style = text_style(tab, cx);
     let editor = tab.canvas.editor.as_ref()?;
     let palette = Palette::of(cx);
-    let style = tool_state(cx).styles.text;
     let escape = cx.listener(|tab, _: &Escape, _, cx| {
         cancel(tab, cx);
         cx.notify();
@@ -572,8 +650,6 @@ pub fn render(
                 .w(px(width * zoom))
                 .h(px(height * zoom))
                 .bg(with_alpha(gpui::white(), 0.67))
-                .border_1()
-                .border_color(rgb(BORDER))
                 .occlude()
                 .cursor(CursorStyle::IBeam)
                 .key_context(TEXT_BOX)
@@ -607,6 +683,15 @@ pub fn render(
                 )
                 .children(placeholder)
                 .child(richtext::element(layout, look, zoom))
+                // Over the box, not around it: the text starts at the box's own corner, as
+                // once written.
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .border_1()
+                        .border_color(rgb(BORDER)),
+                )
                 .child(grip(height * zoom).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|tab, event: &MouseDownEvent, window, cx| {
@@ -622,7 +707,7 @@ pub fn render(
                 })
                 .into_any_element()
         }
-        Kind::Note { rect, .. } => div()
+        Kind::Note { rect, .. } => super::quickbar::card(&palette)
             .id("note-box")
             .absolute()
             // Right of the note, or left of it when the page has no room there.
@@ -635,32 +720,10 @@ pub fn render(
             ))
             .top(px(rect.y0 * zoom))
             .w(px(NOTE_CARD_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .p(px(8.))
-            .rounded(px(8.))
-            .shadow_md()
-            .bg(palette.panel)
-            .border_1()
-            .border_color(palette.border)
-            .text_color(palette.text)
-            .occlude()
+            .text_size(px(crate::fonts::BODY))
             .key_context(TEXT_BOX)
             .on_action(escape)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .child("Sticky note"),
-            )
             .child(Textarea::new(&editor.state).h(px(88.)))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(palette.text_dim)
-                    .child("Ctrl+Enter or click the page to save, Esc to cancel"),
-            )
             .into_any_element(),
     };
     Some(element)

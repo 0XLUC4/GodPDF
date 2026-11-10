@@ -46,8 +46,8 @@ const FIELD_WIDTH: f32 = 96.0;
 /// The fields of the picture card (created once, reused for every picture).
 pub struct PictureCard {
     fields: Vec<(PictureField, Entity<InputState>)>,
-    /// What the fields show: tab, annotation id, document generation.
-    shown: Option<(EntityId, String, u64)>,
+    /// What the fields show: tab, page, annotation id, document generation.
+    shown: Option<(EntityId, usize, String, u64)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -178,7 +178,7 @@ fn apply(tab: &mut DocTab, change: Change, window: &mut Window, cx: &mut Context
         Target::TextBox(_) => match change {
             Change::Format(format) => editor::toggle_format(tab, format, window, cx),
             _ => {
-                change_style(&mut tool_state(cx).styles.text, Kind::Text, change);
+                change_style(editor::text_style_mut(tab, cx), Kind::Text, change);
                 editor::refocus(tab, window, cx);
             }
         },
@@ -186,7 +186,12 @@ fn apply(tab: &mut DocTab, change: Change, window: &mut Window, cx: &mut Context
             let Some(selected) = tab.canvas.selected.clone() else {
                 return;
             };
+            let before = style;
             change_style(&mut style, kind, change);
+            // The current swatch, a step at its limit: nothing to write.
+            if style == before && !matches!(change, Change::Format(_)) {
+                return;
+            }
             let restyle =
                 move |annotation: &Annotation, _: &_, _: &_, _| restyled(annotation, style, change);
             rewrite(tab, selected.page, &selected.id, "Restyle", restyle, cx);
@@ -440,7 +445,7 @@ fn style_card(
             None => return None,
         },
         Target::Selected(kind, style, formats) => (kind, style, formats),
-        Target::TextBox(format) => (Kind::Text, tool_state(cx).styles.text, Some(format)),
+        Target::TextBox(format) => (Kind::Text, editor::text_style(tab, cx), Some(format)),
         Target::Picture {
             page,
             id,
@@ -805,7 +810,7 @@ fn eraser_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
     let step = |id: &'static str, glyph: &'static str, tip: &'static str, delta: f32| {
         let (low, high, _) = BRUSH_RANGE;
         widgets::tooltip(
-            widgets::icon_widget(id, glyph, widgets::SMALL_ICON_BUTTON, 13.0, true, palette)
+            widgets::icon_widget(id, glyph, widgets::SMALL_ICON_BUTTON, 14.0, true, palette)
                 .on_click(move |_, _, cx: &mut App| {
                     let state = tool_state(cx);
                     state.brush = (state.brush + delta).clamp(low, high);
@@ -997,7 +1002,7 @@ where
                 SharedString::from(id.to_owned()),
                 icon,
                 widgets::SMALL_ICON_BUTTON,
-                13.0,
+                14.0,
                 true,
                 palette,
             )
@@ -1117,17 +1122,21 @@ fn edit_picture_field(field: PictureField, text: &str, cx: &mut App) {
     let Some(card) = state.picture_card.as_mut() else {
         return;
     };
-    let shown = card.shown.clone();
     // Show the picture as it is on the next frame (an invalid entry goes back to it).
-    card.shown = None;
+    let Some((tab_id, page, id, _)) = card.shown.take() else {
+        return;
+    };
     with_active(cx, |tab, cx| {
-        let Some((page, item)) = canvas::selected_item(tab, cx) else {
-            return;
-        };
-        // The fields were showing another picture (the selection just changed).
-        if shown.is_none_or(|(tab_id, id, _)| tab_id != cx.entity_id() || id != item.id) {
+        // The picture the fields were showing, even if a click on the page just changed the
+        // selection before the field lost the focus.
+        if tab_id != cx.entity_id() {
             return;
         }
+        let Some(item) = canvas::items(tab, page, cx)
+            .and_then(|items| items.into_iter().find(|item| item.id == id))
+        else {
+            return;
+        };
         let Some(mm) = geom::parse_mm(text) else {
             toasts::error(
                 cx,
@@ -1178,7 +1187,7 @@ fn picture_card(
     cx: &mut Context<DocTab>,
 ) -> Option<AnyElement> {
     let fields = picture_fields(window, cx);
-    let key = (cx.entity_id(), id.clone(), tab.generation());
+    let key = (cx.entity_id(), page, id.clone(), tab.generation());
     let card_state = tool_state(cx).picture_card.as_mut()?;
     if card_state.shown.as_ref() != Some(&key) {
         card_state.shown = Some(key);
@@ -1220,12 +1229,10 @@ fn picture_card(
                 ),
         );
     }
-    let original = DRect {
-        x0: rect.x0,
-        y0: rect.y0,
-        x1: rect.x0 + natural.0,
-        y1: rect.y0 + natural.1,
-    };
+    // Its own size from its top-left corner, smaller when the page has no room, on the page.
+    let page_size = tab.page_sizes.get(page).copied().unwrap_or_default();
+    let original = geom::place_picture(natural, page_size, (rect.x0, rect.y0), None);
+    let original = original.translate(geom::clamp_offset(original, page_size, (0.0, 0.0)));
     let original_size = icon_button(
         "picture-original-size",
         widgets::glyph(icons::ARROWS_OUT_SIMPLE),

@@ -141,9 +141,11 @@ pub fn render(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
             )
             .child(separator(&palette))
             .child(
-                div().flex_1().min_h_0().child(
+                // A flex row would size the text area to its content, a sliver on the left.
+                div().flex_1().min_h_0().w_full().flex().flex_col().child(
                     Textarea::new(&area)
                         .readonly(true)
+                        .w_full()
                         .h(relative(1.))
                         .font_family(fonts::MONO),
                 ),

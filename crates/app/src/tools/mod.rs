@@ -11,6 +11,7 @@ mod editor;
 mod fields;
 mod geom;
 mod picker;
+pub mod pointer;
 mod quickbar;
 mod richtext;
 mod sign;

@@ -357,9 +357,14 @@ pub fn crop(src: DRect, dst: DRect, page: (f32, f32)) -> DRect {
     }
 }
 
-/// Squares `size` points wide along the brush path `points`, close enough to cover it
-/// (centres at most half a side apart, none closer than a quarter side).
-pub fn brush_squares(points: &[(f32, f32)], size: f32) -> Vec<DRect> {
+/// Horizontal bands one round dab is made of: the rectangles core takes out approximate
+/// the circle the eraser shows.
+const DAB_BANDS: usize = 8;
+
+/// Round dabs `size` points wide along the brush path `points`, close enough to cover it
+/// (centres at most half a width apart, none closer than a quarter width), each one
+/// [`DAB_BANDS`] rectangles whose width is the circle's at the band's middle.
+pub fn brush_dabs(points: &[(f32, f32)], size: f32) -> Vec<DRect> {
     let half = size / 2.0;
     let mut centres: Vec<(f32, f32)> = points.first().copied().into_iter().collect();
     for pair in points.windows(2) {
@@ -374,13 +379,21 @@ pub fn brush_squares(points: &[(f32, f32)], size: f32) -> Vec<DRect> {
             }
         }
     }
+    let band = size / DAB_BANDS as f32;
     centres
         .into_iter()
-        .map(|(x, y)| DRect {
-            x0: x - half,
-            y0: y - half,
-            x1: x + half,
-            y1: y + half,
+        .flat_map(|(x, y)| {
+            (0..DAB_BANDS).map(move |index| {
+                let top = -half + index as f32 * band;
+                let middle = top + band / 2.0;
+                let reach = (half * half - middle * middle).max(0.0).sqrt();
+                DRect {
+                    x0: x - reach,
+                    y0: y + top,
+                    x1: x + reach,
+                    y1: y + top + band,
+                }
+            })
         })
         .collect()
 }
@@ -390,22 +403,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn brush_squares_cover_the_path() {
-        // A click is one square around it.
+    fn brush_dabs_follow_the_path() {
+        assert!(brush_dabs(&[], 4.0).is_empty());
+        // A click is one dab around it.
+        assert_eq!(brush_dabs(&[(10.0, 10.0)], 4.0).len(), DAB_BANDS);
+        // 20 points right with a 4 point brush: centres every 2 points, 11 dabs.
+        let dabs = brush_dabs(&[(0.0, 0.0), (20.0, 0.0)], 4.0);
+        assert_eq!(dabs.len(), 11 * DAB_BANDS);
+        // The last dab's widest bands reach its right edge.
+        assert!(dabs.iter().any(|band| (band.x1 - 22.0).abs() < 0.1));
+        // Jitter under a quarter width adds nothing.
         assert_eq!(
-            brush_squares(&[(10.0, 10.0)], 4.0),
-            [rect(8.0, 8.0, 12.0, 12.0)]
+            brush_dabs(&[(0.0, 0.0), (0.5, 0.0), (0.0, 0.5)], 4.0).len(),
+            DAB_BANDS
         );
-        assert!(brush_squares(&[], 4.0).is_empty());
-        // 20 points right with a 4 point brush: centres every 2 points, 11 squares.
-        let squares = brush_squares(&[(0.0, 0.0), (20.0, 0.0)], 4.0);
-        assert_eq!(squares.len(), 11);
-        assert_eq!(squares[10], rect(18.0, -2.0, 22.0, 2.0));
-        // Jitter under a quarter side adds nothing.
-        assert_eq!(
-            brush_squares(&[(0.0, 0.0), (0.5, 0.0), (0.0, 0.5)], 4.0).len(),
-            1
-        );
+    }
+
+    #[test]
+    fn a_dab_covers_its_circle() {
+        let (radius, centre) = (10.0_f32, (50.0, 50.0));
+        let bands = brush_dabs(&[centre], 2.0 * radius);
+        // Stacked top to bottom, no gap, spanning the diameter.
+        assert!((bands[0].y0 - (centre.1 - radius)).abs() < 1e-3);
+        assert!((bands[DAB_BANDS - 1].y1 - (centre.1 + radius)).abs() < 1e-3);
+        for pair in bands.windows(2) {
+            assert!((pair[0].y1 - pair[1].y0).abs() < 1e-3);
+        }
+        // Same area as the circle, within 2%.
+        let area: f32 = bands.iter().map(|band| band.width() * band.height()).sum();
+        let circle = std::f32::consts::PI * radius * radius;
+        assert!((area - circle).abs() / circle < 0.02, "{area} vs {circle}");
+        // Sampled on a grid: what the bands take and the circle agree almost everywhere.
+        let (mut differ, mut samples) = (0, 0);
+        for i in 0..200 {
+            for j in 0..200 {
+                let (x, y) = (40.0 + i as f32 * 0.1, 40.0 + j as f32 * 0.1);
+                let inside = (x - centre.0).hypot(y - centre.1) <= radius;
+                let taken = bands
+                    .iter()
+                    .any(|b| x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
+                differ += usize::from(inside != taken);
+                samples += 1;
+            }
+        }
+        // Each sample stands for 0.01 square points; the steps at the rim stay under 8%.
+        let mismatch = differ as f32 * 0.01;
+        assert!(mismatch < circle * 0.08, "{mismatch} of {circle} differ");
+        assert_eq!(samples, 40_000);
+        // Nothing far outside the circle is taken.
+        for band in &bands {
+            for (x, y) in band.corners() {
+                assert!((x - centre.0).hypot(y - centre.1) < radius * 1.12);
+            }
+        }
     }
 
     fn geom(rotation: i32) -> PageGeometry {

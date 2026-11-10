@@ -1,0 +1,20 @@
+[package]
+name = "godpdf-gpui"
+description = "GodPDF desktop app built with GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "godpdf-gpui"
+path = "src/main.rs"
+
+[dependencies]
+godpdf-core.workspace = true
+godpdf-render.workspace = true
+# GPUI Kit = the gpui-pre snapshot of Zed gpui + platform + gpui-component + Lucide icons.
+# Aliased as `gpui` so gpui macros (actions!, derives) resolve through it.
+gpui = { package = "gpui-kit", version = "0.9.1" }
+rfd = "0.17"
+# Same version gpui uses, to build its page bitmaps (`image::Frame`).
+image = { version = "0.25", default-features = false }

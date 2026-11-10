@@ -1,4 +1,4 @@
-//! The signature pad dialog (egui `Dialog::Signature`, `signature::pad`): draw with the
+//! The signature pad dialog: draw with the
 //! mouse or a pen; confirming keeps it on disk, then signs where the Sign tool was clicked,
 //! or picks the Sign tool.
 

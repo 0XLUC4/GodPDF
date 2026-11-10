@@ -1,4 +1,4 @@
-//! Printing (ported from the egui `src/print.rs`). On Windows: the print dialog of the
+//! Printing. On Windows: the print dialog of the
 //! system, then each page drawn by GodPDF itself, so that no other PDF program is needed.
 //! Elsewhere: the `lp` command. Blocks until printed: run it in the background.
 

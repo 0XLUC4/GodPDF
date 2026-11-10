@@ -280,7 +280,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     } else {
         Vec::new()
     };
-    // egui: field `available - 40` wide + 28 px button, 8 apart; then label, 4 px, the hits.
+    // Field `available - 40` wide + 28 px button, 8 apart; then label, 4 px, the hits.
     div()
         .flex_1()
         .min_h_0()
@@ -315,7 +315,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
         .into_any_element()
 }
 
-/// egui `Button::selectable` sized `[width, 26]`: centered text, `selected` fill when on.
+/// A selectable row `[width, 26]`: centered text, `selected` fill when on.
 fn hit_row(
     tab: &Entity<DocTab>,
     hit: &SearchHit,
@@ -418,7 +418,7 @@ fn read_chars(tab: &DocTab, page: usize) -> Vec<TextChar> {
         .unwrap_or_default()
 }
 
-/// Glyph ranges where `query` is written (ported from the egui `src/textsel.rs`).
+/// Glyph ranges where `query` is written.
 /// Case and white space are ignored on both sides: a PDF often only implies its spaces by
 /// position, and breaks a phrase over two lines.
 pub fn find(chars: &[TextChar], query: &str) -> Vec<RangeInclusive<usize>> {

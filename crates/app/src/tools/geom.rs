@@ -1,6 +1,5 @@
 //! Pure geometry of the canvas tools, in displayed page points (origin top-left, after
-//! /Rotate). Ported from the egui `src/selection.rs` and the picture placement of
-//! the egui `src/app.rs`.
+//! /Rotate).
 
 use crate::geometry::{self, PageGeometry};
 

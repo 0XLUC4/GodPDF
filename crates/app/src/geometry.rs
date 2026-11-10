@@ -1,5 +1,5 @@
 //! Pure coordinate math: the continuous-scroll page layout, and displayed page points <->
-//! unrotated PDF user space (ported from the egui `src/geometry.rs`).
+//! unrotated PDF user space.
 //!
 //! Three spaces:
 //! - **view**: logical pixels inside the viewer, origin at its top-left corner.

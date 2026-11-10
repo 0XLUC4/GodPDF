@@ -1,4 +1,4 @@
-//! The Signature panel (egui `signature::panel`): the saved signature and what to do with it.
+//! The Signature panel: the saved signature and what to do with it.
 
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Window, canvas, div, point, px, white};
@@ -119,7 +119,7 @@ pub fn render(cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-/// egui `ui.button(with_icon(glyph, label))`.
+/// A framed button with a glyph and a label.
 fn icon_button(
     id: &'static str,
     glyph: &'static str,

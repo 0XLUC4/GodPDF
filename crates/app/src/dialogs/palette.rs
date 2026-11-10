@@ -1,5 +1,5 @@
 //! Command palette (Ctrl+K): type to find any command by name or description, Up / Down to
-//! choose, Enter or a click to run (ported from `command_palette` in the egui `src/dialogs.rs`).
+//! choose, Enter or a click to run.
 
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::component::kbd::Kbd;
@@ -80,7 +80,7 @@ fn run_selected(window: &mut Window, cx: &mut App) {
     }
 }
 
-/// The icon and tint of a command in the palette (egui `Cmd::icon`, `Cmd::tint`).
+/// The icon and tint of a command in the palette.
 fn look(command: &Command) -> (&'static str, u32) {
     use crate::icons::*;
     use crate::theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
@@ -165,7 +165,7 @@ fn look(command: &Command) -> (&'static str, u32) {
     (icon, tint)
 }
 
-/// egui `command_palette`: magnifier + field, rows of 36 (icon 19 in its tint centered 22
+/// Magnifier + field, rows of 36 (icon 19 in its tint centered 22
 /// from the left, label 15 at 46, shortcut and family 13 dimmed 14 from the right), a
 /// separator, then the hint (13, dimmed).
 pub fn render(

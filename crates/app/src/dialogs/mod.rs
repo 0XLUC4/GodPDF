@@ -1,5 +1,4 @@
-//! Modal dialogs, the command palette (Ctrl+K) and the tool menus, ported from
-//! the egui `src/commands.rs`, `dialogs.rs`, `pagetools.rs` and `print.rs`.
+//! Modal dialogs, the command palette (Ctrl+K) and the tool menus.
 //!
 //! An action opens a dialog: its handler (global, no window) records it as pending in the
 //! [`Dialogs`] global; [`overlay`], drawn with the window, then creates its text fields and
@@ -131,7 +130,7 @@ fn active_tab(cx: &App) -> Option<Entity<DocTab>> {
     cx.try_global::<Dialogs>()?.tab.as_ref()?.upgrade()
 }
 
-/// Register dialog actions and their key bindings (same keys as the egui app).
+/// Register dialog actions and their key bindings.
 pub fn register(cx: &mut App) {
     cx.set_global(Dialogs::default());
     // In a text field, "Dialog > Input" outranks the field's own Enter / Esc / arrows.
@@ -178,7 +177,7 @@ pub fn register(cx: &mut App) {
             });
         }
     });
-    // The pages selected in the Organize grid, else the current one (egui `target_pages`).
+    // The pages selected in the Organize grid, else the current one.
     cx.on_action(|_: &DeletePage, cx| {
         if let Some((tab, _, _)) = current(cx) {
             let pages = crate::organize::target_pages(tab.read(cx));
@@ -271,7 +270,7 @@ pub fn has_password(tab: EntityId, cx: &App) -> bool {
         .is_some_and(|dialogs| dialogs.passwords.contains_key(&tab))
 }
 
-/// The document `tab` was opened with `password`: saving keeps it (egui `add_unlocked`).
+/// The document `tab` was opened with `password`: saving keeps it.
 pub fn keep_password(tab: EntityId, password: String, cx: &mut App) {
     let passwords = Passwords {
         user: password.clone(),
@@ -312,7 +311,7 @@ pub fn overlay(
         build(pending, tab, window, cx);
     }
     let colors = Palette::of(cx);
-    // egui: the palette hangs 90 below the top, the other dialogs are centered.
+    // The palette hangs 90 below the top, the other dialogs are centered.
     let centered = !matches!(opened(cx)?, Open::Palette(_));
     let card = match opened(cx)? {
         Open::Palette(palette) => palette::render(palette, tab.is_some(), &colors, window, cx),
@@ -331,7 +330,7 @@ pub fn overlay(
             .justify_center()
             .when(centered, |backdrop| backdrop.items_center())
             .when(!centered, |backdrop| backdrop.items_start().pt(px(90.)))
-            // egui `Modal` backdrop: black at alpha 100.
+            // Backdrop: black at alpha 100.
             .bg(hsla(0., 0., 0., 100. / 255.))
             .on_mouse_down(MouseButton::Left, |_, window, cx| close(window, cx))
             .child(card)
@@ -339,7 +338,7 @@ pub fn overlay(
     )
 }
 
-/// The card of a dialog, `width` of content wide: egui `Modal` (`Frame::popup`): panel fill,
+/// The card of a dialog, `width` of content wide: panel fill,
 /// 1 px border, radius 9, margin 8, popup shadow, item spacing 6. A click in it does not
 /// close it.
 pub(crate) fn card(palette: &Palette, width: f32) -> Div {
@@ -629,12 +628,12 @@ mod tests {
     }
 }
 
-/// egui `dialogs::title`: 19 px (strong is only a colour), then 8 of space.
+/// Dialog title: 19 px (strong is only a colour), then 8 of space.
 pub(crate) fn title(text: impl IntoElement) -> Div {
     div().pb(px(2.)).text_size(px(19.)).child(text)
 }
 
-/// egui `dialogs::error_line`: warning glyph and text in the error colour.
+/// Error line: warning glyph and text in the error colour.
 pub(crate) fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette) -> Div {
     crate::widgets::with_icon(
         crate::icons::WARNING_CIRCLE,
@@ -644,7 +643,7 @@ pub(crate) fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette
     )
 }
 
-/// egui `dialogs::buttons` row: 12 of space above, item spacing 8 between.
+/// Button row: 12 of space above, item spacing 8 between.
 pub(crate) fn button_row() -> Div {
     div()
         .flex()

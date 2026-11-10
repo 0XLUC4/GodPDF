@@ -1,4 +1,4 @@
-//! Comments panel (ported from the egui `src/comments.rs`): every annotation we understand,
+//! Comments panel: every annotation we understand,
 //! grouped by page. Read in a background job once per document generation, never per frame.
 
 use godpdf_core::Annotation;

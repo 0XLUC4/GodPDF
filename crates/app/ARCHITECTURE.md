@@ -10,8 +10,7 @@ It is aliased as `gpui` in `Cargo.toml`, so:
 - `gpui::assets::IconName` is the Lucide catalog (the assets are already registered in `main`).
 
 All PDF work is in `godpdf-core` (edits, bytes in -> bytes out) and `godpdf-render`
-(rasterize, text positions). This crate is UI only. It replaced the egui app, which was the
-reference for behavior; its source is `crates/app` at commit `026fd48` (`git show 026fd48:crates/app/src/<file>`).
+(rasterize, text positions). This crate is UI only.
 
 ## Module map
 
@@ -19,16 +18,16 @@ reference for behavior; its source is `crates/app` at commit `026fd48` (`git sho
 |---|---|
 | `main.rs` | Starts the app, opens the window (gpui-kit `Root` around `GodPdfApp`), quit-on-close. |
 | `app.rs` | `GodPdfApp`, the root view (UI font on the root). App actions + key bindings (`register`). Open / save / close / undo / redo / zoom handlers. |
-| `shell/` | Window chrome like the egui app, one file per region: `tabrow.rs`, `header.rs`, `leftpanel.rs` (tools panel), `rail.rs` (right icon rail), `banner.rs`, `welcome.rs`; `Shell` state (mode, tools panel, home tab). Measurements: DESIGN.md. |
-| `fonts.rs` / `icons.rs` | Bundled egui fonts (Ubuntu Light, Hack, Phosphor), loaded in `main`; Phosphor glyph constants named as `egui_phosphor::regular`. |
+| `shell/` | Window chrome, one file per region: `tabrow.rs`, `header.rs`, `leftpanel.rs` (tools panel), `rail.rs` (right icon rail), `banner.rs`, `welcome.rs`; `Shell` state (mode, tools panel, home tab). Measurements: DESIGN.md. |
+| `fonts.rs` / `icons.rs` | Bundled fonts (Ubuntu Light, Hack, Phosphor), loaded in `main`; Phosphor glyph constants under their Phosphor names. |
 | `doc.rs` | `DocTab` (one `Entity` per open document): `Session`, renderer, page bitmap cache, `ViewState` (zoom, scroll, viewer bounds). |
 | `viewer.rs` | `impl Render for DocTab`: the continuous-scroll viewer, wheel scroll / Ctrl+wheel zoom, scrollbar. |
 | `geometry.rs` | Pure math: page `Layout`, visible pages, zoom anchoring, displayed points <-> PDF space. Tested. |
-| `theme.rs` | Palette and visuals of the egui app (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`; tool colours. |
+| `theme.rs` | Palette and visuals (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`; tool colours. |
 | `signature.rs` | The user's signature (strokes one unit wide, tested), kept in `<config>/GodPDF/signature.txt`; the pad dialog is `dialogs/signpad.rs`. |
 | `toasts.rs` | `Global` toast stack: `toasts::error(cx, ..)`, `info`, `success`. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
-| `widgets.rs` | egui widgets at egui sizes: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
+| `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |
 | `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`), form answers (`form.rs`), the saved signature (`sign.rs`). |
 | `text/` | Page text (from `textsel.rs`, `lineedit.rs`, `ocr.rs`, `compare.rs`): select with the Select tool and copy (Ctrl+C), "Edit PDF text" mode (click a line, type in place, Enter / click away writes, Esc), Extract text and Compare windows, Recognize text (OCR: Windows.Media.Ocr, ocrs elsewhere). Hooks: `page_underlay` / `page_overlay` (viewer, under / over the tools), `overlay` (app). |
@@ -55,7 +54,7 @@ same handler:
 4. A button runs it with `.on_click(widgets::dispatch(MyCommand))` or
    `window.dispatch_action(Box::new(MyCommand), cx)`.
 
-Current bindings (same as egui): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W
+Current bindings: Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W
 close tab, Ctrl+Tab / Ctrl+Shift+Tab switch tab, Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo,
 Ctrl+= / Ctrl++ zoom in, Ctrl+- zoom out, Ctrl+0 fit width, Ctrl+Q quit, Ctrl+F find,
 Ctrl+D add bookmark, F3 / Shift+F3 next / previous search hit (Enter / Shift+Enter in the field). Ctrl+wheel zooms
@@ -63,7 +62,7 @@ around the pointer.
 
 ## A tool
 
-`tools/` (ported from the egui `src/quickbar.rs`, `selection.rs`, `textbox.rs`):
+`tools/`:
 
 - `ToolState` (a `Global`): active tool, per-tool styles, picture card fields, and the
   document the viewer shows (set while it renders, so key actions reach it).
@@ -148,7 +147,7 @@ Ctrl+P print, Ctrl+G go to page.
 
 ## Look
 
-Same as the egui app: fonts, Phosphor icons (`widgets::icon(icons::X, 16.0, color)`, never
+Fonts, Phosphor icons (`widgets::icon(icons::X, 16.0, color)`, never
 Lucide `IconName` in new code), palette and sizes. Every region's measurements are in
 DESIGN.md.
 

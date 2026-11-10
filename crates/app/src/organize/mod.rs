@@ -1,6 +1,6 @@
-//! Organize: the page grid (`grid.rs`, egui `organize.rs`), the page commands that act on
+//! Organize: the page grid (`grid.rs`), the page commands that act on
 //! its selection (move earlier / later, insert from file, remove blank pages, interleave),
-//! and "Side by side" (`split.rs`, egui `GodApp::companion`).
+//! and "Side by side" (`split.rs`).
 //!
 //! App-wide state is the [`Organize`] global (the document in front, the Interleave dialog,
 //! the second viewer). Per-document state is [`Grid`], a field of `DocTab`.
@@ -42,7 +42,7 @@ actions!(
 /// The Organize grid of one document.
 #[derive(Default)]
 pub struct Grid {
-    /// The grid shows instead of the viewer (egui `ViewMode::Organize`).
+    /// The grid shows instead of the viewer.
     pub on: bool,
     /// Selected pages; cleared by every reload (`DocTab::reload`).
     pub selection: BTreeSet<usize>,
@@ -83,7 +83,7 @@ fn front(cx: &mut App) -> Option<Entity<DocTab>> {
     tab
 }
 
-/// Alt+Left / Alt+Right move the pages (egui `Cmd::MoveEarlier` / `MoveLater`), never while
+/// Alt+Left / Alt+Right move the pages, never while
 /// typing.
 pub fn register(cx: &mut App) {
     cx.set_global(Organize::default());
@@ -115,7 +115,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &RemoveBlank, cx| remove_blank(cx));
     cx.on_action(|_: &Interleave, cx| {
         let Some(tab) = front(cx) else { return };
-        // shortcut: the first file picked is used, egui's dialog picks only one.
+        // shortcut: only the first file picked is used, take several if asked for.
         if let Some(file) = import::pick_as_pdfs(cx).into_iter().next() {
             state(cx).interleave = Some(InterleaveDialog {
                 tab: tab.downgrade(),
@@ -161,7 +161,7 @@ pub fn keeping_selection(tab: &Entity<DocTab>, cx: &mut App, edit: impl FnOnce(&
     });
 }
 
-/// Header mode follows the grid of the document in front (egui `sync_mode`): the grid can
+/// Header mode follows the grid of the document in front: the grid can
 /// also be left from inside it.
 pub fn sync_mode(mode: &mut Mode, tab: &Entity<DocTab>, cx: &App) {
     if tab.read(cx).grid.on {
@@ -202,7 +202,7 @@ pub fn center(
     }
 }
 
-/// Move the target pages one place, keeping them selected (egui `move_pages`).
+/// Move the target pages one place, keeping them selected.
 fn move_target(delta: isize, cx: &mut App) {
     if let Some(tab) = front(cx) {
         let pages = target_pages(tab.read(cx));
@@ -251,8 +251,8 @@ fn apply_order(
     }
 }
 
-/// Ask for files and put their pages at `at` in `tab`, each its own undo step (egui
-/// `Purpose::Insert`). Pictures and text become pages too.
+/// Ask for files and put their pages at `at` in `tab`, each its own undo step.
+/// Pictures and text become pages too.
 pub fn insert_files(tab: &WeakEntity<DocTab>, at: usize, cx: &mut App) {
     for file in import::pick_as_pdfs(cx) {
         let mut bytes = file.bytes;
@@ -287,7 +287,7 @@ pub fn insert_files(tab: &WeakEntity<DocTab>, at: usize, cx: &mut App) {
     }
 }
 
-/// Find the empty pages in the background, then delete them (egui `Cmd::RemoveBlank`).
+/// Find the empty pages in the background, then delete them.
 fn remove_blank(cx: &mut App) {
     let Some(tab) = front(cx) else { return };
     let doc = tab.read(cx);
@@ -328,7 +328,7 @@ fn remove_blank(cx: &mut App) {
     .detach();
 }
 
-/// Pages with next to no ink (egui `pagetools::blank_pages`): fewer than 1 pixel in 500 of
+/// Pages with next to no ink: fewer than 1 pixel in 500 of
 /// a small rendering darker than light grey.
 fn blank_pages(pdf: Vec<u8>) -> Result<Vec<usize>, String> {
     let doc = godpdf_render::Document::open(Arc::new(pdf), None).map_err(|err| err.to_string())?;
@@ -351,7 +351,7 @@ fn is_blank(rgba: &[u8]) -> bool {
     inked * 500 < total
 }
 
-/// The Interleave dialog over the window (egui `Dialog::Interleave`), `None` when closed.
+/// The Interleave dialog over the window, `None` when closed.
 /// Also remembers the document in front for the actions.
 pub fn overlay(front: Option<&Entity<DocTab>>, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let organize = state(cx);
@@ -405,7 +405,7 @@ pub fn overlay(front: Option<&Entity<DocTab>>, _: &mut Window, cx: &mut App) -> 
             .flex()
             .justify_center()
             .items_center()
-            // egui `Modal` backdrop: black at alpha 100.
+            // Backdrop: black at alpha 100.
             .bg(hsla(0., 0., 0., 100. / 255.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| close_dialog(cx))
             .child(card)

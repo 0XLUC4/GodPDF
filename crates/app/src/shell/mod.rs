@@ -1,5 +1,4 @@
-//! Window chrome around the document, ported region by region from
-//! the egui `src/app/shell.rs` (layout in the egui `src/app.rs::ui`). See DESIGN.md for
+//! Window chrome around the document. See DESIGN.md for
 //! every measurement. One file per region:
 //!
 //! - `tabrow.rs`: home button, document tabs, "+ Open", updates / about / theme.
@@ -31,10 +30,10 @@ use crate::theme::Palette;
 
 actions!(godpdf, [ToggleToolsPanel, FitPage, ReopenTab]);
 
-/// Most recent files kept (egui `MAX_RECENT`).
+/// Most recent files kept.
 pub const MAX_RECENT: usize = 8;
 
-/// Ctrl+Shift+T reopens the last closed tab (egui `Cmd::ReopenTab`).
+/// Ctrl+Shift+T reopens the last closed tab.
 pub fn register(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(secondary!("shift-t"), ReopenTab, None)]);
 }
@@ -44,7 +43,7 @@ pub const TAB_HEIGHT: f32 = 38.0;
 /// Height of the header row (menu, mode tabs, search).
 pub const HEADER_HEIGHT: f32 = 46.0;
 
-/// Header tab: decides what the left panel lists (egui `tools::Mode`).
+/// Header tab: decides what the left panel lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     AllTools,
@@ -90,7 +89,7 @@ pub enum Banner {
     Unsaved,
 }
 
-/// What the chrome shows (egui `GodApp` fields of the same names).
+/// What the chrome shows.
 pub struct Shell {
     pub mode: Mode,
     /// Left tools panel shown (hidden in `Read`).
@@ -105,7 +104,7 @@ pub struct Shell {
     pub closed: Vec<PathBuf>,
     /// Files opened, newest first (welcome screen, Menu > File > Open recent).
     pub recent: Vec<PathBuf>,
-    /// Width of the tools panel (egui: resizable 220..=420, 280 at first).
+    /// Width of the tools panel (resizable 220..=420, 280 at first).
     pub tools_width: f32,
 }
 
@@ -125,7 +124,7 @@ impl Default for Shell {
 }
 
 impl Shell {
-    /// egui `remember_recent`.
+    /// Put `path` first in the recent files.
     pub fn remember_recent(&mut self, path: &std::path::Path) {
         self.recent.retain(|recent| recent != path);
         self.recent.insert(0, path.to_path_buf());
@@ -139,7 +138,7 @@ impl GodPdfApp {
         !self.tabs.is_empty() && !self.shell.home
     }
 
-    /// Menu > "Tools panel" (egui: showing it leaves Read for All tools).
+    /// Menu > "Tools panel" (showing it leaves Read for All tools).
     pub fn toggle_tools_panel(
         &mut self,
         _: &ToggleToolsPanel,
@@ -154,7 +153,7 @@ impl GodPdfApp {
         cx.notify();
     }
 
-    /// Switch the header mode (egui `set_mode`).
+    /// Switch the header mode.
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         if !self.doc_view() {
             self.shell.home = self.tabs.is_empty();

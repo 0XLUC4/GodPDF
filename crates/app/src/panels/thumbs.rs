@@ -118,7 +118,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     .into_any_element()
 }
 
-/// One row as egui `sidebar::pages` draws it: 196 high; hover / current fill 2 px in,
+/// One row: 196 high; hover / current fill 2 px in,
 /// radius 8 (current = accent at 18 %); the page fitted in a box 32 px narrower than the row
 /// and 156 high, centered 84 px from the top, white, 2 px accent outline when current; the
 /// number 13 centered 16 px above the bottom; Move up / down arrows on hover.
@@ -135,7 +135,7 @@ fn row(
         Some((image, (width, height))) => div()
             .bg(white())
             .when(current, |thumb| {
-                // egui strokes outside the picture.
+                // The outline is drawn outside the picture.
                 thumb.m(px(-2.)).border_2().border_color(palette.accent)
             })
             .child(

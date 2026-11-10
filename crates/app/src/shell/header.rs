@@ -1,6 +1,6 @@
-//! Header row (egui `GodApp::header_row`, `mode_tab`, `search_field`): Menu, the mode tabs,
+//! Header row: Menu, the mode tabs,
 //! then on the right the search pill and properties / save / export / print. Fill `bg`,
-//! margin 10 × 0, height 46, a `border` line under it (egui panel separator).
+//! margin 10 × 0, height 46, a `border` line under it.
 
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ use crate::theme::Palette;
 use crate::widgets::{self, dispatch, icon};
 use crate::{fonts, icons};
 
-/// Search pill: egui clamps `available - 40` to 140..=300.
+/// Search pill: `available - 40` clamped to 140..=300.
 const SEARCH_MAX: f32 = 300.0;
 const SEARCH_MIN: f32 = 140.0;
 
@@ -91,7 +91,7 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         .border_color(palette.border)
         .text_size(px(fonts::BODY))
         .child(menu)
-        // egui: item spacing 8 after the Menu button, then 14.
+        // Item spacing 8 after the Menu button, then 14.
         .child(div().w(px(8. + 14.)))
         .child(div().flex().gap(px(2.)).children(tabs))
         .child(
@@ -109,7 +109,7 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         .into_any_element()
 }
 
-/// Text tab with a 2 px underline when active (egui `mode_tab`): text 15 + 11 px each side,
+/// Text tab with a 2 px underline when active: text 15 + 11 px each side,
 /// full header height; hover fill 8 px in from top and bottom, radius 6.
 fn mode_tab(mode: Mode, active: bool, enabled: bool, palette: &Palette) -> Stateful<Div> {
     let color = if !enabled {
@@ -159,7 +159,7 @@ fn mode_tab(mode: Mode, active: bool, enabled: bool, palette: &Palette) -> State
         })
 }
 
-/// Pill that looks like a search box and opens the command palette (egui `search_field`):
+/// Pill that looks like a search box and opens the command palette:
 /// 32 high, radius 16, `bg` fill, 1 px `border` (`text_dim` on hover), magnifier 15 centered
 /// 18 px in, hint (14, dim) at 34 px, shortcut (12, dim) 14 px from the right.
 fn search_field(palette: &Palette) -> Stateful<Div> {
@@ -207,7 +207,7 @@ fn shortcut_hint() -> &'static str {
     }
 }
 
-/// What the Menu popup shows (egui `header_row` popup + `GodApp::menus`).
+/// What the Menu popup shows.
 struct MenuState {
     app: WeakEntity<GodPdfApp>,
     show_tools: bool,
@@ -356,8 +356,8 @@ impl MenuState {
     }
 }
 
-/// A menu entry for the command labeled `label` in [`COMMANDS`], with its egui icon and
-/// shortcut; greyed when it needs a document and none is open (egui `menus::item`).
+/// A menu entry for the command labeled `label` in [`COMMANDS`], with its icon and
+/// shortcut; greyed when it needs a document and none is open.
 fn command(menu: PopupMenu, label: &str, has_doc: bool, cx: &mut Context<PopupMenu>) -> PopupMenu {
     let Some(cmd) = COMMANDS.iter().find(|cmd| cmd.label == label) else {
         return menu;
@@ -392,7 +392,7 @@ fn entry_item(
     )
 }
 
-/// egui `Button::new(with_icon(glyph, label)).shortcut_text(keys)` in a menu: glyph and label
+/// A menu entry with a shortcut: glyph and label
 /// at 13, the shortcut dimmed on the right.
 fn entry(
     glyph: &'static str,
@@ -416,7 +416,7 @@ fn entry(
         .child(div().text_color(palette.text_dim).child(keys))
 }
 
-/// The icon (egui `Cmd::icon`) and shortcut (egui `format_shortcut`) of a command by label.
+/// The icon and shortcut text of a command by label.
 /// shortcut: keyed by label, move into `dialogs::Command` once it carries icons.
 fn look(label: &str) -> (&'static str, &'static str) {
     match label {

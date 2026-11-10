@@ -1,4 +1,4 @@
-//! "Side by side" (egui `Cmd::SplitView`, `GodApp::companion`): a second viewer on the right
+//! "Side by side": a second viewer on the right
 //! half, showing another open document or another place of the one in front. It is for
 //! reading: the tools act on the document in front.
 //!
@@ -211,7 +211,7 @@ fn refresh(source: &Entity<DocTab>, mirror: &Entity<DocTab>, window: &mut Window
     }
 }
 
-/// The page shown on the right, 38 × 26 like egui's `DragValue`: click to type a number,
+/// The page shown on the right, 38 × 26: click to type a number,
 /// Enter or leaving the field goes there.
 fn page_box(
     mirror: &Entity<DocTab>,

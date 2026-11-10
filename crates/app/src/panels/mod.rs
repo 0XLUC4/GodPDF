@@ -1,5 +1,4 @@
-//! Right panel (ported from the egui `src/sidebar.rs`, `comments.rs`, `bookmarks.rs` and
-//! `GodApp::right_panel`), opened from the icon rail (`shell/rail.rs`): comments, page
+//! Right panel, opened from the icon rail (`shell/rail.rs`): comments, page
 //! thumbnails, bookmarks, text search, the form or the signature.
 //!
 //! App-wide state is the [`PanelState`] global (open panel, search field, the tab shown).
@@ -41,17 +40,17 @@ actions!(
     ]
 );
 
-/// Right panel (egui `right_panel`): default width, inner margin.
-/// egui: 320 at first, dragged 240..=520 by its left edge.
+/// Right panel: default width, inner margin.
+/// 320 at first, dragged 240..=520 by its left edge.
 const PANEL_WIDTH: f32 = 320.;
 const WIDTH_RANGE: (f32, f32) = (240., 520.);
 const PANEL_MARGIN: (f32, f32) = (14., 6.);
-/// Box a page thumbnail is fitted in (egui `sidebar::pages`: row width - 32 by 156).
+/// Box a page thumbnail is fitted in (row width - 32 by 156).
 // shortcut: sized for the first panel width; a wider panel centers it (portrait pages are
 // limited by the height anyway). Fit to the row if landscape thumbnails look small.
 const BOX: (f32, f32) = (PANEL_WIDTH - 2. * PANEL_MARGIN.0 - 32., 156.);
 
-/// The views of the right rail (egui `sidebar::Tab`), in rail order.
+/// The views of the right rail, in rail order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Panel {
     Comments,
@@ -173,7 +172,7 @@ fn with_active(cx: &mut App, update: impl FnOnce(&mut DocTab, &mut Context<DocTa
     });
 }
 
-/// Register panel actions and their key bindings (same keys as the egui app, plus F3).
+/// Register panel actions and their key bindings.
 pub fn register(cx: &mut App) {
     cx.set_global(PanelState::default());
     cx.bind_keys([
@@ -190,7 +189,7 @@ pub fn register(cx: &mut App) {
         state(cx).focus_search = true;
         show(Panel::Search, cx);
     });
-    // egui `Cmd::ToggleThumbnails`: hide the right panel, or bring back the last one.
+    // Hide the right panel, or bring back the last one.
     cx.on_action(|_: &ToggleSidebar, cx| {
         let state = state(cx);
         match state.open.take() {
@@ -207,7 +206,7 @@ pub fn register(cx: &mut App) {
     });
 }
 
-/// Rail button clicked (egui `rail`): toggle `panel`, focusing the search field on open.
+/// Rail button clicked: toggle `panel`, focusing the search field on open.
 pub fn rail_click(panel: Panel, cx: &mut App) {
     if panel == Panel::Search && open_panel(cx) != Some(Panel::Search) {
         state(cx).focus_search = true;
@@ -221,7 +220,7 @@ pub fn close(cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// The right panel (egui `right_panel`) left of the rail: title (17) + close, then the view.
+/// The right panel left of the rail: title (17) + close, then the view.
 /// `None` without a document or when closed.
 pub fn right(
     tab: Option<&Entity<DocTab>>,
@@ -297,12 +296,12 @@ pub fn page_overlay(tab: &mut DocTab, page: usize, cx: &mut Context<DocTab>) -> 
     search::page_overlay(tab, page, cx)
 }
 
-/// A plain label of the panel (egui `ui.label` in a colour): body size, no padding.
+/// A plain label of the panel in a colour: body size, no padding.
 fn label(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
     div().text_color(color).child(text.into())
 }
 
-/// A context menu entry like egui's `Button::new(with_icon(glyph, label))`: Phosphor glyph,
+/// A context menu entry: Phosphor glyph,
 /// half a glyph gap, label; dimmed when disabled. Add `.on_click(..)`.
 fn menu_entry(
     glyph: &'static str,

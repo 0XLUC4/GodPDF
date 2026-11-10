@@ -1,7 +1,7 @@
-//! Start screen (egui `welcome::show`): logo 112 (radius 24), name (40), tagline (17, dim),
+//! Start screen: logo 112 (radius 24), name (40), tagline (17, dim),
 //! then Open / New / Merge buttons (170 × 44, radius 10, text 16) and the recent files.
-//! Shown without a document or when the home tab is in front. Fill `bg`, rows 6 px apart
-//! (egui item spacing), centered in the view.
+//! Shown without a document or when the home tab is in front. Fill `bg`, rows 6 px apart,
+//! centered in the view.
 
 use std::sync::{Arc, LazyLock};
 
@@ -22,12 +22,12 @@ pub static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
 });
 
 const TAGLINE: &str = "Every PDF tool. Local. Pure Rust.";
-/// egui `TextStyle::Small`.
+/// Small text size.
 const SMALL: f32 = 9.0;
 
 pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -> AnyElement {
     let button = |id: &'static str, glyph, label: &'static str, primary: bool| {
-        // egui: Open has a fixed `accent` fill; the others the widget fills (surface, hover,
+        // Open has a fixed `accent` fill; the others the widget fills (surface, hover,
         // pressed `selected`) inside a 1 px `accent` stroke.
         let (hover, pressed) = (palette.hover, palette.selected);
         let text = if primary {
@@ -106,7 +106,7 @@ pub fn render(app: &GodPdfApp, palette: &Palette, cx: &mut Context<GodPdfApp>) -
         .bg(palette.bg)
         .text_size(px(fonts::BODY))
         .child(
-            // egui centers this column in the view, 16 px at least from the top.
+            // The column is centered in the view, 16 px at least from the top.
             div()
                 .min_h_full()
                 .py(px(16.))

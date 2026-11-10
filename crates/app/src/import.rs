@@ -1,5 +1,4 @@
-//! Files that are not PDFs but become one when opened: pictures and plain text (ported from
-//! the egui `src/import.rs`).
+//! Files that are not PDFs but become one when opened: pictures and plain text.
 
 use std::path::Path;
 

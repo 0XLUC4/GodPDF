@@ -1,4 +1,4 @@
-//! The Sign tool (egui `GodApp::place_signature`): a click puts the saved signature there,
+//! The Sign tool: a click puts the saved signature there,
 //! or asks for one first on the pad.
 
 use godpdf_core::Annotation;

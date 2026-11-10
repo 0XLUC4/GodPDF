@@ -1,6 +1,5 @@
-//! Settings kept between sessions (egui: eframe storage + `window.rs`): theme, right panel,
-//! tools panel, recent files, window size. JSON in `settings.json`, in the folder eframe
-//! uses for the egui app (`%APPDATA%\GodPDF\data` on Windows).
+//! Settings kept between sessions: theme, right panel, tools panel, recent files, window
+//! size. JSON in `settings.json`, in the app data folder (`%APPDATA%\GodPDF\data` on Windows).
 //!
 //! The root view notes what it shows every frame ([`track`]); it is written once, when the
 //! app quits ([`save`]).
@@ -14,7 +13,7 @@ use serde_json::{Value, json};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub dark: bool,
-    /// Right panel open (egui `show_sidebar`).
+    /// Right panel open.
     pub sidebar: bool,
     pub tools_panel: bool,
     /// Newest first.
@@ -90,7 +89,7 @@ fn to_json(settings: &Settings) -> String {
 }
 
 /// Anything missing or broken falls back to its default; a size too small or absurd is
-/// never brought back (egui `window::parse`).
+/// never brought back.
 fn parse(text: &str) -> Settings {
     let defaults = Settings::default();
     let Ok(value) = serde_json::from_str::<Value>(text) else {

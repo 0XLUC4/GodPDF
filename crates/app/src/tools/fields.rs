@@ -1,4 +1,4 @@
-//! Form fields filled in right on the page (ported from the egui `src/fieldedit.rs`): with
+//! Form fields filled in right on the page: with
 //! the Select tool a click on a text field opens a box to type in, a click on a check box
 //! ticks it, a radio button or a list offers its options. Also the Field tool's box.
 
@@ -20,7 +20,7 @@ use super::geom::DRect;
 use crate::doc::{DocTab, guarded};
 use crate::toasts;
 
-/// Fill over a field: egui's (30, 80, 200, 28), read as straight alpha so it shows on white.
+/// Fill over a field: (30, 80, 200, 28), read as straight alpha so it shows on white.
 const TINT: Rgba = Rgba {
     r: 30.0 / 255.0,
     g: 80.0 / 255.0,
@@ -65,7 +65,7 @@ impl Typed {
     }
 }
 
-/// The field boxes of `page` (egui `DocTab::field_widgets`).
+/// The field boxes of `page`.
 fn widgets(tab: &mut DocTab, page: usize) -> Rc<Vec<FieldWidget>> {
     let generation = tab.generation();
     let fields = &mut tab.canvas.fields;
@@ -260,7 +260,7 @@ pub fn render(
     boxes
 }
 
-/// The box to type a text field in, over the field (egui `fieldedit::show`).
+/// The box to type a text field in, over the field.
 pub fn editor(
     tab: &DocTab,
     page: usize,

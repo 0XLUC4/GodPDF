@@ -1,4 +1,4 @@
-//! The Form panel (ported from the egui `src/formfill.rs`): buttons to add fields, then
+//! The Form panel: buttons to add fields, then
 //! every field of the form with its answer, written in one undo step by "Fill in".
 
 use godpdf_core::{FieldKind, FieldValue, FormField, NewField};

@@ -1,5 +1,5 @@
-//! The windows over the document: the extracted text (egui `dialogs::text_window`) and the
-//! comparison of two documents (egui `compare::window`). Not modal: the document stays usable.
+//! The windows over the document: the extracted text and the
+//! comparison of two documents. Not modal: the document stays usable.
 
 use gpui::component::input::{Textarea, TextareaState};
 use gpui::prelude::*;
@@ -12,7 +12,7 @@ use super::compare::CompareView;
 use crate::theme::{self, Palette};
 use crate::{fonts, icons, widgets};
 
-/// Lines a page lost / gained (egui: rgb D6 3B 3B / 2F 9E 44).
+/// Lines a page lost / gained (rgb D6 3B 3B / 2F 9E 44).
 const REMOVED: u32 = 0xD63B3B;
 const ADDED: u32 = 0x2F9E44;
 
@@ -29,7 +29,7 @@ pub struct Windows {
     pub compare: Option<CompareView>,
 }
 
-/// An egui `Window`: title bar with a close cross, panel fill, window radius and shadow.
+/// A floating window: title bar with a close cross, panel fill, window radius and shadow.
 /// `offset` moves it from the middle of the app window, so two do not hide each other.
 fn floating(
     id: &'static str,

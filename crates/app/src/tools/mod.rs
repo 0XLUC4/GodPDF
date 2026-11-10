@@ -1,4 +1,4 @@
-//! Canvas tools (ported from the egui `src/quickbar.rs`, `selection.rs`, `textbox.rs`):
+//! Canvas tools:
 //! the active [`Tool`], per-tool styles, the floating quick bar over the viewer and the
 //! per-page interactions (select / move / resize / delete, draw, erase, pan, type, pictures).
 //!
@@ -92,7 +92,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// The quick bar, top to bottom: egui's `Tool::ALL`, plus stamp and redact before the
+    /// The quick bar, top to bottom: the drawing tools, plus stamp and redact before the
     /// eraser. `Highlight` and `Rectangle` stand for their groups ([`Tool::group`]): the
     /// button shows the last tool picked in it, the style card picks another.
     pub const BAR: [Tool; 11] = [
@@ -124,7 +124,7 @@ impl Tool {
             .find(|group| group.contains(&self))
     }
 
-    /// Phosphor glyph (egui `quickbar::Tool::icon` for the tools both apps have).
+    /// Phosphor glyph.
     fn icon(self) -> &'static str {
         match self {
             Self::Select => icons::CURSOR,
@@ -486,7 +486,7 @@ fn set_tool(tool: Tool, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Register tool actions and their key bindings (same keys as the egui app).
+/// Register tool actions and their key bindings.
 pub fn register(cx: &mut App) {
     cx.set_global(ToolState::default());
     let keys = Some(CANVAS_KEYS);
@@ -575,7 +575,7 @@ mod tests {
         };
         let tools = [Tool::SHAPES.as_slice(), &Tool::MARKUP, &Tool::BAR].concat();
         assert!(tools.into_iter().all(reachable));
-        // As in egui: chosen from the signature and form panels.
+        // Chosen from the signature and form panels.
         assert!(!reachable(Tool::Sign) && !reachable(Tool::Field));
         assert_eq!(Tool::Underline.group(), Some(&Tool::MARKUP[..]));
         assert_eq!(Tool::Select.group(), None);

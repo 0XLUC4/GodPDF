@@ -1,4 +1,4 @@
-//! Every command of the app by name (ported from the egui `src/commands.rs`): the command
+//! Every command of the app by name: the command
 //! palette and the tool menus are generated from [`COMMANDS`]. Each runs a gpui action, so a
 //! menu entry, a palette row and a shortcut all go through the same handler.
 

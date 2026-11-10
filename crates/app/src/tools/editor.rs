@@ -1,6 +1,6 @@
 //! Text typed on a page before it becomes an annotation: a free-text box laid out like core's
 //! FreeText appearance (same padding and line height, anchored by its top-left corner), or a
-//! sticky note. Typed in a gpui-component textarea (ported from the egui `src/textbox.rs`).
+//! sticky note. Typed in a gpui-component textarea.
 //!
 //! Ctrl+Enter or a click on the page outside writes it; Esc restores an edited text as it was.
 

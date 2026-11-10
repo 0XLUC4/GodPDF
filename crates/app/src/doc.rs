@@ -36,7 +36,7 @@ pub struct CachedPage {
 }
 
 /// A sharp picture of the part on screen of a page too large to be drawn whole at the zoom
-/// in use (egui `Detail`): drawn over the page, which is then as large as it can be.
+/// in use: drawn over the page, which is then as large as it can be.
 struct Detail {
     image: Arc<RenderImage>,
     scale: f32,
@@ -168,7 +168,7 @@ impl DocTab {
         self.details_in_flight.clear();
         self.page_errors.clear();
         self.geometries.clear();
-        // egui: callers set the selection again after an edit that keeps the pages.
+        // Callers set the selection again after an edit that keeps the pages.
         self.grid.selection.clear();
         let old_count = self.page_count();
         let bytes = Arc::new(self.session.bytes().to_vec());

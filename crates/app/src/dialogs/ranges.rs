@@ -1,4 +1,4 @@
-//! Human page ranges ("1-3, 5, 8-") <-> 0-based page indices (from the egui `src/ranges.rs`).
+//! Human page ranges ("1-3, 5, 8-") <-> 0-based page indices.
 
 /// Parse 1-based ranges into 0-based indices, in the order written. `8-` means 8..=last.
 pub fn parse(text: &str, page_count: usize) -> Result<Vec<usize>, String> {

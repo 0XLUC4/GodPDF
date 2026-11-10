@@ -1,4 +1,4 @@
-//! Left tools panel (egui `doc_panels` + `tools::panel`): title (17) + close cross, then the
+//! Left tools panel: title (17) + close cross, then the
 //! rows of the mode. Fill `bg`, margin 12 × 6, width 280, a `border` line on its right.
 //! Hidden in Read mode or when closed (Menu > Tools panel brings it back).
 
@@ -17,7 +17,7 @@ use crate::theme::{self, Palette, hex};
 use crate::tools::{HighlightTool, InkTool, NoteTool, PictureTool, RectangleTool, TextTool};
 use crate::{fonts, icons, organize, panels, text, widgets};
 
-/// egui: resizable 220..=420 (280 at first, `Shell::tools_width`).
+/// Resizable 220..=420 (280 at first, `Shell::tools_width`).
 const WIDTH_RANGE: (f32, f32) = (220.0, 420.0);
 /// "All tools" rows past this count hide behind "View more".
 const FOLDED: usize = 11;
@@ -34,7 +34,7 @@ struct Row {
     glyph: &'static str,
     tint: u32,
     label: &'static str,
-    /// Tooltip (egui `Cmd::description` / mode hint); empty = none.
+    /// Tooltip (command description / mode hint); empty = none.
     hint: &'static str,
 }
 
@@ -57,7 +57,7 @@ const fn row(
 use Do::Run;
 use theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
 
-/// egui `tools::ALL_TOOLS`, with each command's icon and tint (`Cmd::icon`, `Cmd::tint`).
+/// The All tools rows, with each command's icon and tint.
 const ALL_TOOLS: &[Row] = &[
     row(
         Run(|| Box::new(SaveAs)),
@@ -194,7 +194,7 @@ const ALL_TOOLS: &[Row] = &[
     ),
 ];
 
-/// egui `commands::in_group(Group::Organize)` (`Cmd::short_label`), then "Combine files".
+/// The Organize commands (short labels), then "Combine files".
 const ORGANIZE: &[Row] = &[
     row(
         Run(|| Box::new(organize::ToggleOrganize)),
@@ -345,7 +345,7 @@ const ORGANIZE: &[Row] = &[
     ),
 ];
 
-/// egui `commands::in_group(Group::Comment)`.
+/// The Comment commands.
 const COMMENT: &[Row] = &[
     row(
         Run(|| Box::new(HighlightTool)),
@@ -405,7 +405,7 @@ const COMMENT: &[Row] = &[
     ),
 ];
 
-/// egui `commands::in_group(Group::Protect)`.
+/// The Protect commands.
 const PROTECT: &[Row] = &[
     row(
         Run(|| Box::new(SetPassword)),
@@ -430,7 +430,7 @@ const PROTECT: &[Row] = &[
     ),
 ];
 
-/// The rows `mode` lists (egui `tools::panel`).
+/// The rows `mode` lists.
 fn rows_of(mode: Mode) -> &'static [Row] {
     match mode {
         Mode::AllTools | Mode::Read => ALL_TOOLS,
@@ -469,7 +469,7 @@ pub fn render(
             } else {
                 "View more"
             };
-            // egui: 6 px of space on top of the 2 px item spacing; the button hugs its text.
+            // 6 px of space on top of the 2 px item spacing; the button hugs its text.
             rows.push(
                 div()
                     .pt(px(6.))
@@ -523,7 +523,7 @@ pub fn render(
             .border_color(palette.border)
             .text_size(px(fonts::BODY))
             .child(
-                // egui: 10 px, the title row, item spacing 6 + 8 px, then the list.
+                // 10 px, the title row, item spacing 6 + 8 px, then the list.
                 div()
                     .mt(px(10.))
                     .mb(px(14.))
@@ -579,10 +579,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lists_match_egui() {
+    fn lists_match_commands() {
         assert_eq!(ALL_TOOLS.len(), 19);
         assert_eq!(ALL_TOOLS[FOLDED - 1].label, "Extract pages");
-        // 20 Organize commands + "Combine files", 8 Comment, 3 Protect in egui.
+        // 20 Organize commands + "Combine files", 8 Comment, 3 Protect.
         assert_eq!(ORGANIZE.len(), 21);
         assert_eq!(COMMENT.len(), 8);
         assert_eq!(PROTECT.len(), 3);

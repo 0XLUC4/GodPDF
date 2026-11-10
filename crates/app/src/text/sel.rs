@@ -1,4 +1,4 @@
-//! Page text selection (ported from the egui `src/textsel.rs`): picking characters under
+//! Page text selection: picking characters under
 //! the pointer, the line bands of a selected range, and the text to copy. All geometry is in
 //! displayed page points; a band is `[x0, y0, x1, y1]`.
 

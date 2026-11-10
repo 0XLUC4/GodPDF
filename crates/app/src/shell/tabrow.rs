@@ -1,4 +1,4 @@
-//! Tab row (egui `GodApp::tab_row`, `tab_shape`, `doc_tab`): home tab, one tab per document,
+//! Tab row: home tab, one tab per document,
 //! "+ Open", then updates / about / theme on the right. Fill `surface`, margin 8 / 8 / 4 / 0,
 //! no line under it: the active tab merges into the header below.
 
@@ -21,7 +21,7 @@ use crate::{fonts, icons, toasts};
 const TAB_TEXT_MAX: f32 = 180.0;
 
 impl GodPdfApp {
-    /// Menu > File > Reopen closed tab, Ctrl+Shift+T (egui `Cmd::ReopenTab`).
+    /// Menu > File > Reopen closed tab, Ctrl+Shift+T.
     pub fn reopen_tab(&mut self, _: &ReopenTab, _: &mut Window, cx: &mut Context<Self>) {
         match self.shell.closed.pop() {
             Some(path) => self.open_path(&path, cx),
@@ -29,7 +29,7 @@ impl GodPdfApp {
         }
     }
 
-    /// Close every other document that has nothing to save (egui `close_others`).
+    /// Close every other document that has nothing to save.
     fn close_others(&mut self, keep: usize, cx: &mut Context<Self>) {
         let Some(kept) = self.tabs.get(keep).cloned() else {
             return;
@@ -82,7 +82,7 @@ pub fn render(
         }));
     let home = widgets::tooltip(home, "Home");
 
-    // Share what is left between the tabs; names shrink before anything overflows (egui:
+    // Share what is left between the tabs; names shrink before anything overflows (the
     // row width less margins 8 + 8, the 2 px lead and the home tab with its spacing).
     let available = f32::from(window.viewport_size().width) - 16.0 - 2.0 - 40.0 - 2.0;
     let reserved = 2.0 * ICON_BUTTON + 100.0;
@@ -163,7 +163,7 @@ pub fn render(
         .into_any_element()
 }
 
-/// What the right-click menu of a tab needs (egui `response.context_menu` in `tab_row`).
+/// What the right-click menu of a tab needs.
 #[derive(Clone)]
 struct TabMenu {
     app: WeakEntity<GodPdfApp>,
@@ -236,7 +236,7 @@ impl TabMenu {
     }
 }
 
-/// Show `path` selected in the file manager (egui `platform::reveal`).
+/// Show `path` selected in the file manager.
 fn reveal(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     let started = {
@@ -259,7 +259,7 @@ fn reveal(path: &Path) -> Result<(), String> {
         .map_err(|err| format!("Cannot show {}: {err}", path.display()))
 }
 
-/// Tab-shaped hit area (egui `tab_shape`): active = `bg` with rounded top corners from 4 px
+/// Tab-shaped hit area: active = `bg` with rounded top corners from 4 px
 /// below the row top down to the header; hovered = `hover`, radius 8, 5 px in from top and
 /// bottom. Add the width and a [`content`] child.
 fn tab_shape(id: impl Into<gpui::ElementId>, active: bool, palette: &Palette) -> Stateful<Div> {
@@ -285,12 +285,12 @@ fn tab_shape(id: impl Into<gpui::ElementId>, active: bool, palette: &Palette) ->
         .child(fill)
 }
 
-/// Content of a tab, 2 px below the middle as egui draws it.
+/// Content of a tab, 2 px below the middle.
 fn content() -> Div {
     div().relative().h_full().pt(px(4.)).flex().items_center()
 }
 
-/// One document tab (egui `doc_tab`): FILE_PDF 16 centered 20 px in, name (14) at 36 px cut
+/// One document tab: FILE_PDF 16 centered 20 px in, name (14) at 36 px cut
 /// with "…" at `text_max`, `*` (15) in 14 px when unsaved, close cross (22 / 13) 8 px from
 /// the right edge.
 fn doc_tab(
@@ -326,7 +326,7 @@ fn doc_tab(
         title
     };
     let tab = tab_shape(("tab", index), active, palette)
-        // Widths of egui: 12 + 16 + 8 + text + (14) + 8 + close + 8.
+        // Widths: 12 + 16 + 8 + text + (14) + 8 + close + 8.
         .child(
             content()
                 .pl(px(12.))

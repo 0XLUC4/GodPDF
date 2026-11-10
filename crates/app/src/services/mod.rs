@@ -1,7 +1,7 @@
-//! App services ported from the egui app: settings kept between sessions (`settings.rs`),
+//! App services: settings kept between sessions (`settings.rs`),
 //! updates from GitHub (`updates.rs`), the "Working…" spinner of background jobs
 //! (`jobs.rs`), files changed by another program (`watch.rs`), and their dialogs: About,
-//! Updates, Preferences and the password asked for an encrypted PDF (egui `dialogs.rs`).
+//! Updates, Preferences and the password asked for an encrypted PDF.
 //!
 //! Dialogs work as in `dialogs/`: an action records the dialog as pending in the
 //! [`Services`] global; [`overlay`] (it has the window) builds and focuses it.
@@ -86,7 +86,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &About, cx| open_later(Pending::About, cx));
     cx.on_action(|_: &Preferences, cx| open_later(Pending::Preferences, cx));
     cx.on_action(|_: &Updates, cx| {
-        // egui: look again unless a list is already in.
+        // Look again unless a list is already in.
         if !matches!(
             updates::get(cx).map(|updates| &updates.state),
             Some(updates::State::Ready(_))
@@ -134,7 +134,7 @@ pub fn track(app: &GodPdfApp, window: &Window, cx: &App) {
     });
 }
 
-/// An encrypted file needs a password to open: ask for it (egui `Dialog::Password`).
+/// An encrypted file needs a password to open: ask for it.
 pub fn ask_password(
     name: String,
     path: Option<PathBuf>,
@@ -189,7 +189,7 @@ fn unlock(window: &mut Window, cx: &mut App) {
             );
         }
         Err(godpdf_core::Error::BadPassword) => {
-            // egui: the field is emptied and the dialog says why.
+            // The field is emptied and the dialog says why.
             input.update(cx, |input, cx| input.set_value("", window, cx));
             state(cx).open = Some(Dialog::Password {
                 locked,
@@ -270,7 +270,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .flex()
             .justify_center()
             .items_center()
-            // egui `Modal` backdrop: black at alpha 100.
+            // Backdrop: black at alpha 100.
             .bg(hsla(0., 0., 0., 100. / 255.))
             .on_mouse_down(MouseButton::Left, |_, window, cx| close(window, cx))
             .child(card)
@@ -288,7 +288,7 @@ fn info_card(focus: &FocusHandle, palette: &Palette) -> Div {
         .on_action(|_: &DialogCancel, window, cx| close(window, cx))
 }
 
-/// egui `buttons(ui, label, None, enter)`: one filled button that closes the dialog.
+/// One filled button that closes the dialog.
 fn close_row(label: &'static str, palette: &Palette) -> AnyElement {
     dialogs::button_row()
         .child(
@@ -334,7 +334,7 @@ fn about(palette: &Palette) -> Vec<AnyElement> {
             fonts::BODY,
             dim,
         ))
-        // egui `.small()`.
+        // Small text.
         .child(line("Built with GPUI, lopdf and hayro".into(), 9., dim));
     vec![column.into_any_element(), close_row("Close", palette)]
 }
@@ -405,7 +405,7 @@ fn password(
         )
 }
 
-/// egui `dialogs::updates`: status, the releases with their notes, install / links.
+/// The Updates dialog: status, the releases with their notes, install / links.
 fn updates_body(palette: &Palette, cx: &App) -> Vec<AnyElement> {
     use updates::{CAN_INSTALL, RELEASES_PAGE, State};
     let current = env!("CARGO_PKG_VERSION");
@@ -535,7 +535,7 @@ fn updates_body(palette: &Palette, cx: &App) -> Vec<AnyElement> {
     body
 }
 
-/// egui `install_row`: the blue "Download and install" button, or the download under way.
+/// The blue "Download and install" button, or the download under way.
 fn install_row(asset: String, install: &updates::Install, palette: &Palette) -> AnyElement {
     use updates::Install;
     if matches!(install, Install::Downloading) {
@@ -592,7 +592,7 @@ fn spinner_line(text: &'static str, palette: &Palette) -> AnyElement {
         .into_any_element()
 }
 
-/// egui `hyperlink_to`: accent text, underlined on hover, opens `url` in the browser.
+/// A link: accent text, underlined on hover, opens `url` in the browser.
 fn link(
     id: impl Into<gpui::ElementId>,
     glyph: Option<&'static str>,
@@ -618,7 +618,7 @@ fn link(
         .into_any_element()
 }
 
-/// The release notes (egui `markdown`): headings, bullets, `**bold**` and `code` marks
+/// The release notes: headings, bullets, `**bold**` and `code` marks
 /// dropped (Ubuntu Light has no bold).
 fn markdown(text: &str, palette: &Palette) -> Vec<AnyElement> {
     let clean = |line: &str| line.replace("**", "").replace('`', "");
@@ -678,7 +678,7 @@ pub fn updates_button(palette: &Palette, cx: &App) -> AnyElement {
         .relative()
         .on_click(widgets::dispatch(Updates));
     let dot = newest.map(|_| {
-        // egui: radius 4 at the top-right corner, 6 in.
+        // Radius 4 at the top-right corner, 6 in.
         div()
             .absolute()
             .top(px(6. - 4.))

@@ -1,5 +1,5 @@
-//! A file changed by another program is read again, unless it was changed here too
-//! (egui `GodApp::watch_files`): the files of the open documents are looked at every 2 s.
+//! A file changed by another program is read again, unless it was changed here too:
+//! the files of the open documents are looked at every 2 s.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +11,7 @@ use gpui::{App, Context, EntityId, Global};
 use crate::app::GodPdfApp;
 use crate::{files, toasts};
 
-/// egui `DISK_WATCH`.
+/// How often the files are looked at.
 const EVERY: Duration = Duration::from_secs(2);
 
 /// When the file of each document was last seen written.

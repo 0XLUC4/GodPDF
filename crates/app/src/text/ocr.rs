@@ -1,4 +1,4 @@
-//! Ported from the egui `src/ocr.rs`. Text recognition of the pages. On Windows the recognizer of the system reads every
+//! Text recognition of the pages. On Windows the recognizer of the system reads every
 //! language installed there; elsewhere a model (12 MB) is downloaded on first use.
 //!
 //! Every page is read; words the page already holds as text are left out, so pages that
@@ -141,7 +141,7 @@ mod engine {
     ];
 
     fn folder() -> Option<PathBuf> {
-        // Where eframe's `storage_dir` keeps them for the egui app, so both share the models.
+        // The app data folder, so models downloaded once are kept.
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let data = if cfg!(target_os = "macos") {
             home.map(|home| home.join("Library/Application Support/GodPDF"))

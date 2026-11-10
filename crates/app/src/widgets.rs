@@ -1,5 +1,5 @@
-//! Small shared controls in the palette of `theme.rs`, ported from the egui `src/widgets.rs`
-//! (same sizes). Icons are Phosphor glyphs from `icons.rs`, drawn with [`icon`].
+//! Small shared controls in the palette of `theme.rs`.
+//! Icons are Phosphor glyphs from `icons.rs`, drawn with [`icon`].
 
 use gpui::component::tooltip::Tooltip;
 use gpui::prelude::*;
@@ -8,7 +8,7 @@ use gpui::{Action, App, BoxShadow, Div, ElementId, Hsla, SharedString, Stateful,
 use crate::fonts;
 use crate::theme::{self, Palette};
 
-/// Side of a standard icon-only button (egui `ICON_BUTTON`).
+/// Side of a standard icon-only button.
 pub const ICON_BUTTON: f32 = 28.0;
 /// Side of a compact icon-only button: tab close, thumbnail arrows (`SMALL_ICON_BUTTON`).
 pub const SMALL_ICON_BUTTON: f32 = 22.0;
@@ -20,8 +20,8 @@ pub fn glyph(glyph: &'static str) -> Div {
     div().flex_none().font_family(fonts::ICONS).child(glyph)
 }
 
-/// One Phosphor glyph (`icons::X`) at `size` px in `color`, as egui draws it: a line box of
-/// the glyph's size, so it centers like egui's text.
+/// One Phosphor glyph (`icons::X`) at `size` px in `color`: a line box of
+/// the glyph's size, so it centers like text.
 pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
     self::glyph(glyph)
         .text_size(px(size))
@@ -29,7 +29,7 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         .text_color(color)
 }
 
-/// Glyph then label with egui's `with_icon` gap (two spaces of the label's font, ~`size`/2).
+/// Glyph then label with a gap (two spaces of the label's font, ~`size`/2).
 pub fn with_icon(
     glyph: &'static str,
     label: impl Into<SharedString>,
@@ -46,7 +46,7 @@ pub fn with_icon(
         .child(label.into())
 }
 
-/// Attach a hover tooltip, like egui's `on_hover_text`: an egui popup frame (panel fill,
+/// Attach a hover tooltip: a popup frame (panel fill,
 /// border, radius 9, margin 8, popup shadow) around body text.
 pub fn tooltip(element: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
     let text = text.into();
@@ -64,8 +64,8 @@ pub fn tooltip(element: Stateful<Div>, text: impl Into<SharedString>) -> Statefu
     })
 }
 
-/// An egui `Shadow { offset: [0, y], blur, spread: 0 }` of black at `alpha` (0..1). GPUI's
-/// blur radius is a gaussian deviation, about half of egui's blur width.
+/// A shadow offset `[0, y]`, `blur` wide, of black at `alpha` (0..1). GPUI's blur
+/// radius is a gaussian deviation, about half the blur width.
 pub fn shadow(y: f32, blur: f32, alpha: f32) -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: gpui::hsla(0., 0., 0., alpha),
@@ -76,12 +76,12 @@ pub fn shadow(y: f32, blur: f32, alpha: f32) -> Vec<BoxShadow> {
     }]
 }
 
-/// egui `popup_shadow`: menus, tooltips, toasts, the command palette.
+/// Popup shadow: menus, tooltips, toasts, the command palette.
 pub fn popup_shadow(palette: &Palette) -> Vec<BoxShadow> {
     shadow(6.0, 16.0, palette.shadow_alpha * 0.75)
 }
 
-/// egui `icon_widget`: square, frameless until hovered (hover fill, radius 7), glyph in the
+/// Icon widget: square, frameless until hovered (hover fill, radius 7), glyph in the
 /// text colour. Add `.on_click(..)`. `enabled = false` dims it and drops the hover.
 pub fn icon_widget(
     id: impl Into<ElementId>,
@@ -111,7 +111,7 @@ pub fn icon_widget(
         .child(icon(glyph, glyph_size, color))
 }
 
-/// Standard 28×28 icon button (16 px glyph) with a tooltip (egui `icon_button`).
+/// Standard 28×28 icon button (16 px glyph) with a tooltip.
 pub fn icon_button(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -124,7 +124,7 @@ pub fn icon_button(
     )
 }
 
-/// Compact 22×22 icon button (13 px glyph) with a tooltip (egui `small_icon_button`).
+/// Compact 22×22 icon button (13 px glyph) with a tooltip.
 pub fn small_icon_button(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -138,7 +138,7 @@ pub fn small_icon_button(
 }
 
 /// 32×32 toggle of the right rail (18 px glyph); `selected` shows the `selected` square,
-/// hover the `hover` one (egui `rail_button`, a `Button::selectable`).
+/// hover the `hover` one.
 pub fn rail_button(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -152,7 +152,7 @@ pub fn rail_button(
     tooltip(button, tip)
 }
 
-/// Full-width list row (egui `tool_row`): 20 px glyph in `tint` centered 20 px from the left,
+/// Full-width list row: 20 px glyph in `tint` centered 20 px from the left,
 /// label (14) at 42 px, optional dimmed description (13) under it; hover fill radius 8.
 /// Height 40, or 52 with a description.
 pub fn tool_row(
@@ -197,7 +197,7 @@ pub fn tool_row(
         )
 }
 
-/// A frameless text button (egui `Button` with `frame_when_inactive(false)`): padding 10×5,
+/// A frameless text button: padding 10×5,
 /// height 26, hover fill, radius 7. Add `.on_click(..)`, e.g. [`dispatch`].
 pub fn button(
     id: impl Into<ElementId>,
@@ -219,7 +219,7 @@ pub fn button(
         .child(label.into())
 }
 
-/// A framed egui button (`ui.button`): surface fill, 1 px border, radius 7, padding 10×5,
+/// A framed button: surface fill, 1 px border, radius 7, padding 10×5,
 /// height 26; hover fill. `enabled = false` dims the label and drops the hover.
 pub fn framed_button(
     id: impl Into<ElementId>,
@@ -253,7 +253,7 @@ pub fn framed_button(
         .child(label)
 }
 
-/// egui's filled button of a dialog's main action (`dialogs::primary_button`): a
+/// The filled button of a dialog's main action: a
 /// [`framed_button`] in the accent colour.
 pub fn accent_button(
     id: impl Into<ElementId>,

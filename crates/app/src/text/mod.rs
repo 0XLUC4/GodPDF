@@ -1,5 +1,4 @@
-//! The text of the pages (ported from the egui `src/textsel.rs`, `lineedit.rs`, `ocr.rs`,
-//! `compare.rs`): select and copy it with the Select tool (Ctrl+C), "Edit PDF text" line by
+//! The text of the pages: select and copy it with the Select tool (Ctrl+C), "Edit PDF text" line by
 //! line on the page, "Extract text", "Recognize text (OCR)" and "Compare with…".
 //!
 //! App-wide state is the [`TextState`] global (edit-text mode, the open windows, the document
@@ -46,7 +45,7 @@ actions!(
 
 /// Same context as the single-key tool shortcuts: never while typing in a field.
 const KEYS: &str = "GodPdf && !Input";
-/// Fill of selected page text (egui: black at alpha 56, the UI stays monochrome).
+/// Fill of selected page text (black at alpha 56, the UI stays monochrome).
 const SELECTION_ALPHA: f32 = 56.0 / 255.0;
 
 #[derive(Default)]

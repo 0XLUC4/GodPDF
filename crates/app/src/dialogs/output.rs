@@ -1,5 +1,4 @@
-//! Work that writes other files: pages as pictures, split parts (ported from
-//! the egui `src/pagetools.rs` and `platform.rs`). The heavy part runs in the background;
+//! Work that writes other files: pages as pictures, split parts. The heavy part runs in the background;
 //! the folder is asked for once it is done.
 
 use std::path::{Path, PathBuf};

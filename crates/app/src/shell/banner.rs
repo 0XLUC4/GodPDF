@@ -1,4 +1,4 @@
-//! Info banner over the canvas (egui `GodApp::banner`): fill `surface`, margin 16 × 6, a
+//! Info banner over the canvas: fill `surface`, margin 16 × 6, a
 //! `border` line under it. Glyph 16 + text (13), then on the right a pill button (fill `bg`,
 //! 1 px `text_dim`, radius 14) and a small dismiss cross. Dismissed per document.
 
@@ -39,7 +39,7 @@ pub fn render(
         ),
         Banner::Unsaved => (icons::INFO, "This document has unsaved changes.", "Save"),
     };
-    // egui: a fixed `bg` fill, no hover change.
+    // A fixed `bg` fill, no hover change.
     let action = div()
         .id("banner-action")
         .flex()

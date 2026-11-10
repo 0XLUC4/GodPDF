@@ -1,5 +1,4 @@
-//! Combine files: a list of PDFs to put one after the other into a new tab (ported from
-//! `merge` in the egui `src/dialogs.rs`).
+//! Combine files: a list of PDFs to put one after the other into a new tab.
 
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Window, div, px};
@@ -73,7 +72,7 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
                     .whitespace_nowrap()
                     .child(file.name.clone()),
             )
-            // egui: right to left, Remove, Move down, Move up; the ends are disabled.
+            // Right to left: Remove, Move down, Move up; the ends are disabled.
             .child(arrow(
                 ("merge-up", index),
                 crate::icons::CARET_UP,
@@ -153,7 +152,7 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
         .into_any_element()
 }
 
-/// A 22 × 22 move button of a file row (egui `small_icon_button`, disabled at the ends).
+/// A 22 × 22 move button of a file row (a small icon button, disabled at the ends).
 fn arrow(
     id: (&'static str, usize),
     glyph: &'static str,

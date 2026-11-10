@@ -1,22 +1,21 @@
-//! The fonts of the egui app, bundled: Ubuntu Light (all UI text), Hack (monospace) from
-//! `epaint_default_fonts` 0.35, and the Phosphor icon font (regular) from `egui-phosphor` 0.13.
+//! The bundled fonts: Ubuntu Light (all UI text), Hack (monospace) from
+//! `epaint_default_fonts` 0.35, and the Phosphor icon font (regular) 0.13.
 
 use std::borrow::Cow;
 
 use gpui::{App, px};
 
-/// UI text (egui `FontFamily::Proportional`): the typographic family of Ubuntu-Light.ttf.
-/// Its only face is Light (300), so every weight resolves to it, bold included, as in egui
-/// (egui has no bold either: `.strong()` only changes the colour).
+/// UI text: the typographic family of Ubuntu-Light.ttf.
+/// Its only face is Light (300), so every weight resolves to it, bold included.
 pub const UI: &str = "Ubuntu";
 /// The weight of [`UI`]: set it on the root so the match is exact.
 pub const UI_WEIGHT: gpui::FontWeight = gpui::FontWeight::LIGHT;
-/// egui `FontFamily::Monospace`.
+/// Monospace text.
 pub const MONO: &str = "Hack";
 /// Phosphor glyphs: see `icons.rs`.
 pub const ICONS: &str = "Phosphor";
 
-/// egui `TextStyle::Body` / `Button`: the size of text without an explicit size.
+/// The size of text without an explicit size (body and buttons).
 pub const BODY: f32 = 13.0;
 
 pub const FILES: [&[u8]; 3] = [
@@ -33,7 +32,7 @@ pub fn load(cx: &mut App) {
     }
 }
 
-/// Make gpui-component widgets use the egui fonts and sizes. Called after every theme change
+/// Make gpui-component widgets use the app fonts and sizes. Called after every theme change
 /// (`Theme::change` reloads the theme file, fonts included).
 pub fn apply_to_components(cx: &mut App) {
     gpui::component::Theme::update(cx, |theme| {

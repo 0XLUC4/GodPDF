@@ -26,12 +26,12 @@ use crate::{fonts, icons, toasts, widgets};
 
 /// Distance of the bar from the viewer's top-left corner.
 const INSET: f32 = 16.0;
-/// egui `widgets::ICON_BUTTON`: tool toggles, format toggles, card columns.
+/// Button side: tool toggles, format toggles, card columns.
 const BUTTON: f32 = widgets::ICON_BUTTON;
 const CARD_RADIUS: f32 = 10.0;
 const LABEL_WIDTH: f32 = 44.0;
 const FIELD_WIDTH: f32 = 100.0;
-/// Stamp and redact cards (no egui counterpart).
+/// Stamp and redact cards.
 const HINT_CARD_WIDTH: f32 = 190.0;
 
 /// The fields of the picture card (created once, reused for every picture).
@@ -242,7 +242,7 @@ fn tool_kind(tool: Tool) -> Option<Kind> {
     }
 }
 
-/// egui `quickbar::card`: panel fill, 1 px border, radius 10, margin 4, shadow 0/4/16 at
+/// A card: panel fill, 1 px border, radius 10, margin 4, shadow 0/4/16 at
 /// black alpha 28 (both themes).
 fn card(palette: &Palette) -> Div {
     div()
@@ -258,7 +258,7 @@ fn card(palette: &Palette) -> Div {
         .block_mouse_except_scroll()
 }
 
-/// egui `divider`: 7 px tall, a 1 px line inset 4 px each side.
+/// Divider: 7 px tall, a 1 px line inset 4 px each side.
 fn divider(palette: &Palette) -> Div {
     div()
         .flex_none()
@@ -514,12 +514,12 @@ fn style_card(
     )
 }
 
-/// Card title: egui `RichText::strong`, body text (Ubuntu Light has no bold).
+/// Card title: body text (Ubuntu Light has no bold).
 fn card_title(text: &'static str) -> Div {
     div().text_size(px(fonts::BODY)).child(text)
 }
 
-/// The column of a text card (egui: card margin 4, item spacing 6).
+/// The column of a text card (card margin 4, item spacing 6).
 fn text_card(palette: &Palette) -> Div {
     card(palette)
         .flex()
@@ -697,7 +697,7 @@ where
             format!("Larger {what}"),
             Change::Step(1.0),
         ))
-        // egui `RichText::small()`: 9 px.
+        // Small text: 9 px.
         .child(
             div()
                 .text_size(px(9.))
@@ -712,7 +712,7 @@ where
         ))
 }
 
-/// egui `hint_card`: a card one button wide with an info glyph; the hint is its tooltip.
+/// A card one button wide with an info glyph; the hint is its tooltip.
 fn hint_card(text: &'static str, palette: &Palette) -> AnyElement {
     card(palette)
         .child(widgets::tooltip(
@@ -727,7 +727,7 @@ fn hint_card(text: &'static str, palette: &Palette) -> AnyElement {
         .into_any_element()
 }
 
-/// egui `font_menu`: "Aa" in the current font on a framed button; the menu lists every font
+/// Font menu: "Aa" in the current font on a framed button; the menu lists every font
 /// in its own face.
 fn font_menu(current: Font, palette: &Palette) -> AnyElement {
     let (family, name) = editor::font_label(current);
@@ -873,7 +873,7 @@ fn picture_card(
         }
     }
     let keep = tool_state(cx).keep_ratio;
-    // egui `Grid` spacing 8 × 6.
+    // Grid spacing 8 × 6.
     let mut rows = div().flex().flex_col().gap(px(6.));
     for (field, state) in &fields {
         rows = rows.child(

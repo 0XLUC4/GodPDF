@@ -1,5 +1,4 @@
-//! The dialogs made of a [`Form`]: their fields, and what confirming them does (ported from
-//! the egui `src/dialogs.rs`, `pagetools.rs` and the dialog results of the egui `src/app.rs`).
+//! The dialogs made of a [`Form`]: their fields, and what confirming them does.
 //! Every change of the document is one undo step through `DocTab::apply`.
 
 use std::ops::RangeInclusive;
@@ -100,7 +99,7 @@ pub enum Kind {
     Split,
     Encrypt,
     Properties,
-    /// A form field over `rect` (PDF space) of `page` (egui `Dialog::NewField`).
+    /// A form field over `rect` (PDF space) of `page`.
     NewField {
         page: usize,
         rect: core::Rect,
@@ -164,7 +163,7 @@ pub fn build(
         .map_or(core::NewField::Text, |tools| tools.field_kind);
     let doc = tab.read(cx);
     let count = doc.page_count();
-    // egui `stamp_range`: the pages selected in the Organize grid, or all of them.
+    // The pages selected in the Organize grid, or all of them.
     let all = ranges::format(&crate::organize::offered_pages(doc));
     let extract = if doc.grid.on {
         let mut pages = crate::organize::target_pages(doc);

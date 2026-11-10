@@ -1,4 +1,4 @@
-//! Page orders of the Organize grid (pure, ported from the egui `src/organize.rs`).
+//! Page orders of the Organize grid (pure).
 
 use std::collections::BTreeSet;
 

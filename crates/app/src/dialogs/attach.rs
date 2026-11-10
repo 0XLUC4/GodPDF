@@ -1,5 +1,4 @@
-//! Attached files: the files carried inside the PDF, to add, save or remove (ported from
-//! `Dialog::Attachments` in the egui `src/dialogs.rs` and `app.rs`).
+//! Attached files: the files carried inside the PDF, to add, save or remove.
 
 use godpdf_core::{self as core, Attachment};
 use gpui::prelude::*;
@@ -149,7 +148,7 @@ pub fn render(attach: &Attach, palette: &Palette) -> AnyElement {
                     .child(size_text(file.bytes.len())),
             )
             .child(div().flex_1())
-            // egui: right to left, Remove then Save a copy.
+            // Right to left: Remove, then Save a copy.
             .child(
                 small_icon_button(
                     ("attach-save", index),

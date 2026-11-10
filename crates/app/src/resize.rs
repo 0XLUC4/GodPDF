@@ -1,4 +1,4 @@
-//! Side panels dragged wider or narrower by their inner edge (egui `Panel::resizable`).
+//! Side panels dragged wider or narrower by their inner edge.
 
 use gpui::prelude::*;
 use gpui::{App, Bounds, Div, DragMoveEvent, EmptyView, Pixels, Stateful, Window, div, px};

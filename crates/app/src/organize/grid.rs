@@ -1,4 +1,4 @@
-//! The Organize page grid (egui `organize::show`): a tool bar of page commands, then a card
+//! The Organize page grid: a tool bar of page commands, then a card
 //! per page. Click selects (Ctrl toggles, Shift selects a run), double-click opens the page
 //! in the reader, drag moves the page (or the selection it is in) before or after another,
 //! the arrows of a card move it one place.
@@ -19,7 +19,7 @@ use crate::doc::DocTab;
 use crate::theme::Palette;
 use crate::{fonts, icons, panels, widgets};
 
-/// A page card and the box its thumbnail is fitted in (egui `CARD`, `THUMB_BOX`).
+/// A page card and the box its thumbnail is fitted in.
 const CARD: (f32, f32) = (168., 218.);
 const THUMB_BOX: (f32, f32) = (144., 180.);
 /// Space between cards, and before the first one.
@@ -27,7 +27,6 @@ const GAP: f32 = 14.;
 const INDENT: f32 = 12.;
 const PICK: panels::Pick = |tab| &mut tab.grid.thumbs;
 
-/// egui `TOOLBAR`.
 /// A tool bar button: the command, its icon, label and description.
 type ToolButton = (
     fn() -> Box<dyn Action>,
@@ -141,7 +140,7 @@ fn measure(tab: &Entity<DocTab>) -> impl IntoElement {
     .size_full()
 }
 
-/// egui: panel fill, margin 16 × 10, wrapped framed buttons (glyph + label, 28 high), a
+/// The tool bar: panel fill, margin 16 × 10, wrapped framed buttons (glyph + label, 28 high), a
 /// separator, Select all / Clear selection, then "k of n selected".
 fn toolbar(tab: &Entity<DocTab>, count: usize, selected: usize, palette: &Palette) -> AnyElement {
     let buttons = TOOLBAR
@@ -259,7 +258,7 @@ impl Render for DragGhost {
     }
 }
 
-/// egui `card`: 168 × 218, radius 10, surface fill (hover fill when hovered), 1 px border or
+/// A page card: 168 × 218, radius 10, surface fill (hover fill when hovered), 1 px border or
 /// 2 px accent when selected; the page fitted in 144 × 180 at 12 from the top, white; its
 /// number (13) 14 above the bottom; earlier / later arrows in the bottom corners.
 fn card(

@@ -1,4 +1,4 @@
-//! Bookmarks panel (ported from the egui `src/bookmarks.rs`): the tree with page numbers;
+//! Bookmarks panel: the tree with page numbers;
 //! a click goes to the page, a double-click renames, right-click moves, nests or deletes.
 
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use crate::{fonts, icons, toasts, widgets};
 /// Where a bookmark is in the tree: its index at each level.
 type Path = Vec<usize>;
 
-/// egui `spacing.indent`.
+/// Indent of each tree level.
 const INDENT: f32 = 18.;
 
 /// Bookmark state of one document.
@@ -30,7 +30,7 @@ pub struct Marks {
     outline: Option<(u64, Result<Vec<OutlineItem>, String>)>,
     renaming: Option<Renaming>,
     /// Branches opened or closed by a click on their arrow; the others start open only when
-    /// they hold the bookmark of the page being read (egui `CollapsingState` default).
+    /// they hold the bookmark of the page being read.
     toggled: HashMap<Path, bool>,
 }
 
@@ -179,7 +179,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     let field = rename_field(tab, window, cx);
     let more_of = weak.clone();
     let has_items = read.as_ref().is_ok_and(|items| !items.is_empty());
-    // egui: framed `ui.button(with_icon(BOOKMARK_SIMPLE, "Add"))`, a framed `menu_button`
+    // A framed "Add" button (BOOKMARK_SIMPLE), a framed menu button
     // (DOTS_THREE_VERTICAL) on the right, then 6 px.
     let (surface, border, hover) = (palette.surface, palette.border, palette.hover);
     let framed = |button: gpui::Stateful<gpui::Div>| {
@@ -413,7 +413,7 @@ fn row(
     renaming: Option<Entity<InputState>>,
     palette: &Palette,
 ) -> AnyElement {
-    // egui: an `indent` wide slot (a branch's open / close arrow, blank for a leaf), the body
+    // An `indent` wide slot (a branch's open / close arrow, blank for a leaf), the body
     // of a branch one `indent` further in.
     let indent = px(INDENT * (path.len() - 1) as f32);
     let slot = div()

@@ -1,4 +1,4 @@
-//! Two documents compared (ported from the egui `src/compare.rs`): the lines of text each
+//! Two documents compared: the lines of text each
 //! page lost or gained, and the pages that look different though their text is the same.
 
 use std::sync::Arc;

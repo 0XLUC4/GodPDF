@@ -65,7 +65,7 @@ pub fn error(cx: &mut App, text: impl Into<SharedString>) {
     push(cx, Level::Error, text);
 }
 
-/// The toast stack, absolutely placed in the bottom-right of its parent (egui: anchored
+/// The toast stack, absolutely placed in the bottom-right of its parent (anchored
 /// 16 from the right and 40 from the bottom, 6 of space after each toast). A click on a toast
 /// dismisses it.
 pub fn render(cx: &App) -> Option<impl IntoElement> {
@@ -82,7 +82,7 @@ pub fn render(cx: &App) -> Option<impl IntoElement> {
             .flex()
             .flex_col()
             .items_end()
-            // egui item spacing 6 + the 6 of space after each toast.
+            // Item spacing 6 + the 6 of space after each toast.
             .gap(px(12.))
             .children(toasts.items.iter().map(|toast| {
                 let (accent, glyph) = match toast.level {

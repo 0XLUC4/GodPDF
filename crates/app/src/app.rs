@@ -37,7 +37,7 @@ actions!(
 /// Key context of the root view; bindings with `None` context apply everywhere.
 const CONTEXT: &str = "GodPdf";
 
-/// Shortcuts of the egui app (the egui `src/commands.rs`). `secondary!` = Ctrl (Cmd on macOS).
+/// App shortcuts. `secondary!` = Ctrl (Cmd on macOS).
 pub fn register(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(secondary!("o"), Open, None),
@@ -270,7 +270,7 @@ impl GodPdfApp {
                 self.shell.closed.retain(|closed| closed != &path);
                 self.shell.closed.push(path);
             }
-            // egui `close_tab`: the tab after the closed one comes in front.
+            // The tab after the closed one comes in front.
             if self.active > index || self.active >= self.tabs.len() {
                 self.active = self.active.saturating_sub(1);
             }

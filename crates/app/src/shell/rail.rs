@@ -1,4 +1,4 @@
-//! Right icon rail (egui `doc_panels` "rail" + `GodApp::rail`): the view toggles at the top,
+//! Right icon rail: the view toggles at the top,
 //! page box / previous / next / zoom at the bottom. Width 52, fill `bg`, margin 0 × 10,
 //! a `border` line on its left. The panel a toggle opens is `panels::right`.
 
@@ -84,7 +84,7 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
         .child(dim(format!("/ {count}")))
         .child(previous)
         .child(next)
-        // egui `add_space(8)` after a 4 px item gap: 4 + 4 + 4 here.
+        // 8 px of space after a 4 px item gap: 4 + 4 + 4.
         .child(div().h(px(4.)))
         .child(dim(format!("{:.0}%", zoom * 100.0)))
         .child(
@@ -140,7 +140,7 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
         .into_any_element()
 }
 
-/// The page box while it is typed in (egui `DragValue` in edit mode).
+/// The page box while it is typed in.
 #[derive(Default)]
 struct PageField(Option<(Entity<InputState>, Subscription)>);
 
@@ -153,7 +153,7 @@ struct PageDrag {
     offset: Rc<Cell<Point<Pixels>>>,
 }
 
-/// Page number box, 38 × 26 like egui's `DragValue`: drag right / up for later pages (one
+/// Page number box, 38 × 26: drag right / up for later pages (one
 /// page per point), click to type a number (Enter or leaving the field goes there).
 fn page_box(
     tab: &Entity<DocTab>,

@@ -1,5 +1,5 @@
-//! Phosphor icon glyphs (regular), the ones the egui app uses, under the same names as
-//! `egui_phosphor::regular` (generated from egui-phosphor 0.13). Draw with [`crate::widgets::icon`].
+//! Phosphor icon glyphs (regular) the app uses, under their Phosphor names (generated from
+//! Phosphor 0.13). Draw with [`crate::widgets::icon`].
 
 #![allow(dead_code)]
 
@@ -111,7 +111,7 @@ pub const WARNING_CIRCLE: &str = "\u{E4E2}";
 pub const X: &str = "\u{E4F6}";
 pub const X_CIRCLE: &str = "\u{E4F8}";
 
-// Not used by the egui app: tools only the GPUI port has.
+// Glyphs of the extra canvas tools.
 pub const CIRCLE: &str = "\u{E18A}";
 pub const LINE_SEGMENT: &str = "\u{E6D2}";
 pub const ARROW_UP_RIGHT: &str = "\u{E092}";

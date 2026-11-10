@@ -1,6 +1,6 @@
-//! New versions on GitHub (ported from the egui `src/updates.rs`): the releases list, the
+//! New versions on GitHub: the releases list, the
 //! blue dot on the tab row, and "Download and install", which swaps the program file and
-//! restarts on the new one. Same URLs and asset name as the egui app.
+//! restarts on the new one.
 
 use std::path::{Path, PathBuf};
 

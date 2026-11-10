@@ -1,4 +1,4 @@
-//! Changing a line the page draws, where it is (ported from the egui `src/lineedit.rs`):
+//! Changing a line the page draws, where it is:
 //! each word keeps the style (bold, slanted, underlined) and the colour the page had for it;
 //! the keys or the small bar above the line change those of the selected words.
 //!
@@ -18,7 +18,7 @@ use crate::theme::{self, Palette};
 use crate::tools::{Format, ToggleBold, ToggleItalic, ToggleUnderline};
 use crate::{geometry, icons, toasts, widgets};
 
-/// Frame of the line being changed (egui: rgb 25 63 EB).
+/// Frame of the line being changed (rgb 25 63 EB).
 const FRAME_BLUE: u32 = 0x2563EB;
 
 pub struct LineEdit {
@@ -269,7 +269,7 @@ pub fn render(
     let [x0, y0, x1, y1] = line.band;
     let font_px = line.size * zoom;
     // Styled like most of its letters: the field draws one style.
-    // shortcut: one font style and colour for the whole field (egui draws each word's own);
+    // shortcut: one font style and colour for the whole field (not each word's own);
     // upgrade with a styled text layout under a transparent field.
     let count = line.styles.len().max(1);
     let most = |format: Format| {
@@ -341,7 +341,7 @@ pub fn render(
                 .when(most(Format::Underline), |text| text.underline()),
         );
 
-    // egui: a popup frame (margin 4) 6 px above the line, its three toggles 2 px apart.
+    // A popup frame (margin 4) 6 px above the line, its three toggles 2 px apart.
     let active = line.active(cx);
     let bar_height = widgets::ICON_BUTTON + 8.0 + 2.0;
     let toggles = [

@@ -1,5 +1,4 @@
-//! Slow core work off the UI thread, counted for the "Working…" spinner of the header
-//! (egui `jobs.rs`).
+//! Slow core work off the UI thread, counted for the "Working…" spinner of the header.
 
 use std::future::Future;
 

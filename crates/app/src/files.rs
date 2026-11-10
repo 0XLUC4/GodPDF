@@ -1,4 +1,4 @@
-//! Native file access: pick, read and write PDFs (ported from the egui `src/platform.rs`).
+//! Native file access: pick, read and write PDFs.
 
 use std::ffi::OsString;
 use std::io::Write as _;

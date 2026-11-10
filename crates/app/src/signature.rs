@@ -1,4 +1,4 @@
-//! The handwritten signature of the user (ported from the egui `src/signature.rs`): drawn
+//! The handwritten signature of the user: drawn
 //! once on a pad, kept on disk between sessions, put on pages as an ink drawing that can be
 //! moved and resized. The pad dialog is `dialogs/signpad.rs`, the panel `panels/sign.rs`,
 //! placing it `tools/sign.rs`.
@@ -112,8 +112,8 @@ struct Saved(Option<Signature>);
 
 impl Global for Saved {}
 
-/// Where it is kept (the egui app keeps it in its own settings file).
-// shortcut: own text file, not shared with the egui app's settings; move to the app settings once GPUI has them.
+/// Where it is kept.
+// shortcut: own text file, apart from `services::settings`; move it there if one file is wanted.
 fn file() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)

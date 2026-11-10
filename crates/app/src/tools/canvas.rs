@@ -22,7 +22,7 @@ const HIT_SLOP: f32 = 3.0;
 /// Screen pixels around a corner handle that grab it.
 const HANDLE_HIT: f32 = 8.0;
 const HANDLE_SIZE: f32 = 7.0;
-/// Opacity of the highlight preview, as the egui app shows it.
+/// Opacity of the highlight preview.
 const PREVIEW_OPACITY: f32 = 0.4;
 /// Drags with a side shorter than this (points) are clicks.
 const TINY: f32 = 3.0;

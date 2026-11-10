@@ -1,5 +1,5 @@
-//! Monochrome palette of the egui app (the egui `src/theme.rs`): black on white, white on
-//! black, and the egui visuals it sets (`configure`) as constants. See DESIGN.md.
+//! Monochrome palette of the app: black on white, white on black, and the shared visuals
+//! as constants. See DESIGN.md.
 
 use gpui::{App, Global, Hsla, Rgba, rgb};
 
@@ -32,7 +32,7 @@ pub struct Palette {
     pub canvas: Hsla,
     pub success: Hsla,
     pub error: Hsla,
-    /// Shadow of windows (dialogs) and popups: black at this alpha (egui 110 / 28 of 255).
+    /// Shadow of windows (dialogs) and popups: black at this alpha (110 / 28 of 255).
     pub shadow_alpha: f32,
 }
 
@@ -46,7 +46,7 @@ pub fn hex(color: u32) -> Hsla {
     rgb(color).into()
 }
 
-// ---- egui visuals (`theme::configure`), same for both palettes.
+// ---- visuals, same for both palettes.
 
 /// `widgets.*.corner_radius`: buttons, fields, menus entries.
 pub const RADIUS: f32 = 7.0;
@@ -64,7 +64,7 @@ pub const WINDOW_MARGIN: f32 = 16.0;
 /// `spacing.interact_size.y`: height of a standard button or field.
 pub const INTERACT_HEIGHT: f32 = 26.0;
 
-// ---- tool colours (the egui `src/commands.rs`), one per family.
+// ---- tool colours, one per family.
 
 pub const GREEN: u32 = 0x3FB950;
 pub const PURPLE: u32 = 0xA371F7;
@@ -130,7 +130,7 @@ impl Palette {
         }
     }
 
-    /// egui `gamma_multiply(0.5)` of `text_dim`: disabled text.
+    /// `text_dim` at half opacity: disabled text.
     pub fn disabled(&self) -> Hsla {
         self.text_dim.opacity(0.5)
     }
@@ -151,7 +151,7 @@ pub fn set_dark(dark: bool, cx: &mut App) {
 }
 
 /// Paint gpui-component widgets (menus, tooltips, fields, checkboxes, buttons) in this
-/// palette, with egui's widget radius, so they look like the egui ones.
+/// palette, with the app's widget radius, so they match the app's own widgets.
 fn apply_to_components(cx: &mut App) {
     let p = Palette::of(cx);
     gpui::component::Theme::update(cx, |theme| {

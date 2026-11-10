@@ -28,7 +28,7 @@ reference for behavior: port from it.
 | `widgets.rs` | `button`, `action_button`, `primary_button`, `separator` in the palette. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested). |
 | `panels/` | **Hook** (empty): left sidebar, right panels. |
-| `dialogs/` | **Hook** (empty): modal dialogs, command palette. |
+| `dialogs/` | Command list (`commands.rs`, feeds the palette and the tool bar menus), command palette Ctrl+K (`palette.rs`), form dialogs (`form.rs` rows + `kinds.rs` what each does), merge (`merge.rs`), background export / split (`output.rs`), print (`print.rs`), page ranges (`ranges.rs`). |
 
 Each hook module has a `register(cx)` (called from `app::register`) for its actions and key
 bindings, and returns `Option<AnyElement>` from its render hooks; `None` = nothing shown.
@@ -120,6 +120,17 @@ multi-part gesture). Undo / redo (`DocTab::undo`, `redo`) also reload. Never wri
 Bitmaps render at `zoom * window.scale_factor()` pixels per point (sharp on HiDPI), capped
 at 4096 px a side; up to 4 render at once per tab on the background executor, and pages
 more than 3 away from the visible ones are evicted (their GPU textures freed).
+
+## Dialogs
+
+`dialogs/mod.rs`: page tools, protect, properties, print, merge, split / extract, export as
+pictures. A dialog action records the dialog as pending in the `Dialogs` global; `overlay`
+(it has the window) builds its fields and focuses the first one, remembering the focus to
+give back on close. Enter / Esc in a field are `DialogConfirm` / `DialogCancel` (context
+`GodPdfDialog > Input`, which outranks the field's own keys). Edits go through
+`DocTab::apply`. A password set in "Encrypt with password" is applied by `app::save_tab`
+through `dialogs::bytes_to_save`; the session stays unencrypted. Shortcuts: Ctrl+K palette,
+Ctrl+P print, Ctrl+G go to page.
 
 ## Not in wave 0
 

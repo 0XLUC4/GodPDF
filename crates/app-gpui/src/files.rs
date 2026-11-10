@@ -59,7 +59,7 @@ fn pdf_name(name: &str) -> String {
 }
 
 /// Write to a temp file next to `target`, then rename: a failed write never truncates it.
-fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut temp_name = target
         .file_name()
         .map(OsString::from)

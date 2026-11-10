@@ -362,9 +362,6 @@ pub static COMMANDS: &[Command] = &[
         "Edit title, author, keywords",
         || Box::new(Properties),
     ),
-    command("Extract text", Document, "Copy all text out", || {
-        Box::new(text::ExtractText)
-    }),
     command(
         "Edit PDF text",
         Document,

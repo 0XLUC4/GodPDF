@@ -67,7 +67,7 @@ New versions arrive through the Updates button, which downloads the update and r
 - Open encrypted files, add or remove a password, remove hidden data
 - Page numbers and watermarks
 - Compress, export pages as PNG or JPEG, print
-- Recognize the text of scans (OCR), compare two PDFs, extract the text
+- Recognize the text of scans (OCR), compare two PDFs
 - Attached files, document properties, undo and redo
 
 The command palette (`Ctrl+K`) finds every tool by name.

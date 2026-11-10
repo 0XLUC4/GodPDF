@@ -172,13 +172,6 @@ const ALL_TOOLS: &[Row] = &[
         "Edit title, author, keywords",
     ),
     row(
-        Run(|| Box::new(text::ExtractText)),
-        icons::TEXT_ALIGN_LEFT,
-        TEAL,
-        "Extract text",
-        "Copy all text out",
-    ),
-    row(
         Run(|| Box::new(panels::Find)),
         icons::MAGNIFYING_GLASS,
         BLUE,
@@ -580,7 +573,7 @@ mod tests {
 
     #[test]
     fn lists_match_commands() {
-        assert_eq!(ALL_TOOLS.len(), 19);
+        assert_eq!(ALL_TOOLS.len(), 18);
         assert_eq!(ALL_TOOLS[FOLDED - 1].label, "Extract pages");
         // 20 Organize commands + "Combine files", 8 Comment, 3 Protect.
         assert_eq!(ORGANIZE.len(), 21);

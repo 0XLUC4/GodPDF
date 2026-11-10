@@ -489,7 +489,7 @@ impl Render for GodPdfApp {
                 window,
                 cx,
             ))
-            .children(text::overlay(active.as_ref(), window, cx))
+            .children(text::overlay(active.as_ref(), cx))
             .children(services::overlay(window, cx))
     }
 }

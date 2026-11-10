@@ -1,12 +1,8 @@
-//! The windows over the document: the extracted text and the
-//! comparison of two documents. Not modal: the document stays usable.
+//! The window over the document comparing two documents. Not modal: the document stays
+//! usable.
 
-use gpui::component::input::{Textarea, TextareaState};
 use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, ClipboardItem, Div, Entity, MouseButton, SharedString, Window, div, px,
-    relative, rgb,
-};
+use gpui::{AnyElement, App, Div, MouseButton, SharedString, div, px, rgb};
 
 use super::compare::CompareView;
 use crate::theme::{self, Palette};
@@ -16,18 +12,8 @@ use crate::{fonts, icons, widgets};
 const REMOVED: u32 = 0xD63B3B;
 const ADDED: u32 = 0x2F9E44;
 
-pub struct TextView {
-    pub title: String,
-    pub text: String,
-    /// Characters of the document's text (page headers left out); 0 for scanned pages.
-    pub chars: usize,
-    /// The read-only field, made on the first frame (it needs the window).
-    pub area: Option<Entity<TextareaState>>,
-}
-
 #[derive(Default)]
 pub struct Windows {
-    pub text: Option<TextView>,
     pub compare: Option<CompareView>,
 }
 
@@ -92,93 +78,9 @@ fn windows(cx: &mut App) -> &mut Windows {
 }
 
 /// The open windows, drawn over the app.
-pub fn render(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
+pub fn render(cx: &mut App) -> Vec<AnyElement> {
     let palette = Palette::of(cx);
     let mut shown = Vec::new();
-    if let Some(view) = windows(cx).text.as_mut() {
-        let area = match &view.area {
-            Some(area) => area.clone(),
-            None => {
-                let text = view.text.clone();
-                let area = cx.new(|cx| TextareaState::new(window, cx).default_value(text));
-                // `view` borrows the global: look it up again.
-                if let Some(view) = windows(cx).text.as_mut() {
-                    view.area = Some(area.clone());
-                }
-                area
-            }
-        };
-        let Some(view) = windows(cx).text.as_ref() else {
-            return shown;
-        };
-        let (text, chars) = (view.text.clone(), view.chars);
-        let count = match chars {
-            1 => "1 character".to_owned(),
-            chars => format!("{chars} characters"),
-        };
-        let close = |cx: &mut App| {
-            windows(cx).text = None;
-            cx.refresh_windows();
-        };
-        let copy = widgets::framed_button(
-            "copy-all-text",
-            widgets::with_icon(icons::COPY, "Copy all", fonts::BODY, palette.text),
-            true,
-            &palette,
-        )
-        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())));
-        let frame = floating(
-            "text-view",
-            view.title.clone(),
-            (560., 520.),
-            0.,
-            close,
-            &palette,
-        );
-        if chars == 0 {
-            shown.push(
-                frame
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(theme::ITEM_SPACING.0))
-                            .text_color(palette.text_dim)
-                            .child(widgets::icon(icons::SCAN, 32.0, palette.text_dim))
-                            .child("No text found")
-                            .child("Scanned pages need Recognize text (OCR) first."),
-                    )
-                    .into_any_element(),
-            );
-        } else {
-            shown.push(
-                frame
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(theme::ITEM_SPACING.0))
-                            .child(copy)
-                            .child(div().text_color(palette.text_dim).child(count)),
-                    )
-                    .child(separator(&palette))
-                    .child(
-                        // A flex row would size the text area to its content, a sliver on the left.
-                        div().flex_1().min_h_0().w_full().flex().flex_col().child(
-                            Textarea::new(&area)
-                                .readonly(true)
-                                .w_full()
-                                .h(relative(1.))
-                                .font_family(fonts::MONO),
-                        ),
-                    )
-                    .into_any_element(),
-            );
-        }
-    }
     if let Some(view) = windows(cx).compare.as_ref() {
         let close = |cx: &mut App| {
             windows(cx).compare = None;

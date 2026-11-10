@@ -585,7 +585,6 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Compress" => (icons::ARROWS_IN, ""),
         "Compare with…" => (icons::GIT_DIFF, ""),
         "Recognize text (OCR)" => (icons::SCAN, ""),
-        "Extract text" => (icons::TEXT_ALIGN_LEFT, ""),
         "Edit PDF text" => (icons::TEXT_AA, ""),
         "About GodPDF" => (icons::QUESTION, ""),
         "Updates" => (icons::ARROW_CIRCLE_UP, ""),

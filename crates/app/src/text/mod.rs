@@ -1,5 +1,5 @@
 //! The text of the pages: select and copy it with the Select tool (Ctrl+C), "Edit PDF text" line by
-//! line on the page, "Extract text", "Recognize text (OCR)" and "Compare with…".
+//! line on the page, "Recognize text (OCR)" and "Compare with…".
 //!
 //! App-wide state is the [`TextState`] global (edit-text mode, the open windows, the document
 //! in front); each document keeps its [`TabText`] (text positions, selection, line typed).
@@ -15,7 +15,6 @@ mod view;
 pub(crate) use lineedit::reconcile;
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -27,7 +26,7 @@ use gpui::{
     px,
 };
 
-use crate::doc::{DocTab, guarded};
+use crate::doc::DocTab;
 use crate::theme::Palette;
 use crate::toasts;
 use crate::tools::{Tool, ToolState};
@@ -37,7 +36,6 @@ actions!(
     godpdf,
     [
         EditText,
-        ExtractText,
         RecognizeText,
         CompareWith,
         CopyText,
@@ -160,7 +158,6 @@ pub fn register(cx: &mut App) {
         KeyBinding::new("escape", EscapeText, Some(KEYS)),
     ]);
     cx.on_action(|_: &EditText, cx| toggle_edit_text(cx));
-    cx.on_action(|_: &ExtractText, cx| extract_text(cx));
     cx.on_action(|_: &RecognizeText, cx| recognize_text(cx));
     cx.on_action(|_: &CompareWith, cx| compare_with(cx));
     cx.on_action(|_: &CopyText, cx| copy_text(cx));
@@ -249,41 +246,6 @@ fn in_background<T: Send + 'static>(
         cx.update(|cx| done(result, cx));
     })
     .detach();
-}
-
-fn extract_text(cx: &mut App) {
-    let Some(tab) = active_tab(cx) else { return };
-    let (title, bytes) = {
-        let tab = tab.read(cx);
-        (
-            format!("Text - {}", tab.title()),
-            tab.session.bytes().to_vec(),
-        )
-    };
-    in_background(
-        cx,
-        move || guarded(|| godpdf_core::extract_all_text(&bytes)).map_err(|err| err.to_string()),
-        move |result, cx| match result {
-            Ok(pages) => {
-                let mut text = String::new();
-                for (page, page_text) in pages.iter().enumerate() {
-                    let _ = writeln!(text, "──── Page {} ────", page + 1);
-                    text.push_str(page_text.trim_end());
-                    text.push_str("\n\n");
-                }
-                // The page headers are not text of the document: not counted.
-                let chars = pages.iter().map(|page| page.trim().chars().count()).sum();
-                state(cx).windows.text = Some(view::TextView {
-                    title,
-                    text,
-                    chars,
-                    area: None,
-                });
-                cx.refresh_windows();
-            }
-            Err(err) => toasts::error(cx, format!("Text extraction failed: {err}")),
-        },
-    );
 }
 
 /// Read the words of the scanned pages of the document in front, in the background.
@@ -579,13 +541,9 @@ pub fn page_overlay(
     )
 }
 
-/// The windows (extracted text, comparison), drawn by the app over everything. Remembers the
-/// document in front, and writes a line typed in a document no longer in front.
-pub fn overlay(
-    active: Option<&Entity<DocTab>>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Vec<AnyElement> {
+/// The comparison window, drawn by the app over everything. Remembers the document in front,
+/// and writes a line typed in a document no longer in front.
+pub fn overlay(active: Option<&Entity<DocTab>>, cx: &mut App) -> Vec<AnyElement> {
     let active = active.map(Entity::downgrade);
     let previous = state(cx).tab.clone();
     if previous != active {
@@ -594,5 +552,5 @@ pub fn overlay(
         }
         state(cx).tab = active;
     }
-    view::render(window, cx)
+    view::render(cx)
 }

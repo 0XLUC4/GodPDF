@@ -141,8 +141,10 @@ egui: `doc_panels` (Panel::left "tools-panel") + `tools::panel`, rows `widgets::
 - Organize / Comment / Protect: `commands::in_group(group)` rows with `Cmd::icon`,
   `Cmd::tint`, `Cmd::short_label`; Organize adds "Combine files" (`STACK`, purple); Comment
   ends with 10 px and "Comments are listed in the panel on the right." 13 dim.
-- Left to do: per-mode lists (GPUI commands have no icon / tint yet), Edit PDF text / Insert
-  from file / Extract text (not ported: shown dimmed), drag to resize.
+- Not ported commands (Edit PDF text, Insert from file, Extract text, Organize grid, Move
+  earlier / later, Remove blank pages, Sign, Form field) are listed as in egui; a click
+  shows the toast "Not available yet".
+- Left to do: drag to resize.
 
 ### Right rail: `src/shell/rail.rs` (+ the panel it opens: `panels::right` in `src/panels/mod.rs`)
 

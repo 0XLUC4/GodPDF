@@ -384,7 +384,7 @@ fn style_card(
     let (kind, style, formats) = match target(tab, cx) {
         Target::Tool(tool) => match tool_kind(tool) {
             Some(kind) => (kind, tool_state(cx).styles.of(tool), None),
-            None if matches!(tool, Tool::Note | Tool::Picture) => {
+            None if matches!(tool, Tool::Note | Tool::Picture | Tool::Sign | Tool::Field) => {
                 return Some(hint_card(tool.hint(), palette));
             }
             None if tool == Tool::Stamp => return Some(stamp_card(palette, cx)),

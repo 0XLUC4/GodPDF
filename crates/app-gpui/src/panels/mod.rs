@@ -1,6 +1,6 @@
 //! Right panel (ported from `crates/app/src/sidebar.rs`, `comments.rs`, `bookmarks.rs` and
 //! `GodApp::right_panel`), opened from the icon rail (`shell/rail.rs`): comments, page
-//! thumbnails, bookmarks or text search.
+//! thumbnails, bookmarks, text search, the form or the signature.
 //!
 //! App-wide state is the [`PanelState`] global (open panel, search field, the tab shown).
 //! Per-document state is [`TabPanels`], a field of `DocTab` (thumbnail cache, search hits,
@@ -8,7 +8,9 @@
 
 mod bookmarks;
 mod comments;
+mod form;
 mod search;
+mod sign;
 mod thumbs;
 
 use gpui::component::input::InputState;
@@ -30,7 +32,9 @@ actions!(
         Find,
         FindNext,
         FindPrevious,
-        AddBookmark
+        AddBookmark,
+        FillForm,
+        Sign
     ]
 );
 
@@ -116,6 +120,7 @@ pub struct TabPanels {
     thumbs: thumbs::Thumbs,
     search: search::Search,
     bookmarks: bookmarks::Marks,
+    form: form::FormState,
 }
 
 fn state(cx: &mut App) -> &mut PanelState {
@@ -164,6 +169,8 @@ pub fn register(cx: &mut App) {
     ]);
     cx.on_action(|_: &ShowPages, cx| toggle(Panel::Pages, cx));
     cx.on_action(|_: &ShowBookmarks, cx| toggle(Panel::Bookmarks, cx));
+    cx.on_action(|_: &FillForm, cx| show(Panel::Form, cx));
+    cx.on_action(|_: &Sign, cx| show(Panel::Sign, cx));
     cx.on_action(|_: &Find, cx| {
         state(cx).focus_search = true;
         show(Panel::Search, cx);
@@ -209,10 +216,8 @@ pub fn right(
         Panel::Pages => thumbs::render(&tab, window, cx),
         Panel::Bookmarks => bookmarks::render(&tab, window, cx),
         Panel::Search => search::render(&tab, window, cx),
-        // TODO(right panel): port `formfill.rs`, `signature::panel`.
-        Panel::Form | Panel::Sign => {
-            label("Not available yet in this version.", palette.text_dim).into_any_element()
-        }
+        Panel::Form => form::render(&tab, window, cx),
+        Panel::Sign => sign::render(cx),
     };
     Some(
         div()

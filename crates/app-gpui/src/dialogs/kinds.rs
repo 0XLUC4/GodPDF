@@ -85,7 +85,7 @@ const META_LABELS: [&str; 6] = [
     "Title", "Author", "Subject", "Keywords", "Creator", "Producer",
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     GoToPage,
     NumberPages,
@@ -100,6 +100,11 @@ pub enum Kind {
     Split,
     Encrypt,
     Properties,
+    /// A form field over `rect` (PDF space) of `page` (egui `Dialog::NewField`).
+    NewField {
+        page: usize,
+        rect: core::Rect,
+    },
 }
 
 impl Kind {
@@ -125,6 +130,7 @@ impl Kind {
             Self::Split => ("Split document", "Cut a PDF into several files"),
             Self::Encrypt => ("Encrypt with password", "Applied when you save (AES-256)."),
             Self::Properties => ("Document properties", ""),
+            Self::NewField { .. } => ("New form field", ""),
         }
     }
 
@@ -141,6 +147,7 @@ impl Kind {
             Self::Extract => ("Open in new tab", Some("Save as…")),
             Self::Split => ("Save to folder…", Some("Open in new tabs")),
             Self::Encrypt => ("Encrypt on save", None),
+            Self::NewField { .. } => ("Add field", None),
         }
     }
 }
@@ -152,6 +159,9 @@ pub fn build(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<Form, String> {
+    let field_kind = cx
+        .try_global::<crate::tools::ToolState>()
+        .map_or(core::NewField::Text, |tools| tools.field_kind);
     let doc = tab.read(cx);
     let count = doc.page_count();
     let all = ranges::format(&(0..count).collect::<Vec<_>>());
@@ -220,6 +230,14 @@ pub fn build(
             form::password("Open password", "", window, cx),
             form::password("Confirm", "", window, cx),
             form::password("Owner password", "optional", window, cx),
+        ],
+        Kind::NewField { .. } => vec![
+            form::choice(
+                "Kind",
+                ["Text", "Check box"],
+                usize::from(field_kind == core::NewField::CheckBox),
+            ),
+            text("Name", "Field", ""),
         ],
         Kind::Properties => {
             let meta = bytes_meta.unwrap_or_else(|| Ok(Metadata::default()))?;
@@ -418,6 +436,18 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
                 .insert(tab.entity_id(), Passwords { user, owner });
             toasts::success(cx, "Password set: the file is encrypted when you save");
             Ok(())
+        }
+        Kind::NewField { page, rect } => {
+            let kind = if form.choice("Kind") == 1 {
+                core::NewField::CheckBox
+            } else {
+                core::NewField::Text
+            };
+            let name = form.text("Name", cx);
+            let done = "Field added: type its answer with Fill in form";
+            apply(&tab, "Add form field", done, cx, |pdf| {
+                core::add_form_field(pdf, page, rect, kind, &name)
+            })
         }
         Kind::Properties => {
             let [title, author, subject, keywords, creator, producer] = META_LABELS.map(|label| {

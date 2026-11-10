@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, hsla, stamp, tool_state};
+use super::{Tool, current_tool, editor, fields, hsla, sign, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::toasts;
@@ -89,6 +89,8 @@ pub struct Canvas {
     /// Areas marked for redaction (page, PDF space), removed only by "Apply redactions".
     // shortcut: marks are not remapped when pages are moved or deleted; clear them there once page tools land.
     pub(super) redactions: Vec<(usize, Rect)>,
+    /// Form field boxes and the text field being typed in.
+    pub(super) fields: fields::Fields,
 }
 
 /// An annotation of a page as the tools see it.
@@ -271,6 +273,7 @@ fn on_down(
             tab.canvas.gesture = Some(Gesture::Erase { erased });
         }
         Tool::Stamp => place_stamp(tab, page, point, cx),
+        Tool::Sign => sign::click(tab, page, point, cx),
         Tool::Redact if unmark_at(tab, page, point) => {}
         Tool::Highlight
         | Tool::Underline
@@ -281,7 +284,8 @@ fn on_down(
         | Tool::Line
         | Tool::Arrow
         | Tool::Redact
-        | Tool::Picture => {
+        | Tool::Picture
+        | Tool::Field => {
             tab.canvas.gesture = Some(Gesture::Draw {
                 page,
                 points: vec![point],
@@ -537,6 +541,10 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
             place_picture(tab, page, first, (!tiny).then_some(last), cx);
             return;
         }
+        Tool::Field => {
+            fields::new_field(tab, page, first, last, tiny, cx);
+            return;
+        }
         _ => return,
     };
     let result = tab.apply(label, |pdf| {
@@ -748,7 +756,7 @@ fn erase_at(
 }
 
 /// An absolutely placed box over `rect` (displayed points) at `zoom`, `grow` pixels larger.
-fn boxed(rect: DRect, zoom: f32, grow: f32) -> Div {
+pub(super) fn boxed(rect: DRect, zoom: f32, grow: f32) -> Div {
     div()
         .absolute()
         .left(px(rect.x0 * zoom - grow))
@@ -914,6 +922,11 @@ pub fn page_overlay(
     {
         layer = layer.children(draw_preview(tool, points, zoom, cx));
     }
+    // Over the comments: a click on a form field fills it in.
+    if tool == Tool::Select && tab.canvas.editor.is_none() {
+        layer = layer.children(fields::render(tab, page, zoom, cx));
+    }
+    layer = layer.children(fields::editor(tab, page, zoom, cx));
     if tab
         .canvas
         .editor
@@ -963,7 +976,7 @@ fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Optio
             .border_2()
             .border_color(rgb(REDACT_RED))
             .into_any_element(),
-        Tool::Picture => boxed(rect, zoom, 0.0)
+        Tool::Picture | Tool::Field => boxed(rect, zoom, 0.0)
             .border_1()
             .border_dashed()
             .border_color(black())

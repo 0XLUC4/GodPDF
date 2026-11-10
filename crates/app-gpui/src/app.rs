@@ -57,6 +57,7 @@ pub fn register(cx: &mut App) {
     ]);
     shell::register(cx);
     tools::register(cx);
+    crate::signature::register(cx);
     panels::register(cx);
     dialogs::register(cx);
 }

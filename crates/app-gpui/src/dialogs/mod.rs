@@ -14,6 +14,7 @@ mod output;
 mod palette;
 mod print;
 mod ranges;
+mod signpad;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -92,6 +93,7 @@ pub enum Open {
     Palette(PaletteState),
     Form(Form),
     Merge(Merge),
+    Signature(signpad::Pad),
 }
 
 #[derive(Default)]
@@ -291,6 +293,7 @@ pub fn overlay(
         Open::Palette(palette) => palette::render(palette, tab.is_some(), &colors, window, cx),
         Open::Form(form) => form::render(form, &colors),
         Open::Merge(merge) => merge::render(merge, &colors),
+        Open::Signature(pad) => signpad::render(pad, &colors),
     };
     Some(
         div()
@@ -345,6 +348,16 @@ fn open_form(kind: Kind, cx: &mut App) {
     open_later(Pending::Form(kind), cx);
 }
 
+/// The signature pad; `place` is where the signature goes once drawn.
+pub fn draw_signature(place: Option<signpad::Place>, cx: &mut App) {
+    signpad::open(place, cx);
+}
+
+/// Ask kind and name of a form field to add over `rect` (PDF space) of `page`.
+pub fn new_field(page: usize, rect: core::Rect, cx: &mut App) {
+    open_form(Kind::NewField { page, rect }, cx);
+}
+
 /// The document in front first, then the files picked.
 fn open_merge(cx: &mut App) {
     let mut files: Vec<crate::files::PickedFile> = active_tab(cx)
@@ -389,7 +402,7 @@ fn build(pending: Pending, tab: Option<&Entity<DocTab>>, window: &mut Window, cx
     let input = match &open {
         Open::Palette(palette) => Some(palette.query.clone()),
         Open::Form(form) => form.first_input(),
-        Open::Merge(_) => None,
+        Open::Merge(_) | Open::Signature(_) => None,
     };
     let focused = window.focused(cx);
     let dialogs = state(cx);
@@ -420,12 +433,18 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
         Open::Form(form) => kinds::confirm(form, secondary, cx),
         Open::Merge(merge) => merge::confirm(merge, cx),
         Open::Palette(_) => Ok(()),
+        Open::Signature(pad) => signpad::confirm_pad(pad, window, cx),
     };
     match (result, &mut open) {
         (Ok(()), _) => close(window, cx),
         (Err(error), Open::Form(Form { error: shown, .. }))
         | (Err(error), Open::Merge(Merge { error: shown, .. })) => {
             *shown = Some(error);
+            state(cx).open = Some(open);
+            window.refresh();
+        }
+        (Err(error), Open::Signature(_)) => {
+            toasts::info(cx, error);
             state(cx).open = Some(open);
             window.refresh();
         }

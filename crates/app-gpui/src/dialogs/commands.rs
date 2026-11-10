@@ -222,6 +222,18 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(tools::PictureTool),
     ),
     command(
+        "Sign…",
+        Comment,
+        "Draw your signature once, then click where it goes",
+        || Box::new(crate::panels::Sign),
+    ),
+    command(
+        "Form field",
+        Comment,
+        "Add a text box or a check box to fill in",
+        || Box::new(tools::FieldTool),
+    ),
+    command(
         "Eraser",
         Comment,
         "Click or drag over comments to erase them",
@@ -280,6 +292,12 @@ pub static COMMANDS: &[Command] = &[
         Document,
         "Highlights, notes and drawings go; links stay",
         || Box::new(RemoveComments),
+    ),
+    command(
+        "Fill in form…",
+        Document,
+        "Type the answers of the fields of the form",
+        || Box::new(crate::panels::FillForm),
     ),
     command(
         "Flatten comments and forms",

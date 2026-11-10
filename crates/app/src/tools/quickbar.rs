@@ -408,7 +408,7 @@ fn style_card(
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(4.))
+        .gap(px(2.))
         .w(px(BUTTON));
     for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
         colors = colors.child(widgets::tooltip(
@@ -642,28 +642,46 @@ fn same_color(a: Color, b: Color) -> bool {
     close(a.r, b.r) && close(a.g, b.g) && close(a.b, b.b)
 }
 
-/// Round colour dot; the current one gets a ring.
+/// Colour dot side and the ring around it (2 px stroke, 2 px gap), whole pixels.
+const DOT: f32 = 18.0;
+const RING: f32 = 26.0;
+
+/// Corner radius of a circle `side` px wide: half a pixel under half the side. Layout snaps
+/// edges to device pixels after the radius is resolved, so a box can lose 1 dp; a radius over
+/// half the snapped side bends the edge into lumps, which read as pixelation on small dots.
+fn circle_radius(side: f32) -> f32 {
+    side / 2.0 - 0.5
+}
+
+/// Round colour dot; the current one gets a `text` ring, hovered ones a `border` ring. The
+/// ring is filled with the card colour so it paints as one quad (a border-only quad is split
+/// into strips).
 fn swatch(
     id: impl Into<ElementId>,
     color: Color,
     current: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
+    let hover = palette.border;
     div()
         .id(id)
-        .size(px(22.))
+        .flex_none()
+        .size(px(RING))
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
+        .rounded(px(circle_radius(RING)))
+        .bg(palette.panel)
+        .border(px(2.))
+        .border_color(if current { palette.text } else { palette.panel })
         .cursor_pointer()
-        .when(current, |ring| {
-            ring.border(px(1.5)).border_color(palette.text)
+        .when(!current, |ring| {
+            ring.hover(move |style| style.border_color(hover))
         })
         .child(
             div()
-                .size(px(14.))
-                .rounded_full()
+                .size(px(DOT))
+                .rounded(px(circle_radius(DOT)))
                 .bg(hsla(color))
                 .border_1()
                 .border_color(palette.border),
@@ -934,4 +952,21 @@ fn picture_card(
             .child(widgets::tooltip(original_size, "96 pixels to the inch"))
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DOT, RING, circle_radius};
+
+    #[test]
+    fn circle_radius_stays_under_half_the_snapped_side() {
+        // Snapping rounds a fractional side down to the device pixel; the radius must fit it.
+        for scale in [1.0_f32, 1.25, 1.5, 1.75, 2.0] {
+            for side in [DOT, RING] {
+                let snapped = (side * scale).floor();
+                assert!(circle_radius(side) * scale <= snapped / 2.0);
+            }
+        }
+        assert_eq!(circle_radius(18.0), 8.5);
+    }
 }

@@ -19,6 +19,7 @@ actions!(
     godpdf,
     [
         Open,
+        NewPdf,
         Save,
         SaveAs,
         CloseTab,
@@ -164,6 +165,14 @@ impl GodPdfApp {
         self.active = self.tabs.len() - 1;
         self.shell.home = false;
         cx.notify();
+    }
+
+    /// A new tab with one empty A4 page to write, draw and insert into.
+    fn new_pdf(&mut self, _: &NewPdf, _: &mut Window, cx: &mut Context<Self>) {
+        match godpdf_core::blank_document(595.0, 842.0) {
+            Ok(bytes) => self.open_bytes("Untitled.pdf".to_owned(), None, bytes, cx),
+            Err(err) => toasts::error(cx, err.to_string()),
+        }
     }
 
     fn open(&mut self, _: &Open, _: &mut Window, cx: &mut Context<Self>) {
@@ -413,6 +422,7 @@ impl Render for GodPdfApp {
             .track_focus(&self.focus)
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::new_pdf))
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::close_tab))

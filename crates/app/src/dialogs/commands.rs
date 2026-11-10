@@ -85,6 +85,13 @@ use Group::*;
 
 pub static COMMANDS: &[Command] = &[
     command("Open PDF…", File, "", || Box::new(app::Open)).without_doc(),
+    command(
+        "New PDF",
+        File,
+        "A new document with one empty A4 page",
+        || Box::new(app::NewPdf),
+    )
+    .without_doc(),
     command("Save", File, "", || Box::new(app::Save)),
     command("Save As…", File, "", || Box::new(app::SaveAs)),
     command(

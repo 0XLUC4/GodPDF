@@ -99,14 +99,26 @@ pub static COMMANDS: &[Command] = &[
         "Each page as a PNG or JPEG picture",
         || Box::new(ExportImages),
     ),
+    command("Export pages…", File, "Copy pages into a new PDF", || {
+        Box::new(ExtractPages)
+    }),
     command("Close tab", File, "", || Box::new(app::CloseTab)),
+    command(
+        "Reopen closed tab",
+        File,
+        "Open again the document closed last",
+        || Box::new(crate::shell::ReopenTab),
+    )
+    .without_doc(),
     command("Quit", File, "", || Box::new(app::Quit)).without_doc(),
     command("Undo", Edit, "", || Box::new(app::Undo)),
     command("Redo", Edit, "", || Box::new(app::Redo)),
+    command("Command palette", Edit, "", || Box::new(CommandPalette)).without_doc(),
     command("Toggle dark mode", View, "", || Box::new(app::ToggleTheme)).without_doc(),
     command("Zoom in", View, "", || Box::new(app::ZoomIn)),
     command("Zoom out", View, "", || Box::new(app::ZoomOut)),
     command("Fit width", View, "", || Box::new(app::FitWidth)),
+    command("Fit page", View, "", || Box::new(crate::shell::FitPage)),
     command("Go to page…", View, "", || Box::new(GoToPage)),
     command(
         "Side by side",
@@ -114,6 +126,9 @@ pub static COMMANDS: &[Command] = &[
         "Two PDFs, or two places of one, next to each other",
         || Box::new(organize::SplitView),
     ),
+    command("Toggle sidebar", View, "", || {
+        Box::new(crate::panels::ToggleSidebar)
+    }),
     command("Next tab", View, "", || Box::new(app::NextTab)),
     command("Previous tab", View, "", || Box::new(app::PreviousTab)),
     command(
@@ -339,6 +354,18 @@ pub static COMMANDS: &[Command] = &[
         Document,
         "Take every link out, keep what they were on",
         || Box::new(RemoveLinks),
+    ),
+    command(
+        "Search text",
+        Document,
+        "Find words with per-page counts",
+        || Box::new(crate::panels::Find),
+    ),
+    command(
+        "Bookmark this page",
+        Document,
+        "A bookmark for the page you are reading",
+        || Box::new(crate::panels::AddBookmark),
     ),
     command(
         "Contents page",

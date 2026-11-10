@@ -36,7 +36,8 @@ actions!(
         FindPrevious,
         AddBookmark,
         FillForm,
-        Sign
+        Sign,
+        ToggleSidebar
     ]
 );
 
@@ -107,6 +108,8 @@ pub struct PanelState {
     search_tab: Option<gpui::EntityId>,
     /// Panel width, dragged by its left edge.
     width: f32,
+    /// Panel brought back by Toggle sidebar.
+    last: Panel,
 }
 
 impl Default for PanelState {
@@ -118,6 +121,7 @@ impl Default for PanelState {
             focus_search: false,
             search_tab: None,
             width: PANEL_WIDTH,
+            last: Panel::Pages,
         }
     }
 }
@@ -185,6 +189,15 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &Find, cx| {
         state(cx).focus_search = true;
         show(Panel::Search, cx);
+    });
+    // egui `Cmd::ToggleThumbnails`: hide the right panel, or bring back the last one.
+    cx.on_action(|_: &ToggleSidebar, cx| {
+        let state = state(cx);
+        match state.open.take() {
+            Some(panel) => state.last = panel,
+            None => state.open = Some(state.last),
+        }
+        cx.refresh_windows();
     });
     cx.on_action(|_: &FindNext, cx| search::step(true, cx));
     cx.on_action(|_: &FindPrevious, cx| search::step(false, cx));

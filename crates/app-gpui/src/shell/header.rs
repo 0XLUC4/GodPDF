@@ -9,7 +9,7 @@ use gpui::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui::prelude::*;
 use gpui::{Action, AnyElement, Context, Div, SharedString, Stateful, WeakEntity, Window, div, px};
 
-use super::{FitPage, HEADER_HEIGHT, Mode, ReopenTab, ToggleToolsPanel};
+use super::{HEADER_HEIGHT, Mode, ReopenTab, ToggleToolsPanel};
 use crate::app::{self, GodPdfApp, Save, SaveAs};
 use crate::dialogs::{COMMANDS, CommandPalette, Group, Print, Properties};
 use crate::theme::Palette;
@@ -267,7 +267,7 @@ impl MenuState {
                     })
                 });
                 let mut menu = command(menu, "Merge PDFs…", has_doc, cx).separator();
-                for label in ["Save", "Save As…", "Print…", "Export as images…"] {
+                for label in ["Save", "Save As…", "Print…", "Export pages…"] {
                     menu = command(menu, label, has_doc, cx);
                 }
                 let menu = command(menu.separator(), "Close tab", has_doc, cx);
@@ -331,16 +331,6 @@ impl MenuState {
                 for cmd in COMMANDS.iter().filter(|cmd| cmd.group == Group::View) {
                     menu = command(menu, cmd.label, has_doc, cx);
                 }
-                // TODO(header): egui also lists Toggle sidebar.
-                let menu = entry_item(
-                    menu,
-                    icons::CORNERS_OUT,
-                    "Fit page".into(),
-                    "",
-                    Box::new(FitPage),
-                    has_doc,
-                    cx,
-                );
                 command(menu, "Organize pages", has_doc, cx)
             })
             .submenu("Tools", window, cx, move |menu, window, cx| {
@@ -441,6 +431,16 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Zoom in" => (icons::MAGNIFYING_GLASS_PLUS, "Ctrl++"),
         "Zoom out" => (icons::MAGNIFYING_GLASS_MINUS, "Ctrl+-"),
         "Fit width" => (icons::ARROWS_OUT_LINE_HORIZONTAL, "Ctrl+0"),
+        "Fit page" => (icons::CORNERS_OUT, ""),
+        "Toggle sidebar" => (icons::SIDEBAR_SIMPLE, ""),
+        "Export pages…" => (icons::EXPORT, ""),
+        "Reopen closed tab" => (icons::CLOCK_COUNTER_CLOCKWISE, "Ctrl+Shift+T"),
+        "Command palette" => (icons::COMMAND, "Ctrl+K"),
+        "Search text" => (icons::MAGNIFYING_GLASS, "Ctrl+F"),
+        "Bookmark this page" => (icons::BOOKMARK_SIMPLE, "Ctrl+D"),
+        "Sign…" => (icons::SIGNATURE, ""),
+        "Form field" => (icons::TEXTBOX, ""),
+        "Fill in form…" => (icons::LIST_CHECKS, ""),
         "Go to page…" => (icons::HASH, "Ctrl+G"),
         "Next tab" => (icons::CARET_RIGHT, "Ctrl+Tab"),
         "Previous tab" => (icons::CARET_LEFT, "Ctrl+Shift+Tab"),

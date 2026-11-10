@@ -28,7 +28,7 @@ All PDF work is in `godpdf-core` (edits, bytes in -> bytes out) and `godpdf-rend
 | `toasts.rs` | `Global` toast stack: `toasts::error(cx, ..)`, `info`, `success`. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
 | `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
-| `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |
+| `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`, styled text drawn by `richtext.rs`: per-character bold / italic / underline / sub / superscript, width grip on the right edge), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |
 | `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`), form answers (`form.rs`), the saved signature (`sign.rs`). |
 | `text/` | Page text (from `textsel.rs`, `lineedit.rs`, `ocr.rs`, `compare.rs`): select with the Select tool and copy (Ctrl+C), "Edit PDF text" mode (click a line, type in place, Enter / click away writes, Esc), Extract text and Compare windows, Recognize text (OCR: Windows.Media.Ocr, ocrs elsewhere). Hooks: `page_underlay` / `page_overlay` (viewer, under / over the tools), `overlay` (app). |
 | `organize/` | Organize page grid with selection, drag reorder and page commands (`grid.rs`, orders in `order.rs`, tested), move earlier / later (Alt+Left / Alt+Right), insert from file, remove blank pages, interleave dialog (`mod.rs`), "Side by side" second viewer (`split.rs`). |
@@ -71,6 +71,10 @@ around the pointer.
 - Hooks: `page_overlay(tab, page, rect, window, cx)` (called by the viewer for every visible
   page) and `viewer_overlay(tab, window, cx)` (the quick bar, drawn over the viewer's
   top-left corner). `toolbar` stays `None`.
+- Move / resize: nothing is written while dragging. The annotation is drawn as a ghost at
+  the pointer over the page rendered without it (`DocTab::lift` / `lifted`, rendered in the
+  background when the pointer hovers it); the drop is one `replace_annotation` (one undo
+  step) and the ghost stays until the page is rendered again (`DocTab::page_settled`).
 - Keys: V H T N D R I E, O L A (ellipse, line, arrow), U K (underline, strikeout), S stamp, X redact pick a tool, Delete / Backspace delete the selection, Esc drops it,
   all in the context `GodPdf && !Input` so they never fire while typing. In a text box
   (context `TextBox`): Ctrl+B / I / U, Ctrl+Enter writes it, Esc cancels.

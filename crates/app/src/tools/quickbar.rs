@@ -81,7 +81,7 @@ enum Change {
 fn target(tab: &mut DocTab, cx: &mut App) -> Target {
     if let Some(editor) = &tab.canvas.editor {
         return match editor.kind {
-            editor::Kind::Text { .. } => Target::TextBox(editor.format),
+            editor::Kind::Text { .. } => Target::TextBox(editor.active(cx)),
             editor::Kind::Note { .. } => Target::Tool(Tool::Note),
         };
     }
@@ -109,7 +109,7 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
             }) => Target::Selected(
                 Kind::Text,
                 style(color, 2.0, font_size, font),
-                Some(common_style(&styles, text.chars().count())),
+                Some(common_style(&styles, 0..text.chars().count())),
             ),
             Some(
                 Annotation::Square { color, width, .. }
@@ -213,7 +213,8 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
             ..
         } => {
             if let Change::Format(format) = change {
-                toggle_all(&mut styles, text.chars().count(), format);
+                let len = text.chars().count();
+                toggle_all(&mut styles, len, 0..len, format);
             }
             // Same top edge and width; core refits the height to the wrapped text.
             Annotation::FreeText {

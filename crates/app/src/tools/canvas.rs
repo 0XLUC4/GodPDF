@@ -3,16 +3,18 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use godpdf_core::{Annotation, PageGeometry, Picture, PlacedAnnotation, Rect};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, CursorStyle, Div, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent,
-    PathBuilder, Pixels, Point, Window, black, canvas, div, point, px, rgb, white,
+    ObjectFit, PathBuilder, Pixels, Point, RenderImage, Window, black, canvas, div, img, point, px,
+    rgb, white,
 };
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, fields, hsla, sign, stamp, tool_state};
+use super::{Tool, current_tool, editor, fields, hsla, richtext, sign, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::toasts;
@@ -66,6 +68,21 @@ enum Gesture {
     Erase { erased: bool },
 }
 
+/// An annotation shown away from where the page picture has it: while it is moved or
+/// resized, and from the drop until the page is rendered again (no jump back). Drawn over the
+/// page rendered without it ([`DocTab::lifted`]), so only the annotation moves; nothing is
+/// written to the PDF before the drop. Rects in displayed points.
+struct Ghost {
+    page: usize,
+    id: String,
+    /// Where the page picture has it.
+    src: DRect,
+    /// Where it shows.
+    dst: DRect,
+    /// The annotation as it is moved or resized (what the drop writes).
+    annotation: Annotation,
+}
+
 impl Gesture {
     fn page(&self) -> Option<usize> {
         match self {
@@ -85,6 +102,8 @@ pub struct Canvas {
     annotations: HashMap<usize, Rc<Vec<PlacedAnnotation>>>,
     pub selected: Option<Selected>,
     gesture: Option<Gesture>,
+    /// Shown between a move / resize and the page rendered again.
+    ghost: Option<Ghost>,
     pub(super) editor: Option<editor::Editor>,
     /// Areas marked for redaction (page, PDF space), removed only by "Apply redactions".
     // shortcut: marks are not remapped when pages are moved or deleted; clear them there once page tools land.
@@ -181,7 +200,7 @@ pub(super) fn selected_item(tab: &mut DocTab, cx: &mut App) -> Option<(usize, It
 }
 
 /// A window position as displayed page points of `page`.
-fn page_point(tab: &DocTab, page: usize, position: Point<Pixels>) -> Option<(f32, f32)> {
+pub(super) fn page_point(tab: &DocTab, page: usize, position: Point<Pixels>) -> Option<(f32, f32)> {
     let rect = *tab.layout().rects.get(page)?;
     let zoom = tab.view.zoom;
     let origin = tab.view.bounds.origin;
@@ -317,10 +336,19 @@ fn select_down(
         .filter(|item| item.resizable());
     if let Some(item) = selected {
         let grab = HANDLE_HIT / zoom;
-        let corner = item.rect.corners().iter().position(|corner| {
-            (corner.0 - point.0).abs() <= grab && (corner.1 - point.1).abs() <= grab
-        });
+        // A text box only widens, from the grip on its right edge (as the bottom-right corner).
+        let corner = if item.is_text() {
+            let reach = editor::GRIP_REACH / zoom;
+            let on_edge = (item.rect.x1 - point.0).abs() <= reach
+                && (item.rect.y0..=item.rect.y1).contains(&point.1);
+            on_edge.then_some(2)
+        } else {
+            item.rect.corners().iter().position(|corner| {
+                (corner.0 - point.0).abs() <= grab && (corner.1 - point.1).abs() <= grab
+            })
+        };
         if let Some(corner) = corner {
+            lift(tab, page, &item.id, cx);
             tab.canvas.gesture = Some(Gesture::Resize {
                 page,
                 id: item.id.clone(),
@@ -354,6 +382,7 @@ fn select_down(
             cx,
         );
     } else if item.movable() {
+        lift(tab, page, &item.id, cx);
         tab.canvas.gesture = Some(Gesture::Move {
             page,
             id: item.id.clone(),
@@ -364,8 +393,33 @@ fn select_down(
     }
 }
 
+/// Have the page without the annotation under the pointer ready before it is grabbed.
+fn lift_hovered(tab: &mut DocTab, page: usize, position: Point<Pixels>, cx: &mut Context<DocTab>) {
+    if current_tool(cx) != Tool::Select {
+        return;
+    }
+    let (Some(point), Some(items)) = (page_point(tab, page, position), items(tab, page, cx)) else {
+        return;
+    };
+    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
+    if let Some(index) = geom::hit_test(&rects, point, HIT_SLOP / tab.view.zoom)
+        && items[index].movable()
+    {
+        lift(tab, page, &items[index].id, cx);
+    }
+}
+
+/// Have `page` rendered without annotation `id`, unless a dropped annotation is settling: the
+/// page without it is still shown then.
+fn lift(tab: &mut DocTab, page: usize, id: &str, cx: &mut Context<DocTab>) {
+    if tab.canvas.ghost.is_none() {
+        tab.lift(page, id, cx);
+    }
+}
+
 fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Context<DocTab>) {
     let Some(gesture) = &tab.canvas.gesture else {
+        lift_hovered(tab, page, event.position, cx);
         return;
     };
     // The button went up somewhere we did not hear about.
@@ -449,34 +503,81 @@ fn finish(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     };
     match gesture {
         Gesture::Draw { page, points } => commit_draw(tab, page, &points, cx),
-        Gesture::Move {
-            page, id, offset, ..
-        } if offset.0.hypot(offset.1) >= geom::MIN_MOVE => {
-            let change =
-                |annotation: &Annotation, _: &PlacedAnnotation, geom: &PageGeometry, displayed| {
-                    let (dx, dy) = geom::pdf_delta(geom, displayed, offset);
-                    annotation.translated(dx, dy)
-                };
-            rewrite(tab, page, &id, "Move", change, cx);
+        Gesture::Move { offset, .. } if offset.0.hypot(offset.1) < geom::MIN_MOVE => {}
+        Gesture::Move { .. } | Gesture::Resize { .. } => {
+            let verb = if matches!(gesture, Gesture::Move { .. }) {
+                "Move"
+            } else {
+                "Resize"
+            };
+            if let Some(ghost) = ghost_of(tab, &gesture, cx) {
+                drop_ghost(tab, ghost, verb, cx);
+            }
         }
+        _ => {}
+    }
+    cx.notify();
+}
+
+/// The annotation a move or resize in progress is changing, where it shows now.
+fn ghost_of(tab: &mut DocTab, gesture: &Gesture, cx: &mut App) -> Option<Ghost> {
+    let (page, id, src) = match gesture {
+        Gesture::Move {
+            page,
+            id,
+            original,
+            offset,
+            ..
+        } if *offset != (0.0, 0.0) => (*page, id, *original),
         Gesture::Resize {
             page,
             id,
             original,
             rect,
             ..
-        } if rect != original => {
-            let change = |annotation: &Annotation,
-                          placed: &PlacedAnnotation,
-                          geom: &PageGeometry,
-                          displayed| {
-                annotation.fitted(placed.rect, rect.to_pdf(geom, displayed))
-            };
-            rewrite(tab, page, &id, "Resize", change, cx);
+        } if rect != original => (*page, id, *original),
+        _ => return None,
+    };
+    let (geom, displayed) = page_frame(tab, page)?;
+    let list = annotations(tab, page, cx);
+    let placed = list.iter().find(|placed| placed.id == *id)?;
+    let annotation = placed.annotation.as_ref()?;
+    let (annotation, dst) = match gesture {
+        Gesture::Move { offset, .. } => {
+            let (dx, dy) = geom::pdf_delta(&geom, displayed, *offset);
+            (annotation.translated(dx, dy), src.translate(*offset))
         }
-        _ => {}
+        Gesture::Resize { rect, .. } => {
+            let fitted = annotation.fitted(placed.rect, rect.to_pdf(&geom, displayed));
+            // A text box takes the height of its re-wrapped text.
+            let dst = match &fitted {
+                Annotation::FreeText { rect, .. } => DRect::from_pdf(&geom, displayed, rect),
+                _ => *rect,
+            };
+            (fitted, dst)
+        }
+        _ => return None,
+    };
+    Some(Ghost {
+        page,
+        id: id.clone(),
+        src,
+        dst,
+        annotation,
+    })
+}
+
+/// Write a move or resize (one undo step), and keep showing it until the page is rendered.
+fn drop_ghost(tab: &mut DocTab, ghost: Ghost, verb: &str, cx: &mut App) {
+    let label = format!("{verb} {}", ghost.annotation.kind_name().to_lowercase());
+    let (page, id) = (ghost.page, ghost.id.clone());
+    let result = tab.apply(&label, |pdf| {
+        godpdf_core::replace_annotation(pdf, page, &id, &ghost.annotation)
+    });
+    if result.is_ok() {
+        tab.canvas.ghost = Some(ghost);
     }
-    cx.notify();
+    report(result, cx);
 }
 
 fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Context<DocTab>) {
@@ -816,6 +917,27 @@ pub fn page_overlay(
         tab.canvas.selected = None;
     }
     let redaction_marks = marks(tab, page);
+    if tab
+        .canvas
+        .ghost
+        .as_ref()
+        .is_some_and(|ghost| ghost.page == page && tab.page_settled(page))
+    {
+        tab.canvas.ghost = None;
+    }
+    let gesture = tab.canvas.gesture.take();
+    let live = gesture
+        .as_ref()
+        .and_then(|gesture| ghost_of(tab, gesture, cx));
+    tab.canvas.gesture = gesture;
+    let settled = tab.canvas.ghost.take();
+    let ghost = live
+        .as_ref()
+        .or(settled.as_ref())
+        .filter(|ghost| ghost.page == page);
+    let ghost_layer = ghost.map(|ghost| ghost_elements(tab, ghost, zoom));
+    let ghost_rect = ghost.map(|ghost| (ghost.id.clone(), ghost.dst));
+    tab.canvas.ghost = settled;
     let gesture = tab.canvas.gesture.as_ref();
     let mut layer = div()
         .absolute()
@@ -835,7 +957,8 @@ pub fn page_overlay(
         .on_mouse_up_out(
             MouseButton::Left,
             cx.listener(|tab, _, _, cx| finish(tab, cx)),
-        );
+        )
+        .children(ghost_layer.into_iter().flatten());
 
     let red: Hsla = rgb(REDACT_RED).into();
     for (_, mark) in redaction_marks {
@@ -883,14 +1006,8 @@ pub fn page_overlay(
         .filter(|sel| sel.page == page)
         .and_then(|sel| items.iter().find(|item| item.id == sel.id));
     if let Some(item) = selected {
-        let rect = match gesture {
-            Some(Gesture::Move {
-                id,
-                original,
-                offset,
-                ..
-            }) if *id == item.id => original.translate(*offset),
-            Some(Gesture::Resize { id, rect, .. }) if *id == item.id => *rect,
+        let rect = match &ghost_rect {
+            Some((id, rect)) if *id == item.id => *rect,
             _ => item.rect,
         };
         layer = layer.child(
@@ -902,7 +1019,9 @@ pub fn page_overlay(
                     outline.cursor(CursorStyle::ClosedHand)
                 }),
         );
-        if item.resizable() {
+        if item.is_text() {
+            layer = layer.child(boxed(rect, zoom, 0.0).child(editor::grip(rect.height() * zoom)));
+        } else if item.resizable() {
             let text = item.is_text();
             for (corner, (x, y)) in rect.corners().into_iter().enumerate() {
                 let half = HANDLE_SIZE / 2.0;
@@ -948,7 +1067,18 @@ pub fn page_overlay(
 /// What the drag in progress will draw.
 fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Option<AnyElement> {
     let style = cx.try_global::<super::ToolState>()?.styles.of(tool);
-    let color = hsla(style.color);
+    shape(tool, points, hsla(style.color), style.width, zoom)
+}
+
+/// What `tool` draws from `points` (the drag, or the points of an ink stroke) in `color`,
+/// lines `width` points wide.
+fn shape(
+    tool: Tool,
+    points: &[(f32, f32)],
+    color: Hsla,
+    width: f32,
+    zoom: f32,
+) -> Option<AnyElement> {
     let (&first, &last) = (points.first()?, points.last()?);
     let rect = DRect::span(first, last);
     let element = match tool {
@@ -976,7 +1106,7 @@ fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Optio
             .into_any_element()
         }
         Tool::Rectangle => boxed(rect, zoom, 0.0)
-            .border(px(style.width * zoom))
+            .border(px(width * zoom))
             .border_color(color)
             .into_any_element(),
         Tool::Redact => boxed(rect, zoom, 0.0)
@@ -988,24 +1118,129 @@ fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Optio
             .border_dashed()
             .border_color(black())
             .into_any_element(),
-        Tool::Ellipse => strokes(
-            vec![geom::ellipse_points(rect, 64)],
-            style.width,
-            color,
-            zoom,
-        ),
-        Tool::Line => strokes(vec![vec![first, last]], style.width, color, zoom),
+        Tool::Ellipse => strokes(vec![geom::ellipse_points(rect, 64)], width, color, zoom),
+        Tool::Line => strokes(vec![vec![first, last]], width, color, zoom),
         Tool::Arrow => {
             let mut lines = vec![vec![first, last]];
-            if let Some([a, b]) = geom::arrow_wings(first, last, (style.width * 4.0).max(8.0)) {
+            if let Some([a, b]) = geom::arrow_wings(first, last, (width * 4.0).max(8.0)) {
                 lines.push(vec![a, last, b]);
             }
-            strokes(lines, style.width, color, zoom)
+            strokes(lines, width, color, zoom)
         }
-        Tool::Ink => strokes(vec![points.to_vec()], style.width, color, zoom),
+        Tool::Ink => strokes(vec![points.to_vec()], width, color, zoom),
         _ => return None,
     };
     Some(element)
+}
+
+/// A ghost over its page: the page without the annotation (once rendered), then the
+/// annotation where it is now: text and vector kinds drawn anew, notes, pictures and stamps
+/// as the page picture shows them, cut out and moved / stretched.
+fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement> {
+    let mut elements = Vec::new();
+    if let Some(base) = tab.lifted(ghost.page, &ghost.id) {
+        elements.push(
+            img(base)
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .object_fit(ObjectFit::Fill)
+                .into_any_element(),
+        );
+    }
+    let Some((geom, displayed)) = page_frame(tab, ghost.page) else {
+        return elements;
+    };
+    let shown = |point: (f32, f32)| crate::geometry::from_pdf(&geom, displayed, point);
+    let corners = [(ghost.dst.x0, ghost.dst.y0), (ghost.dst.x1, ghost.dst.y1)];
+    let drawn = match &ghost.annotation {
+        Annotation::FreeText {
+            text,
+            font_size,
+            color,
+            rotation,
+            font,
+            styles,
+            ..
+        } if (geom.rotation - rotation).rem_euclid(360) == 0 => {
+            let layout = richtext::Layout::new(text, styles, *font, *font_size, ghost.dst.width());
+            let look = richtext::Look {
+                family: editor::font_family(*font),
+                color: hsla(*color),
+                selection: None,
+            };
+            Some(
+                boxed(ghost.dst, zoom, 0.0)
+                    .child(richtext::element(Rc::new(layout), look, zoom))
+                    .into_any_element(),
+            )
+        }
+        Annotation::Highlight { color, .. } => {
+            shape(Tool::Highlight, &corners, hsla(*color), 0.0, zoom)
+        }
+        Annotation::Underline { color, .. } => {
+            shape(Tool::Underline, &corners, hsla(*color), 0.0, zoom)
+        }
+        Annotation::StrikeOut { color, .. } => {
+            shape(Tool::StrikeOut, &corners, hsla(*color), 0.0, zoom)
+        }
+        Annotation::Square { color, width, .. } => {
+            shape(Tool::Rectangle, &corners, hsla(*color), *width, zoom)
+        }
+        Annotation::Circle { color, width, .. } => {
+            shape(Tool::Ellipse, &corners, hsla(*color), *width, zoom)
+        }
+        Annotation::Line {
+            start,
+            end,
+            color,
+            width,
+            arrow,
+        } => {
+            let tool = if *arrow { Tool::Arrow } else { Tool::Line };
+            shape(
+                tool,
+                &[shown(*start), shown(*end)],
+                hsla(*color),
+                *width,
+                zoom,
+            )
+        }
+        Annotation::Ink {
+            strokes: lines,
+            color,
+            width,
+        } => {
+            let lines = lines
+                .iter()
+                .map(|line| line.iter().map(|&point| shown(point)).collect())
+                .collect();
+            Some(strokes(lines, *width, hsla(*color), zoom))
+        }
+        _ => tab
+            .cached_page(ghost.page)
+            .map(|picture| cut_out(picture, ghost, displayed, zoom)),
+    };
+    elements.extend(drawn);
+    elements
+}
+
+/// The part `ghost.src` of the page picture shown at `ghost.dst`.
+fn cut_out(picture: Arc<RenderImage>, ghost: &Ghost, page: (f32, f32), zoom: f32) -> AnyElement {
+    let at = geom::crop(ghost.src, ghost.dst, page);
+    boxed(ghost.dst, zoom, 0.0)
+        .overflow_hidden()
+        .child(
+            img(picture)
+                .absolute()
+                .left(px(at.x0 * zoom))
+                .top(px(at.y0 * zoom))
+                .w(px(at.width() * zoom))
+                .h(px(at.height() * zoom))
+                .object_fit(ObjectFit::Fill),
+        )
+        .into_any_element()
 }
 
 /// Polylines (displayed points) stroked `width` points wide, over the whole page.

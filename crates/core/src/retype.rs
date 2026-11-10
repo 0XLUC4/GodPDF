@@ -23,13 +23,13 @@ const FONT: &str = "GodPDF";
 const SLACK: f32 = 1.5;
 
 /// A transformation, as PDF writes it: `[a b c d e f]`.
-type Matrix = [f32; 6];
+pub(crate) type Matrix = [f32; 6];
 /// A standard font, bold or not, slanted or not.
 type Face = (Font, bool, bool);
-const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// `first`, then `second`.
-fn then(first: Matrix, second: Matrix) -> Matrix {
+pub(crate) fn then(first: Matrix, second: Matrix) -> Matrix {
     let ([a, b, c, d, e, f], n) = (first, second);
     [
         a * n[0] + b * n[2],
@@ -166,7 +166,7 @@ fn lift(
 }
 
 /// Where `(x, y)` is once `matrix` has moved it.
-fn moved(matrix: Matrix, (x, y): (f32, f32)) -> (f32, f32) {
+pub(crate) fn moved(matrix: Matrix, (x, y): (f32, f32)) -> (f32, f32) {
     let [a, b, c, d, e, f] = matrix;
     (a * x + c * y + e, b * x + d * y + f)
 }
@@ -589,8 +589,8 @@ fn rewrite(
 }
 
 /// A font of a page: how wide its letters are, and the standard font closest to it.
-struct PageFont {
-    widths: Widths,
+pub(crate) struct PageFont {
+    pub(crate) widths: Widths,
     face: Face,
 }
 
@@ -638,7 +638,7 @@ fn face(doc: &Document, font: &Dictionary) -> Face {
     (family, bold, italic)
 }
 
-enum Widths {
+pub(crate) enum Widths {
     Simple {
         first: i64,
         widths: Vec<f32>,
@@ -743,9 +743,17 @@ impl Widths {
     }
 
     fn displacement(&self, bytes: &[u8], size: f32, char_spacing: f32, word_spacing: f32) -> f32 {
-        let glyph = |units: f32, space: bool| {
-            units / 1000.0 * size + char_spacing + if space { word_spacing } else { 0.0 }
-        };
+        self.glyphs(bytes)
+            .into_iter()
+            .map(|(_, units, space)| {
+                units / 1000.0 * size + char_spacing + if space { word_spacing } else { 0.0 }
+            })
+            .sum()
+    }
+
+    /// Each glyph `bytes` shows: how many bytes its code takes, its width in thousandths of
+    /// an em, and whether it is the space that word spacing widens.
+    pub(crate) fn glyphs(&self, bytes: &[u8]) -> Vec<(usize, f32, bool)> {
         match self {
             Self::Simple {
                 first,
@@ -766,9 +774,9 @@ impl Widths {
                         }
                         (None, None) => *missing,
                     };
-                    glyph(units, code == b' ')
+                    (1, units, code == b' ')
                 })
-                .sum(),
+                .collect(),
             Self::Composite { ranges, default } => bytes
                 .chunks(2)
                 .map(|pair| {
@@ -779,14 +787,14 @@ impl Widths {
                         .iter()
                         .find(|(start, end, _)| (*start..=*end).contains(&code))
                         .map_or(*default, |(_, _, width)| *width);
-                    glyph(units, pair == [b' '])
+                    (pair.len(), units, pair == b" ")
                 })
-                .sum(),
+                .collect(),
         }
     }
 }
 
-fn page_fonts(doc: &Document, page: ObjectId) -> HashMap<Vec<u8>, PageFont> {
+pub(crate) fn page_fonts(doc: &Document, page: ObjectId) -> HashMap<Vec<u8>, PageFont> {
     let resources = inherited(doc, page, b"Resources");
     let resources = resources
         .as_ref()

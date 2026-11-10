@@ -18,6 +18,7 @@ mod info;
 mod layout;
 mod organize;
 mod pdf;
+mod redact;
 mod retype;
 mod security;
 mod session;
@@ -27,8 +28,9 @@ mod textlayer;
 
 pub use annotate::{
     Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Picture,
-    PlacedAnnotation, Rect, add_annotation, add_annotations, annotations, free_text_rect,
-    free_text_width, remove_annotation, replace_annotation, wrap_free_text, wrap_styled,
+    PlacedAnnotation, Rect, StampLabel, add_annotation, add_annotations, annotations,
+    free_text_rect, free_text_width, remove_annotation, replace_annotation, wrap_free_text,
+    wrap_styled,
 };
 pub use attach::{Attachment, add_attachment, attachments, remove_attachment};
 pub use bookmarks::{contents_page, write_outline};
@@ -53,6 +55,7 @@ pub use organize::{
     blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, interleave, merge,
     reorder_pages, rotate_pages, split_at, split_every,
 };
+pub use redact::redact;
 pub use retype::{LineLook, line_look, replace_styled, replace_text};
 pub use security::{decrypt, encrypt, is_encrypted};
 pub use session::Session;

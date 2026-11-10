@@ -53,12 +53,16 @@ pub struct Entry {
 impl Entry {
     fn new(page: usize, annotation: Annotation) -> Self {
         let (kind, text) = match annotation {
-            Annotation::Highlight { .. } => (Kind::Highlight, String::new()),
+            Annotation::Highlight { .. }
+            | Annotation::Underline { .. }
+            | Annotation::StrikeOut { .. } => (Kind::Highlight, String::new()),
             Annotation::Note { text, .. } => (Kind::Note, text),
             Annotation::FreeText { text, .. } => (Kind::FreeText, text),
-            Annotation::Square { .. } => (Kind::Rectangle, String::new()),
-            Annotation::Ink { .. } => (Kind::Ink, String::new()),
-            Annotation::Image { .. } => (Kind::Picture, String::new()),
+            Annotation::Square { .. } | Annotation::Circle { .. } => {
+                (Kind::Rectangle, String::new())
+            }
+            Annotation::Ink { .. } | Annotation::Line { .. } => (Kind::Ink, String::new()),
+            Annotation::Image { .. } | Annotation::Stamp { .. } => (Kind::Picture, String::new()),
         };
         Self { page, kind, text }
     }

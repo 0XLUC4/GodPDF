@@ -298,6 +298,12 @@ fn paint_shape(painter: &egui::Painter, view: &View, annotation: &Annotation) {
         }
         // Shown with the pixels of the page (see `Ghost::pixels`).
         Annotation::Note { .. } | Annotation::Image { .. } => {}
+        // shortcut: not previewed while dragged, the page shows them once dropped.
+        Annotation::Circle { .. }
+        | Annotation::Line { .. }
+        | Annotation::Underline { .. }
+        | Annotation::StrikeOut { .. }
+        | Annotation::Stamp { .. } => {}
     }
 }
 

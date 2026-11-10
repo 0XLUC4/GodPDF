@@ -61,6 +61,95 @@ pub enum Annotation {
         rect: Rect,
         picture: Picture,
     },
+    /// Stroked ellipse kept inside `rect`.
+    Circle {
+        rect: Rect,
+        color: Color,
+        width: f32,
+    },
+    /// Straight line from `start` to `end`, with an open arrow head at `end` when `arrow`.
+    Line {
+        start: (f32, f32),
+        end: (f32, f32),
+        color: Color,
+        width: f32,
+        arrow: bool,
+    },
+    /// Line under the text covered by `rect`.
+    Underline {
+        rect: Rect,
+        color: Color,
+    },
+    /// Line through the middle of the text covered by `rect`.
+    StrikeOut {
+        rect: Rect,
+        color: Color,
+    },
+    /// Rubber stamp: `label` in a coloured frame, with an optional second line (a date).
+    Stamp {
+        rect: Rect,
+        label: StampLabel,
+        date: Option<String>,
+    },
+}
+
+/// Preset labels of a rubber stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StampLabel {
+    Approved,
+    Draft,
+    Confidential,
+    Rejected,
+    Final,
+}
+
+impl StampLabel {
+    pub const ALL: [Self; 5] = [
+        Self::Approved,
+        Self::Draft,
+        Self::Confidential,
+        Self::Rejected,
+        Self::Final,
+    ];
+
+    /// The words printed on the stamp.
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Approved => "APPROVED",
+            Self::Draft => "DRAFT",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Rejected => "REJECTED",
+            Self::Final => "FINAL",
+        }
+    }
+
+    /// Frame and text colour.
+    pub fn color(self) -> Color {
+        let (r, g, b) = match self {
+            Self::Approved => (0.1, 0.55, 0.2),
+            Self::Draft => (0.15, 0.35, 0.75),
+            Self::Confidential | Self::Rejected => (0.8, 0.1, 0.1),
+            Self::Final => (0.4, 0.2, 0.6),
+        };
+        Color { r, g, b }
+    }
+
+    /// The standard /Name of the stamp (PDF 32000 table 181), so other viewers know it.
+    fn pdf_name(self) -> &'static str {
+        match self {
+            Self::Approved => "Approved",
+            Self::Draft => "Draft",
+            Self::Confidential => "Confidential",
+            Self::Rejected => "NotApproved",
+            Self::Final => "Final",
+        }
+    }
+
+    fn from_pdf_name(name: &[u8]) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|label| label.pdf_name().as_bytes() == name)
+    }
 }
 
 /// Name of the picture in the appearance of an image annotation: how it is found again.
@@ -234,9 +323,18 @@ impl Annotation {
             | Self::Note { rect, .. }
             | Self::FreeText { rect, .. }
             | Self::Square { rect, .. }
-            | Self::Image { rect, .. } => *rect = rect.translated(dx, dy),
+            | Self::Image { rect, .. }
+            | Self::Circle { rect, .. }
+            | Self::Underline { rect, .. }
+            | Self::StrikeOut { rect, .. }
+            | Self::Stamp { rect, .. } => *rect = rect.translated(dx, dy),
             Self::Ink { strokes, .. } => {
                 for point in strokes.iter_mut().flatten() {
+                    *point = (point.0 + dx, point.1 + dy);
+                }
+            }
+            Self::Line { start, end, .. } => {
+                for point in [start, end] {
                     *point = (point.0 + dx, point.1 + dy);
                 }
             }
@@ -253,7 +351,11 @@ impl Annotation {
             Self::Highlight { rect, .. }
             | Self::Note { rect, .. }
             | Self::Square { rect, .. }
-            | Self::Image { rect, .. } => {
+            | Self::Image { rect, .. }
+            | Self::Circle { rect, .. }
+            | Self::Underline { rect, .. }
+            | Self::StrikeOut { rect, .. }
+            | Self::Stamp { rect, .. } => {
                 *rect = to;
             }
             Self::FreeText {
@@ -270,19 +372,13 @@ impl Annotation {
                 *rect = with_free_text_height(to, *rotation, free_text_height(lines, *font_size));
             }
             Self::Ink { strokes, .. } => {
-                let scale = |value: f32, from0: f32, from1: f32, to0: f32, to1: f32| {
-                    let span = from1 - from0;
-                    if span.abs() < f32::EPSILON {
-                        (to0 + to1) / 2.0
-                    } else {
-                        to0 + (value - from0) / span * (to1 - to0)
-                    }
-                };
                 for point in strokes.iter_mut().flatten() {
-                    *point = (
-                        scale(point.0, from.x0, from.x1, to.x0, to.x1),
-                        scale(point.1, from.y0, from.y1, to.y0, to.y1),
-                    );
+                    *point = fit_point(*point, from, to);
+                }
+            }
+            Self::Line { start, end, .. } => {
+                for point in [start, end] {
+                    *point = fit_point(*point, from, to);
                 }
             }
         }
@@ -298,8 +394,30 @@ impl Annotation {
             Self::Square { .. } => "Rectangle",
             Self::Ink { .. } => "Drawing",
             Self::Image { .. } => "Picture",
+            Self::Circle { .. } => "Ellipse",
+            Self::Line { arrow: true, .. } => "Arrow",
+            Self::Line { .. } => "Line",
+            Self::Underline { .. } => "Underline",
+            Self::StrikeOut { .. } => "Strikethrough",
+            Self::Stamp { .. } => "Stamp",
         }
     }
+}
+
+/// `point` mapped proportionally from the box `from` onto `to`.
+fn fit_point((x, y): (f32, f32), from: Rect, to: Rect) -> (f32, f32) {
+    let scale = |value: f32, from0: f32, from1: f32, to0: f32, to1: f32| {
+        let span = from1 - from0;
+        if span.abs() < f32::EPSILON {
+            (to0 + to1) / 2.0
+        } else {
+            to0 + (value - from0) / span * (to1 - to0)
+        }
+    };
+    (
+        scale(x, from.x0, from.x1, to.x0, to.x1),
+        scale(y, from.y0, from.y1, to.y0, to.y1),
+    )
 }
 
 /// Written into /T (author) of every annotation.
@@ -518,6 +636,29 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             width,
         } => ink(strokes, *color, *width),
         Annotation::Image { rect, .. } => Ok(image(normalized(*rect)?)),
+        Annotation::Circle { rect, color, width } => circle(normalized(*rect)?, *color, *width),
+        Annotation::Line {
+            start,
+            end,
+            color,
+            width,
+            arrow,
+        } => line(*start, *end, *color, *width, *arrow),
+        Annotation::Underline { rect, color } => Ok(text_line(
+            "Underline",
+            normalized(*rect)?,
+            *color,
+            UNDERLINE_AT,
+        )),
+        Annotation::StrikeOut { rect, color } => Ok(text_line(
+            "StrikeOut",
+            normalized(*rect)?,
+            *color,
+            STRIKE_OUT_AT,
+        )),
+        Annotation::Stamp { rect, label, date } => {
+            Ok(stamp(normalized(*rect)?, *label, date.as_deref()))
+        }
     }
 }
 
@@ -593,11 +734,6 @@ fn annotation_dict(
 
 /// Translucent filled rectangle, multiplied onto the page.
 fn highlight(rect: Rect, color: Color) -> Parts {
-    let Rect { x0, y0, x1, y1 } = rect;
-    let quad: Vec<Object> = [x0, y1, x1, y1, x0, y0, x1, y0]
-        .into_iter()
-        .map(Object::from)
-        .collect();
     let gstate = dictionary! {
         "Type" => "ExtGState",
         "BM" => "Multiply",
@@ -608,9 +744,42 @@ fn highlight(rect: Rect, color: Color) -> Parts {
         subtype: "Highlight",
         rect,
         color: Some(color),
-        extra: dictionary! { "QuadPoints" => quad },
+        extra: dictionary! { "QuadPoints" => quad_points(rect) },
         appearance: format!("/GS0 gs {} rg {} re f", rgb(color), rect_ops(rect)),
         resources: dictionary! { "ExtGState" => dictionary! { "GS0" => gstate } },
+    }
+}
+
+/// /QuadPoints of one text line: top-left, top-right, bottom-left, bottom-right.
+fn quad_points(rect: Rect) -> Vec<Object> {
+    let Rect { x0, y0, x1, y1 } = rect;
+    [x0, y1, x1, y1, x0, y0, x1, y0]
+        .into_iter()
+        .map(Object::from)
+        .collect()
+}
+
+/// Where the bar of an underline and of a strike-out sits, in heights of the text box.
+const UNDERLINE_AT: f32 = 0.1;
+const STRIKE_OUT_AT: f32 = 0.5;
+
+/// A thin bar across the text box at `at` of its height (underline, strike-out).
+fn text_line(subtype: &'static str, rect: Rect, color: Color, at: f32) -> Parts {
+    let height = rect.y1 - rect.y0;
+    let thickness = (height / 14.0).max(0.5);
+    let middle = rect.y0 + height * at;
+    let bar = Rect {
+        y0: middle - thickness / 2.0,
+        y1: middle + thickness / 2.0,
+        ..rect
+    };
+    Parts {
+        subtype,
+        rect,
+        color: Some(color),
+        extra: dictionary! { "QuadPoints" => quad_points(rect) },
+        appearance: format!("{} rg {} re f", rgb(color), rect_ops(bar)),
+        resources: Dictionary::new(),
     }
 }
 
@@ -744,12 +913,7 @@ fn free_text(rect: Rect, look: FreeTextLook, rotation: i32) -> Result<Parts> {
     for (bold, italic) in used {
         fonts.set(
             family.resource(bold, italic),
-            dictionary! {
-                "Type" => "Font",
-                "Subtype" => "Type1",
-                "BaseFont" => family.base_font(bold, italic),
-                "Encoding" => "WinAnsiEncoding",
-            },
+            standard_font(family.base_font(bold, italic)),
         );
     }
     let mut extra = dictionary! {
@@ -789,6 +953,211 @@ fn square(rect: Rect, color: Color, width: f32) -> Result<Parts> {
         ),
         resources: Dictionary::new(),
     })
+}
+
+/// Stroked ellipse, kept inside `rect`.
+fn circle(rect: Rect, color: Color, width: f32) -> Result<Parts> {
+    check_width(width)?;
+    Ok(Parts {
+        subtype: "Circle",
+        rect,
+        color: Some(color),
+        extra: dictionary! { "BS" => border_style(width) },
+        appearance: format!(
+            "{} w {} RG {} S",
+            num(width),
+            rgb(color),
+            ellipse_ops(inset(rect, width / 2.0))
+        ),
+        resources: Dictionary::new(),
+    })
+}
+
+/// Path of the ellipse inscribed in `rect`: four Bezier quarters.
+fn ellipse_ops(rect: Rect) -> String {
+    // Control point distance of a Bezier quarter circle, in radii.
+    const KAPPA: f32 = 0.552_284_8;
+    let (cx, cy) = ((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0);
+    let (rx, ry) = ((rect.x1 - rect.x0) / 2.0, (rect.y1 - rect.y0) / 2.0);
+    let (kx, ky) = (rx * KAPPA, ry * KAPPA);
+    let p = |x: f32, y: f32| format!("{} {}", num(x), num(y));
+    format!(
+        "{} m {} {} {} c {} {} {} c {} {} {} c {} {} {} c h",
+        p(cx + rx, cy),
+        p(cx + rx, cy + ky),
+        p(cx + kx, cy + ry),
+        p(cx, cy + ry),
+        p(cx - kx, cy + ry),
+        p(cx - rx, cy + ky),
+        p(cx - rx, cy),
+        p(cx - rx, cy - ky),
+        p(cx - kx, cy - ry),
+        p(cx, cy - ry),
+        p(cx + kx, cy - ry),
+        p(cx + rx, cy - ky),
+        p(cx + rx, cy),
+    )
+}
+
+/// Length of the two strokes of the arrow head of a line of `width`.
+fn arrow_length(width: f32) -> f32 {
+    (width * 4.0).max(8.0)
+}
+
+/// The two wing tips of the open arrow head at `end` of a line coming from `start`; `None`
+/// when the line has no direction.
+fn arrow_head(start: (f32, f32), end: (f32, f32), width: f32) -> Option<[(f32, f32); 2]> {
+    let (dx, dy) = (start.0 - end.0, start.1 - end.1);
+    let length = dx.hypot(dy);
+    if length < f32::EPSILON {
+        return None;
+    }
+    let (back_x, back_y) = (dx / length, dy / length);
+    let (sin, cos) = 30f32.to_radians().sin_cos();
+    let size = arrow_length(width);
+    // The direction back along the line, turned 30 degrees one way or the other.
+    let wing = |turn: f32| {
+        let x = back_x * cos - back_y * sin * turn;
+        let y = back_x * sin * turn + back_y * cos;
+        (end.0 + x * size, end.1 + y * size)
+    };
+    Some([wing(1.0), wing(-1.0)])
+}
+
+/// Straight stroked line with round caps, and an open arrow head at `end` when `arrow`.
+fn line(
+    start: (f32, f32),
+    end: (f32, f32),
+    color: Color,
+    width: f32,
+    arrow: bool,
+) -> Result<Parts> {
+    check_width(width)?;
+    if ![start.0, start.1, end.0, end.1]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        return Err(Error::InvalidArgument("line point is not finite".into()));
+    }
+    let margin = width / 2.0 + 1.0 + if arrow { arrow_length(width) } else { 0.0 };
+    let rect = Rect {
+        x0: start.0.min(end.0) - margin,
+        y0: start.1.min(end.1) - margin,
+        x1: start.0.max(end.0) + margin,
+        y1: start.1.max(end.1) + margin,
+    };
+    let point = |(x, y): (f32, f32)| format!("{} {}", num(x), num(y));
+    let mut appearance = format!(
+        "{} w 1 J 1 j {} RG {} m {} l S",
+        num(width),
+        rgb(color),
+        point(start),
+        point(end)
+    );
+    if let Some([left, right]) = arrow.then(|| arrow_head(start, end, width)).flatten() {
+        appearance += &format!(" {} m {} l {} l S", point(left), point(end), point(right));
+    }
+    let ending = if arrow { "OpenArrow" } else { "None" };
+    Ok(Parts {
+        subtype: "Line",
+        rect,
+        color: Some(color),
+        extra: dictionary! {
+            "L" => vec![start.0.into(), start.1.into(), end.0.into(), end.1.into()],
+            "LE" => vec![Object::from("None"), Object::from(ending)],
+            "BS" => border_style(width),
+        },
+        appearance,
+        resources: Dictionary::new(),
+    })
+}
+
+/// Rubber stamp: `label` in bold capitals inside a coloured frame, `date` smaller below it.
+fn stamp(rect: Rect, label: StampLabel, date: Option<&str>) -> Parts {
+    let color = label.color();
+    let (width, height) = (rect.x1 - rect.x0, rect.y1 - rect.y0);
+    let frame = (width.min(height) * 0.06).clamp(0.5, 4.0);
+    let pad = frame * 2.0;
+    let bold = CharStyle {
+        bold: true,
+        ..CharStyle::default()
+    };
+    let plain = CharStyle::default();
+    let text_width = |text: &str, style: CharStyle| -> f32 {
+        text.chars()
+            .map(|c| Font::Helvetica.char_width(c, style, 1.0))
+            .sum()
+    };
+    // Largest size that fits `text` in the width and in 60% of a band `room` high.
+    let fit = |text: &str, style: CharStyle, room: f32| {
+        let per_point = text_width(text, style).max(f32::EPSILON);
+        (room * 0.6).min((width - 2.0 * pad) / per_point).max(0.0)
+    };
+    // Left end of `text` centred in the stamp, and its baseline centred in the band whose
+    // middle is `middle` (capitals are about 0.72 em high).
+    let place = |text: &str, style: CharStyle, size: f32, middle: f32| {
+        let x = rect.x0 + (width - text_width(text, style) * size) / 2.0;
+        format!("{} {}", num(x), num(middle - 0.36 * size))
+    };
+    // The label takes the top 62% when there is a date, else the whole height.
+    let label_height = if date.is_some() {
+        height * 0.62
+    } else {
+        height
+    };
+    let label_size = fit(label.text(), bold, label_height);
+    let bold_font = Font::Helvetica.resource(true, false);
+    let mut appearance = format!(
+        "{} w {} RG {} re S {} rg BT /{bold_font} {} Tf {} Td <{}> Tj ET",
+        num(frame),
+        rgb(color),
+        rect_ops(inset(rect, frame / 2.0)),
+        rgb(color),
+        num(label_size),
+        place(label.text(), bold, label_size, rect.y1 - label_height / 2.0),
+        win_ansi_hex(label.text()),
+    );
+    let mut fonts = dictionary! {
+        bold_font => standard_font(Font::Helvetica.base_font(true, false)),
+    };
+    let mut contents = label.text().to_string();
+    if let Some(date) = date {
+        let plain_font = Font::Helvetica.resource(false, false);
+        let room = height - label_height;
+        let size = fit(date, plain, room);
+        appearance += &format!(
+            " BT /{plain_font} {} Tf {} Td <{}> Tj ET",
+            num(size),
+            place(date, plain, size, rect.y0 + room / 2.0),
+            win_ansi_hex(date),
+        );
+        fonts.set(
+            plain_font,
+            standard_font(Font::Helvetica.base_font(false, false)),
+        );
+        contents = format!("{contents}\n{date}");
+    }
+    Parts {
+        subtype: "Stamp",
+        rect,
+        color: Some(color),
+        extra: dictionary! {
+            "Name" => label.pdf_name(),
+            "Contents" => contents_string(&contents),
+        },
+        appearance,
+        resources: dictionary! { "Font" => fonts },
+    }
+}
+
+/// A standard Type 1 font in WinAnsi.
+fn standard_font(base_font: &str) -> Dictionary {
+    dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => base_font,
+        "Encoding" => "WinAnsiEncoding",
+    }
 }
 
 /// Stroked polylines with round caps and joins.
@@ -870,7 +1239,7 @@ fn append_to_annots(doc: &mut Document, page_id: ObjectId, annot_id: ObjectId) -
 }
 
 /// Ordered corners (x0 <= x1, y0 <= y1); rejects non-finite values.
-fn normalized(rect: Rect) -> Result<Rect> {
+pub(crate) fn normalized(rect: Rect) -> Result<Rect> {
     if ![rect.x0, rect.y0, rect.x1, rect.y1]
         .iter()
         .all(|v| v.is_finite())
@@ -996,8 +1365,8 @@ pub struct PlacedAnnotation {
     pub id: String,
     /// Bounding /Rect, unrotated page space.
     pub rect: Rect,
-    /// Parsed back when it is one of our kinds (any Highlight/Text/FreeText/Square/Ink
-    /// with enough data); `None` for other subtypes (Link, Widget, ...).
+    /// Parsed back when it is one of our kinds (Highlight/Underline/StrikeOut/Text/FreeText/
+    /// Square/Circle/Line/Ink/Stamp with enough data); `None` for other subtypes (Link, ...).
     pub annotation: Option<Annotation>,
 }
 
@@ -1160,7 +1529,7 @@ fn numbers(doc: &Document, dict: &Dictionary, key: &[u8]) -> Option<Vec<f32>> {
     numbers_of(doc, dict.get(key).ok()?)
 }
 
-fn read_rect(doc: &Document, dict: &Dictionary) -> Option<Rect> {
+pub(crate) fn read_rect(doc: &Document, dict: &Dictionary) -> Option<Rect> {
     match numbers(doc, dict, b"Rect")?.as_slice() {
         &[x0, y0, x1, y1] => normalized(Rect { x0, y0, x1, y1 }).ok(),
         _ => None,
@@ -1253,9 +1622,49 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             color: read_color(doc, dict)?,
             width: read_width(doc, dict),
         }),
-        b"Stamp" => Some(Annotation::Image {
+        b"Stamp" => {
+            let rect = read_rect(doc, dict)?;
+            if let Some(picture) = read_picture(doc, dict) {
+                return Some(Annotation::Image { rect, picture });
+            }
+            let label = StampLabel::from_pdf_name(dict.get(b"Name").ok()?.as_name().ok()?)?;
+            let text = read_text(doc, dict);
+            Some(Annotation::Stamp {
+                rect,
+                label,
+                date: text.split_once('\n').map(|(_, date)| date.to_string()),
+            })
+        }
+        b"Circle" => Some(Annotation::Circle {
             rect: read_rect(doc, dict)?,
-            picture: read_picture(doc, dict)?,
+            color: read_color(doc, dict)?,
+            width: read_width(doc, dict),
+        }),
+        b"Line" => {
+            let &[x0, y0, x1, y1] = numbers(doc, dict, b"L")?.as_slice() else {
+                return None;
+            };
+            // Any ending at the second point but /None reads as an arrow.
+            let arrow = dict
+                .get(b"LE")
+                .ok()
+                .and_then(|ends| deref(doc, ends)?.as_array().ok()?.get(1)?.as_name().ok())
+                .is_some_and(|end| end != b"None");
+            Some(Annotation::Line {
+                start: (x0, y0),
+                end: (x1, y1),
+                color: read_color(doc, dict)?,
+                width: read_width(doc, dict),
+                arrow,
+            })
+        }
+        b"Underline" => Some(Annotation::Underline {
+            rect: read_rect(doc, dict)?,
+            color: read_color(doc, dict)?,
+        }),
+        b"StrikeOut" => Some(Annotation::StrikeOut {
+            rect: read_rect(doc, dict)?,
+            color: read_color(doc, dict)?,
         }),
         _ => None,
     }

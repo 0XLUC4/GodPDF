@@ -1683,7 +1683,25 @@ impl GodApp {
                 font: style.font,
                 styles,
             },
-            Annotation::Note { .. } | Annotation::Image { .. } => return,
+            Annotation::Circle { rect, .. } => Annotation::Circle {
+                rect,
+                color,
+                width: style.width,
+            },
+            Annotation::Line {
+                start, end, arrow, ..
+            } => Annotation::Line {
+                start,
+                end,
+                color,
+                width: style.width,
+                arrow,
+            },
+            Annotation::Underline { rect, .. } => Annotation::Underline { rect, color },
+            Annotation::StrikeOut { rect, .. } => Annotation::StrikeOut { rect, color },
+            Annotation::Note { .. } | Annotation::Image { .. } | Annotation::Stamp { .. } => {
+                return;
+            }
         };
         let result = self.tabs[self.active].apply("Change style", |pdf| {
             core::replace_annotation(pdf, page, &id, &restyled)
@@ -2441,6 +2459,7 @@ impl GodApp {
             Annotation::Square { .. } => "Rectangle",
             Annotation::Ink { .. } => "Ink",
             Annotation::Image { .. } => "Picture",
+            other => other.kind_name(),
         };
         let result = tab.apply(label, |pdf| core::add_annotation(pdf, page, &annotation));
         self.report(result, None);
@@ -3199,12 +3218,17 @@ fn selected_style(tab: &mut DocTab) -> Option<(StyleKind, CommentStyle, Option<c
             };
             Some((StyleKind::Text, style, Some(formats)))
         }
-        Annotation::Square { color, width, .. } | Annotation::Ink { color, width, .. } => {
+        Annotation::Square { color, width, .. }
+        | Annotation::Ink { color, width, .. }
+        | Annotation::Circle { color, width, .. }
+        | Annotation::Line { color, width, .. } => {
             Some((StyleKind::Stroke, style(color, width, 14.0), None))
         }
-        Annotation::Highlight { color, .. } => {
+        Annotation::Highlight { color, .. }
+        | Annotation::Underline { color, .. }
+        | Annotation::StrikeOut { color, .. } => {
             Some((StyleKind::Fill, style(color, 2.0, 14.0), None))
         }
-        Annotation::Note { .. } | Annotation::Image { .. } => None,
+        Annotation::Note { .. } | Annotation::Image { .. } | Annotation::Stamp { .. } => None,
     }
 }

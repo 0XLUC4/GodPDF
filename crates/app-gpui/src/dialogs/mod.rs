@@ -285,6 +285,8 @@ pub fn overlay(
         build(pending, tab, window, cx);
     }
     let colors = Palette::of(cx);
+    // egui: the palette hangs 90 below the top, the other dialogs are centered.
+    let centered = !matches!(opened(cx)?, Open::Palette(_));
     let card = match opened(cx)? {
         Open::Palette(palette) => palette::render(palette, tab.is_some(), &colors, window, cx),
         Open::Form(form) => form::render(form, &colors),
@@ -298,29 +300,34 @@ pub fn overlay(
             .occlude()
             .flex()
             .justify_center()
-            .items_start()
-            .pt(px(90.))
-            .bg(hsla(0., 0., 0., 0.35))
+            .when(centered, |backdrop| backdrop.items_center())
+            .when(!centered, |backdrop| backdrop.items_start().pt(px(90.)))
+            // egui `Modal` backdrop: black at alpha 100.
+            .bg(hsla(0., 0., 0., 100. / 255.))
             .on_mouse_down(MouseButton::Left, |_, window, cx| close(window, cx))
             .child(card)
             .into_any_element(),
     )
 }
 
-/// The card of a dialog, `width` wide. A click in it does not close it.
+/// The card of a dialog, `width` of content wide: egui `Modal` (`Frame::popup`): panel fill,
+/// 1 px border, radius 9, margin 8, popup shadow, item spacing 6. A click in it does not
+/// close it.
 fn card(palette: &Palette, width: f32) -> Div {
+    let margin = crate::theme::MENU_MARGIN;
     div()
         .flex()
         .flex_col()
-        .gap(px(8.))
-        .w(px(width))
+        .gap(px(crate::theme::ITEM_SPACING.1))
+        .w(px(width + 2.0 * margin + 2.0))
         .max_w_full()
-        .p(px(18.))
-        .rounded(px(12.))
-        .shadow_lg()
+        .p(px(margin))
+        .rounded(px(crate::theme::MENU_RADIUS))
+        .shadow(crate::widgets::popup_shadow(palette))
         .bg(palette.panel)
         .border_1()
         .border_color(palette.border)
+        .text_size(px(crate::fonts::BODY))
         .text_color(palette.text)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
@@ -574,4 +581,28 @@ mod tests {
         assert_eq!(plain("bad file".into()), "Bad file");
         assert_eq!(plain(String::new()), "");
     }
+}
+
+/// egui `dialogs::title`: 19 px (strong is only a colour), then 8 of space.
+fn title(text: impl IntoElement) -> Div {
+    div().pb(px(2.)).text_size(px(19.)).child(text)
+}
+
+/// egui `dialogs::error_line`: warning glyph and text in the error colour.
+fn error_line(error: impl Into<gpui::SharedString>, palette: &Palette) -> Div {
+    crate::widgets::with_icon(
+        crate::icons::WARNING_CIRCLE,
+        error,
+        crate::fonts::BODY,
+        palette.error,
+    )
+}
+
+/// egui `dialogs::buttons` row: 12 of space above, item spacing 8 between.
+fn button_row() -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(crate::theme::ITEM_SPACING.0))
+        .pt(px(12.))
 }

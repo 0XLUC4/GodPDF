@@ -4,13 +4,14 @@
 
 use godpdf_core::{Annotation, CharStyle, Color, Font, StampLabel};
 use gpui::component::Sizable;
+use gpui::component::button::Button;
 use gpui::component::checkbox::Checkbox;
 use gpui::component::input::{Input, InputEvent, InputState};
-use gpui::component::tooltip::Tooltip;
+use gpui::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui::prelude::*;
 use gpui::{
-    Action, AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, EntityId, FontWeight,
-    PromptLevel, SharedString, Stateful, Subscription, Window, div, px,
+    Action, AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, EntityId, PromptLevel,
+    SharedString, Stateful, Subscription, Window, div, px,
 };
 
 use super::canvas::{self, rewrite};
@@ -21,14 +22,16 @@ use super::{
 };
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::{icons, toasts, widgets};
+use crate::{fonts, icons, toasts, widgets};
 
 /// Distance of the bar from the viewer's top-left corner.
 const INSET: f32 = 16.0;
-const BUTTON: f32 = 32.0;
-const PICTURE_CARD_WIDTH: f32 = 204.0;
-const LABEL_WIDTH: f32 = 52.0;
-const FIELD_WIDTH: f32 = 116.0;
+/// egui `widgets::ICON_BUTTON`: tool toggles, format toggles, card columns.
+const BUTTON: f32 = widgets::ICON_BUTTON;
+const CARD_RADIUS: f32 = 10.0;
+const LABEL_WIDTH: f32 = 44.0;
+const FIELD_WIDTH: f32 = 100.0;
+/// Stamp and redact cards (no egui counterpart).
 const HINT_CARD_WIDTH: f32 = 190.0;
 
 /// The fields of the picture card (created once, reused for every picture).
@@ -71,7 +74,7 @@ enum Change {
     Color(Color),
     /// One step up (+1) or down (-1) of the font size or line width.
     Step(f32),
-    NextFont,
+    Font(Font),
     Format(Format),
 }
 
@@ -138,13 +141,7 @@ fn change_style(style: &mut Style, kind: Kind, change: Change) {
             style.font_size = (style.font_size + sign).clamp(6.0, 72.0);
         }
         Change::Step(sign) => style.width = (style.width + sign * 0.5).clamp(0.5, 12.0),
-        Change::NextFont => {
-            let next = Font::ALL
-                .iter()
-                .position(|font| *font == style.font)
-                .map_or(0, |index| (index + 1) % Font::ALL.len());
-            style.font = Font::ALL[next];
-        }
+        Change::Font(font) => style.font = font,
         Change::Format(_) => {}
     }
 }
@@ -245,12 +242,14 @@ fn tool_kind(tool: Tool) -> Option<Kind> {
     }
 }
 
+/// egui `quickbar::card`: panel fill, 1 px border, radius 10, margin 4, shadow 0/4/16 at
+/// black alpha 28 (both themes).
 fn card(palette: &Palette) -> Div {
     div()
         .flex_none()
         .p(px(4.))
-        .rounded(px(10.))
-        .shadow_md()
+        .rounded(px(CARD_RADIUS))
+        .shadow(widgets::shadow(4.0, 16.0, 28.0 / 255.0))
         .bg(palette.panel)
         .border_1()
         .border_color(palette.border)
@@ -259,13 +258,15 @@ fn card(palette: &Palette) -> Div {
         .block_mouse_except_scroll()
 }
 
+/// egui `divider`: 7 px tall, a 1 px line inset 4 px each side.
 fn divider(palette: &Palette) -> Div {
-    div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(palette.border)
-}
-
-fn with_tooltip(element: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
-    let text: SharedString = text.into();
-    element.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+    div()
+        .flex_none()
+        .w(px(BUTTON - 8.))
+        .h(px(1.))
+        .mx(px(4.))
+        .my(px(3.))
+        .bg(palette.border)
 }
 
 /// Square icon button; `active` sits on the selected grey, disabled ones are dimmed.
@@ -289,7 +290,7 @@ fn icon_button(
         .text_color(if enabled {
             palette.text
         } else {
-            palette.text_dim
+            palette.disabled()
         })
         .when(active, |button| button.bg(palette.selected))
         .when(enabled && !active, |button| {
@@ -324,15 +325,15 @@ pub fn render(
         .gap(px(2.))
         .max_h(px((view_height - 2.0 * INSET).max(BUTTON * 3.0)))
         .overflow_y_scroll();
-    let shape = tool_state(cx).shape;
+    let (shape, markup) = (tool_state(cx).shape, tool_state(cx).markup);
     for candidate in Tool::BAR {
-        // The shapes group button stands for the last shape picked.
-        let (candidate, active) = if candidate.is_shape() {
-            (shape, tool.is_shape())
-        } else {
-            (candidate, candidate == tool)
+        // A group button stands for the last tool picked in its group.
+        let (candidate, active) = match candidate.group() {
+            Some(group) if candidate.is_shape() => (shape, group.contains(&tool)),
+            Some(group) => (markup, group.contains(&tool)),
+            None => (candidate, candidate == tool),
         };
-        tools = tools.child(with_tooltip(
+        tools = tools.child(widgets::tooltip(
             icon_button(
                 SharedString::from(format!("tool-{:?}", candidate)),
                 widgets::glyph(candidate.icon()),
@@ -344,30 +345,20 @@ pub fn render(
             candidate.tooltip(),
         ));
     }
-    let mut undo = icon_button(
-        "quick-undo",
-        widgets::glyph(icons::ARROW_U_UP_LEFT),
-        false,
-        can_undo,
-        &palette,
-    );
+    let undo_redo =
+        |id, glyph, enabled| widgets::icon_widget(id, glyph, BUTTON, 16.0, enabled, &palette);
+    let mut undo = undo_redo("quick-undo", icons::ARROW_U_UP_LEFT, can_undo);
     if can_undo {
         undo = undo.on_click(dispatch(Box::new(crate::app::Undo)));
     }
-    let mut redo = icon_button(
-        "quick-redo",
-        widgets::glyph(icons::ARROW_U_UP_RIGHT),
-        false,
-        can_redo,
-        &palette,
-    );
+    let mut redo = undo_redo("quick-redo", icons::ARROW_U_UP_RIGHT, can_redo);
     if can_redo {
         redo = redo.on_click(dispatch(Box::new(crate::app::Redo)));
     }
     tools = tools
         .child(divider(&palette))
-        .child(with_tooltip(undo, "Undo (Ctrl+Z)"))
-        .child(with_tooltip(redo, "Redo (Ctrl+Y)"));
+        .child(widgets::tooltip(undo, "Undo (Ctrl+Z)"))
+        .child(widgets::tooltip(redo, "Redo (Ctrl+Y)"));
 
     let style_card = style_card(tab, &palette, window, cx);
     Some(
@@ -420,7 +411,7 @@ fn style_card(
         .gap(px(4.))
         .w(px(BUTTON));
     for (index, (color, name)) in SWATCHES.into_iter().enumerate() {
-        colors = colors.child(with_tooltip(
+        colors = colors.child(widgets::tooltip(
             swatch(
                 ("swatch", index),
                 color,
@@ -446,29 +437,18 @@ fn style_card(
                 palette,
                 &on,
             );
-            let (family, name) = editor::font_label(style.font);
             controls = controls
-                .child(divider(palette).w(px(BUTTON - 8.)))
-                .child(with_tooltip(
-                    icon_button(
-                        "font",
-                        div().font_family(family).child("Aa"),
-                        false,
-                        true,
-                        palette,
-                    )
-                    .on_click(on(Change::NextFont)),
-                    format!("Font: {name} (click for the next one)"),
-                ));
+                .child(divider(palette))
+                .child(font_menu(style.font, palette));
             if let Some(active) = formats {
-                controls = controls.child(divider(palette).w(px(BUTTON - 8.)));
+                controls = controls.child(divider(palette));
                 for format in super::Format::ALL {
                     let (icon, tooltip) = match format {
                         Format::Bold => (icons::TEXT_B, "Bold (Ctrl+B)"),
                         Format::Italic => (icons::TEXT_ITALIC, "Italic (Ctrl+I)"),
                         Format::Underline => (icons::TEXT_UNDERLINE, "Underline (Ctrl+U)"),
                     };
-                    controls = controls.child(with_tooltip(
+                    controls = controls.child(widgets::tooltip(
                         icon_button(
                             SharedString::from(format!("format-{format:?}")),
                             widgets::glyph(icon),
@@ -493,30 +473,31 @@ fn style_card(
         }
         Kind::Fill => {}
     }
-    // Drawing a shape: pick which one, Adobe style, in the same card.
-    let shapes = match target(tab, cx) {
-        Target::Tool(tool) if tool.is_shape() => {
+    // Using a tool of a group (shapes, text markup): pick another one, Adobe style, in the
+    // same card.
+    let group = match target(tab, cx) {
+        Target::Tool(tool) => tool.group().map(|group| {
             let mut column = div()
                 .flex()
                 .flex_col()
                 .items_center()
                 .gap(px(2.))
                 .w(px(BUTTON));
-            for shape in Tool::SHAPES {
-                column = column.child(with_tooltip(
+            for &member in group {
+                column = column.child(widgets::tooltip(
                     icon_button(
-                        SharedString::from(format!("shape-{shape:?}")),
-                        widgets::glyph(shape.icon()),
-                        shape == tool,
+                        SharedString::from(format!("group-{member:?}")),
+                        widgets::glyph(member.icon()),
+                        member == tool,
                         true,
                         palette,
                     )
-                    .on_click(dispatch(shape.action())),
-                    shape.tooltip(),
+                    .on_click(dispatch(member.action())),
+                    member.tooltip(),
                 ));
             }
-            Some(column)
-        }
+            column
+        }),
         _ => None,
     };
     Some(
@@ -524,16 +505,25 @@ fn style_card(
             .flex()
             .items_start()
             .gap(px(4.))
-            .children(shapes)
+            .children(group)
             .child(colors)
             .when(kind != Kind::Fill, |card| card.child(controls))
             .into_any_element(),
     )
 }
 
-/// Card title row.
+/// Card title: egui `RichText::strong`, body text (Ubuntu Light has no bold).
 fn card_title(text: &'static str) -> Div {
-    div().text_sm().font_weight(FontWeight::BOLD).child(text)
+    div().text_size(px(fonts::BODY)).child(text)
+}
+
+/// The column of a text card (egui: card margin 4, item spacing 6).
+fn text_card(palette: &Palette) -> Div {
+    card(palette)
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .text_size(px(fonts::BODY))
 }
 
 /// The stamp tool's preset picker: one row per label, in the stamp's colour, and the date.
@@ -554,8 +544,6 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
                 .border_1()
                 .border_color(hsla(label.color()))
                 .text_color(hsla(label.color()))
-                .text_sm()
-                .font_weight(FontWeight::BOLD)
                 .cursor_pointer()
                 .when(label == current, |row| row.bg(palette.selected))
                 .when(label != current, |row| {
@@ -568,12 +556,8 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
                 }),
         );
     }
-    card(palette)
+    text_card(palette)
         .w(px(HINT_CARD_WIDTH))
-        .p(px(10.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
         .child(card_title("Stamp"))
         .child(list)
         .child(
@@ -585,12 +569,7 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
                     cx.refresh_windows();
                 }),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(palette.text_dim)
-                .child(Tool::Stamp.hint()),
-        )
+        .child(div().text_color(palette.text_dim).child(Tool::Stamp.hint()))
         .into_any_element()
 }
 
@@ -602,39 +581,29 @@ fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> Any
     if count > 0 {
         actions = actions
             .child(
-                widgets::button("redact-apply", "Apply redactions…", palette)
-                    .justify_center()
-                    .bg(palette.error)
-                    .text_color(gpui::white())
+                widgets::accent_button("redact-apply", "Apply redactions…", true, palette)
                     .on_click(
                         cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)),
                     ),
             )
             .child(
-                widgets::button("redact-clear", "Clear marks", palette)
-                    .justify_center()
-                    .border_1()
-                    .border_color(palette.border)
-                    .on_click(cx.listener(|tab, _: &ClickEvent, _, cx| {
+                widgets::framed_button("redact-clear", "Clear marks", true, palette).on_click(
+                    cx.listener(|tab, _: &ClickEvent, _, cx| {
                         tab.canvas.redactions.clear();
                         cx.notify();
-                    })),
+                    }),
+                ),
             );
     }
-    card(palette)
+    text_card(palette)
         .w(px(HINT_CARD_WIDTH))
-        .p(px(10.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
         .child(card_title("Redact"))
         .child(
             div()
-                .text_sm()
                 .text_color(palette.text_dim)
                 .child(Tool::Redact.hint()),
         )
-        .child(div().text_sm().child(match count {
+        .child(div().child(match count {
             0 => "No area marked".to_owned(),
             1 => "1 area marked".to_owned(),
             count => format!("{count} areas marked"),
@@ -706,16 +675,15 @@ where
     L: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let small = |id: &str, icon: &'static str, tooltip: String, change: Change| {
-        with_tooltip(
-            icon_button(
+        widgets::tooltip(
+            widgets::icon_widget(
                 SharedString::from(id.to_owned()),
-                widgets::glyph(icon),
-                false,
+                icon,
+                widgets::SMALL_ICON_BUTTON,
+                13.0,
                 true,
                 palette,
             )
-            .h(px(22.))
-            .text_size(px(13.))
             .on_click(on(change)),
             tooltip,
         )
@@ -727,7 +695,13 @@ where
             format!("Larger {what}"),
             Change::Step(1.0),
         ))
-        .child(div().text_xs().text_color(palette.text).child(value))
+        // egui `RichText::small()`: 9 px.
+        .child(
+            div()
+                .text_size(px(9.))
+                .text_color(palette.text)
+                .child(value),
+        )
         .child(small(
             &format!("smaller-{what}"),
             icons::MINUS,
@@ -736,22 +710,54 @@ where
         ))
 }
 
+/// egui `hint_card`: a card one button wide with an info glyph; the hint is its tooltip.
 fn hint_card(text: &'static str, palette: &Palette) -> AnyElement {
     card(palette)
-        .w(px(HINT_CARD_WIDTH))
-        .p(px(10.))
-        .flex()
-        .items_start()
-        .gap(px(8.))
-        .child(
+        .child(widgets::tooltip(
             div()
-                .flex_none()
-                .text_size(px(14.))
-                .text_color(palette.text_dim)
-                .child(widgets::glyph(icons::INFO)),
-        )
-        .child(div().text_sm().text_color(palette.text_dim).child(text))
+                .id("tool-hint")
+                .w(px(BUTTON))
+                .flex()
+                .justify_center()
+                .child(widgets::icon(icons::INFO, fonts::BODY, palette.text_dim)),
+            text,
+        ))
         .into_any_element()
+}
+
+/// egui `font_menu`: "Aa" in the current font on a framed button; the menu lists every font
+/// in its own face.
+fn font_menu(current: Font, palette: &Palette) -> AnyElement {
+    let (family, name) = editor::font_label(current);
+    let label = div().font_family(family).text_size(px(15.)).child("Aa");
+    Button::new("font-menu")
+        .h(px(crate::theme::INTERACT_HEIGHT))
+        .px(px(crate::theme::BUTTON_PADDING.0))
+        .text_color(palette.text)
+        .child(label)
+        .tooltip(format!("Font: {name}"))
+        .dropdown_menu(move |mut menu, _, _| {
+            for font in Font::ALL {
+                let (family, name) = editor::font_label(font);
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        div().font_family(family).text_size(px(15.)).child(name)
+                    })
+                    .checked(font == current)
+                    .on_click(move |_, window, cx| choose_font(font, window, cx)),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
+/// A font picked in the font menu: applied to whatever the style card edits.
+fn choose_font(font: Font, window: &mut Window, cx: &mut App) {
+    let Some(tab) = tool_state(cx).active.clone().and_then(|tab| tab.upgrade()) else {
+        return;
+    };
+    tab.update(cx, |tab, cx| apply(tab, Change::Font(font), window, cx));
 }
 
 /// The fields of the picture card, created the first time one is shown.
@@ -865,6 +871,7 @@ fn picture_card(
         }
     }
     let keep = tool_state(cx).keep_ratio;
+    // egui `Grid` spacing 8 × 6.
     let mut rows = div().flex().flex_col().gap(px(6.));
     for (field, state) in &fields {
         rows = rows.child(
@@ -872,14 +879,7 @@ fn picture_card(
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .child(
-                    div()
-                        .w(px(LABEL_WIDTH))
-                        .flex_none()
-                        .text_sm()
-                        .text_color(palette.text_dim)
-                        .child(field.label()),
-                )
+                .child(div().w(px(LABEL_WIDTH)).flex_none().child(field.label()))
                 .child(
                     div().w(px(FIELD_WIDTH)).flex_none().child(
                         Input::new(state)
@@ -895,43 +895,28 @@ fn picture_card(
         x1: rect.x0 + natural.0,
         y1: rect.y0 + natural.1,
     };
-    let hover = palette.hover;
-    let original_size = div()
-        .id("picture-original-size")
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(6.))
-        .h(px(28.))
-        .rounded(px(7.))
-        .border_1()
-        .border_color(palette.border)
-        .text_sm()
-        .cursor_pointer()
-        .hover(move |style| style.bg(hover))
-        .child(widgets::icon(icons::ARROWS_OUT_SIMPLE, 14.0, palette.text))
-        .child("Original size")
-        .on_click(cx.listener(move |tab, _: &ClickEvent, _, cx| {
-            set_picture_rect(tab, page, &id, original, cx);
-            cx.notify();
-        }));
+    let original_size = widgets::framed_button(
+        "picture-original-size",
+        widgets::with_icon(
+            icons::ARROWS_OUT_SIMPLE,
+            "Original size",
+            fonts::BODY,
+            palette.text,
+        ),
+        true,
+        palette,
+    )
+    .on_click(cx.listener(move |tab, _: &ClickEvent, _, cx| {
+        set_picture_rect(tab, page, &id, original, cx);
+        cx.notify();
+    }));
     Some(
-        card(palette)
-            .w(px(PICTURE_CARD_WIDTH))
-            .p(px(10.))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .child("Picture"),
-            )
+        text_card(palette)
+            .items_start()
+            .child(card_title("Picture size"))
             .child(rows)
             .child(
                 div()
-                    .text_xs()
                     .text_color(palette.text_dim)
                     .child("X and Y from the page's top-left corner"),
             )
@@ -944,7 +929,7 @@ fn picture_card(
                         cx.refresh_windows();
                     }),
             )
-            .child(with_tooltip(original_size, "96 pixels to the inch"))
+            .child(widgets::tooltip(original_size, "96 pixels to the inch"))
             .into_any_element(),
     )
 }

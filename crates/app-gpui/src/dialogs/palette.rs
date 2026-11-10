@@ -12,6 +12,7 @@ use super::{
     state,
 };
 use crate::theme::Palette;
+use crate::widgets;
 
 pub struct PaletteState {
     pub query: Entity<InputState>,
@@ -79,6 +80,82 @@ fn run_selected(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// The icon and tint of a command in the palette (egui `Cmd::icon`, `Cmd::tint`).
+fn look(command: &Command) -> (&'static str, u32) {
+    use crate::icons::*;
+    use crate::theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
+    use commands::Group;
+    let icon = match command.label {
+        "Open PDF…" => FOLDER_OPEN,
+        "Save" => FLOPPY_DISK,
+        "Save As…" => FLOPPY_DISK_BACK,
+        "Print…" => PRINTER,
+        "Export as images…" => FILE_IMAGE,
+        "Close tab" => X,
+        "Quit" => SIGN_OUT,
+        "Undo" => ARROW_U_UP_LEFT,
+        "Redo" => ARROW_U_UP_RIGHT,
+        "Toggle dark mode" => CIRCLE_HALF,
+        "Zoom in" => MAGNIFYING_GLASS_PLUS,
+        "Zoom out" => MAGNIFYING_GLASS_MINUS,
+        "Fit width" => ARROWS_OUT_LINE_HORIZONTAL,
+        "Go to page…" => HASH,
+        "Next tab" => CARET_RIGHT,
+        "Previous tab" => CARET_LEFT,
+        "Rotate left" => ARROW_COUNTER_CLOCKWISE,
+        "Rotate right" => ARROW_CLOCKWISE,
+        "Rotate all pages" => ARROWS_CLOCKWISE,
+        "Delete page" => TRASH,
+        "Insert blank page" => FILE_PLUS,
+        "Extract pages…" => EXPORT,
+        "Split…" => SCISSORS,
+        "Reverse page order" => SORT_DESCENDING,
+        "Crop pages…" => CROP,
+        "Change page size…" => RESIZE,
+        "Cut pages in half…" => SQUARE_SPLIT_HORIZONTAL,
+        "Pages per sheet…" => SQUARES_FOUR,
+        "Make a booklet" => BOOK_OPEN,
+        "Join into one long page" => ROWS,
+        "Number pages…" => LIST_NUMBERS,
+        "Merge PDFs…" => STACK,
+        "Select" => CURSOR,
+        "Hand" => HAND,
+        "Highlight" => HIGHLIGHTER,
+        "Sticky note" => NOTE,
+        "Free text" => TEXT_T,
+        "Rectangle" => RECTANGLE,
+        "Ink" => PENCIL_SIMPLE,
+        "Picture" => IMAGE,
+        "Eraser" | "Remove all comments" => ERASER,
+        "Encrypt with password…" => LOCK,
+        "Remove password" => LOCK_OPEN,
+        "Remove hidden data" => BROOM,
+        "Properties…" => INFO,
+        "Add watermark…" => STAMP,
+        "Remove all links" => LINK_BREAK,
+        "Contents page" => LIST_BULLETS,
+        "Page colours…" => PALETTE,
+        "Flatten comments and forms" => STACK_SIMPLE,
+        "Compress" => ARROWS_IN,
+        _ => COMMAND,
+    };
+    let tint = match (command.label, command.group) {
+        ("Delete page" | "Remove all comments" | "Remove hidden data", _) => RED,
+        ("Extract pages…" | "Export as images…", _) => TEAL,
+        ("Properties…", _) => BLUE,
+        (_, Group::Organize) => GREEN,
+        (_, Group::Combine) => PURPLE,
+        (_, Group::Comment) => AMBER,
+        (_, Group::Protect | Group::Edit) => BLUE,
+        (_, Group::File | Group::View) => TEAL,
+        (_, Group::Document) => PINK,
+    };
+    (icon, tint)
+}
+
+/// egui `command_palette`: magnifier + field, rows of 36 (icon 19 in its tint centered 22
+/// from the left, label 15 at 46, shortcut and family 13 dimmed 14 from the right), a
+/// separator, then the hint (13, dimmed).
 pub fn render(
     palette: &PaletteState,
     has_doc: bool,
@@ -93,30 +170,51 @@ pub fn render(
         let command: &'static Command = command;
         let ready = has_doc || !command.needs_doc;
         let shortcut = Kbd::binding_for_action(&*(command.action)(), None, window);
+        let (glyph, tint) = look(command);
+        let (ink, tint) = if ready {
+            (colors.text, crate::theme::hex(tint))
+        } else {
+            (colors.text_dim, colors.text_dim)
+        };
         let hover = colors.hover;
         div()
             .id(("command", index))
+            .flex_none()
             .flex()
             .items_center()
-            .gap(px(10.))
             .h(px(36.))
-            .px(px(12.))
+            .pr(px(14.))
             .rounded(px(8.))
             .cursor_pointer()
-            .text_color(if ready { colors.text } else { colors.text_dim })
             .when(index == selected, |row| row.bg(colors.selected))
             .when(index != selected, |row| {
                 row.hover(move |style| style.bg(hover))
             })
             .on_click(move |_, window, cx| run(command, window, cx))
-            .child(div().flex_1().child(command.label))
-            .children(shortcut)
             .child(
                 div()
-                    .w(px(76.))
-                    .text_right()
-                    .text_sm()
+                    .w(px(44.))
+                    .flex_none()
+                    .flex()
+                    .justify_center()
+                    .child(widgets::icon(glyph, 19.0, tint)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .pl(px(2.))
+                    .text_size(px(15.))
+                    .text_color(ink)
+                    .child(command.label),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .text_size(px(13.))
                     .text_color(colors.text_dim)
+                    .children(shortcut.map(|kbd| kbd.appearance(false)))
                     .child(command.group.title()),
             )
     });
@@ -124,7 +222,7 @@ pub fn render(
         Some(command) if command.needs_doc && !has_doc => "Open a PDF first",
         Some(command) if !command.description.is_empty() => command.description,
         Some(_) => "Enter runs it",
-        None => "No matching command",
+        None => "",
     };
     card(&colors, 620.)
         .key_context("CommandPalette")
@@ -133,7 +231,23 @@ pub fn render(
         .on_action(|_: &CommandPalette, window, cx| close(window, cx))
         .on_action(|_: &PaletteUp, window, cx| step(false, window, cx))
         .on_action(|_: &PaletteDown, window, cx| step(true, window, cx))
-        .child(Input::new(&palette.query))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(crate::theme::ITEM_SPACING.0))
+                .child(widgets::icon(
+                    crate::icons::MAGNIFYING_GLASS,
+                    20.0,
+                    colors.text_dim,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(18.))
+                        .child(Input::new(&palette.query)),
+                ),
+        )
         .child(
             div()
                 .id("command-list")
@@ -143,16 +257,22 @@ pub fn render(
                 .max_h(px(420.))
                 .overflow_y_scroll()
                 .track_scroll(&palette.scroll)
-                .children(rows),
+                .children(rows)
+                .when(found.is_empty(), |list| {
+                    list.child(
+                        div()
+                            .text_color(colors.text_dim)
+                            .child("No matching command"),
+                    )
+                }),
         )
-        .child(
-            div()
-                .pt(px(6.))
-                .border_t_1()
-                .border_color(colors.border)
-                .text_sm()
-                .text_color(colors.text_dim)
-                .child(hint),
-        )
+        .when(!found.is_empty(), |card| {
+            card.child(div().h(px(1.)).bg(colors.border)).child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(colors.text_dim)
+                    .child(hint),
+            )
+        })
         .into_any_element()
 }

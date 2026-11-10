@@ -2,7 +2,7 @@
 //! `merge` in `crates/app/src/dialogs.rs`).
 
 use gpui::prelude::*;
-use gpui::{AnyElement, App, FontWeight, Window, div, px};
+use gpui::{AnyElement, App, Window, div, px};
 
 use super::kinds::open_tab;
 use super::{DialogCancel, DialogConfirm, Open, card, close, state};
@@ -10,7 +10,7 @@ use crate::doc::guarded;
 use crate::files::{self, PickedFile};
 use crate::theme::Palette;
 use crate::toasts;
-use crate::widgets::{button, primary_button};
+use crate::widgets::{accent_button, framed_button, small_icon_button};
 
 pub struct Merge {
     pub files: Vec<PickedFile>,
@@ -70,8 +70,7 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
             .gap(px(8.))
             .child(
                 div()
-                    .w(px(24.))
-                    .text_sm()
+                    .flex_none()
                     .text_color(palette.text_dim)
                     .child(format!("{}.", index + 1)),
             )
@@ -83,44 +82,46 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
                     .whitespace_nowrap()
                     .child(file.name.clone()),
             )
-            .when(index > 0, |row| {
-                row.child(button(("merge-up", index), "↑", &palette).on_click(
-                    move |_, window, cx| {
-                        with_merge(cx, |merge| merge.files.swap(index, index - 1));
-                        window.refresh();
-                    },
-                ))
-            })
-            .when(index + 1 < count, |row| {
-                row.child(button(("merge-down", index), "↓", &palette).on_click(
-                    move |_, window, cx| {
-                        with_merge(cx, |merge| merge.files.swap(index, index + 1));
-                        window.refresh();
-                    },
-                ))
-            })
+            // egui: right to left, Remove, Move down, Move up; the ends are disabled.
+            .child(arrow(
+                ("merge-up", index),
+                crate::icons::CARET_UP,
+                "Move up",
+                index > 0,
+                &palette,
+                move |merge| merge.files.swap(index, index - 1),
+            ))
+            .child(arrow(
+                ("merge-down", index),
+                crate::icons::CARET_DOWN,
+                "Move down",
+                index + 1 < count,
+                &palette,
+                move |merge| merge.files.swap(index, index + 1),
+            ))
             .child(
-                button(("merge-remove", index), "×", &palette).on_click(move |_, window, cx| {
-                    with_merge(cx, |merge| {
-                        merge.files.remove(index);
-                    });
-                    window.refresh();
-                }),
+                small_icon_button(("merge-remove", index), crate::icons::X, "Remove", &palette)
+                    .on_click(move |_, window, cx| {
+                        with_merge(cx, |merge| {
+                            merge.files.remove(index);
+                        });
+                        window.refresh();
+                    }),
             )
     });
-    card(&palette, 480.)
+    card(&palette, 420.)
         .key_context("GodPdfDialog")
         .on_action(|_: &DialogConfirm, window, cx| super::confirm(false, window, cx))
         .on_action(|_: &DialogCancel, window, cx| close(window, cx))
+        .child(super::title(crate::widgets::with_icon(
+            crate::icons::STACK,
+            "Combine files",
+            19.0,
+            palette.text,
+        )))
         .child(
             div()
-                .text_size(px(19.))
-                .font_weight(FontWeight::BOLD)
-                .child("Combine files"),
-        )
-        .child(
-            div()
-                .text_sm()
+                .pb(px(6.))
                 .text_color(palette.text_dim)
                 .child("PDFs are combined top to bottom, into a new tab."),
         )
@@ -137,33 +138,53 @@ pub fn render(merge: &Merge, palette: &Palette) -> AnyElement {
                 })
                 .children(rows),
         )
-        .children(merge.error.clone().map(|error| {
-            div()
-                .text_sm()
-                .font_weight(FontWeight::BOLD)
-                .text_color(palette.error)
-                .child(format!("⚠ {error}"))
-        }))
+        .children(
+            merge
+                .error
+                .clone()
+                .map(|error| super::error_line(error, &palette)),
+        )
         .child(
-            div()
-                .flex()
-                .gap(px(8.))
-                .pt(px(8.))
+            super::button_row()
                 .child(
-                    primary_button("merge-go", "Merge", &palette)
-                        .when(count < 2, |button| button.opacity(0.4))
+                    accent_button("merge-go", "Merge", count >= 2, &palette)
                         .on_click(|_, window, cx| super::confirm(false, window, cx)),
                 )
                 .child(
-                    button("merge-add", "Add files…", &palette)
-                        .h(px(38.))
+                    framed_button("merge-add", "Add files…", true, &palette)
                         .on_click(|_, window, cx| add_files(window, cx)),
                 )
                 .child(
-                    button("merge-cancel", "Cancel", &palette)
-                        .h(px(38.))
+                    framed_button("merge-cancel", "Cancel", true, &palette)
                         .on_click(|_, window, cx| close(window, cx)),
                 ),
         )
         .into_any_element()
+}
+
+/// A 22 × 22 move button of a file row (egui `small_icon_button`, disabled at the ends).
+fn arrow(
+    id: (&'static str, usize),
+    glyph: &'static str,
+    tip: &'static str,
+    enabled: bool,
+    palette: &Palette,
+    swap: impl Fn(&mut Merge) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let button = crate::widgets::icon_widget(
+        id,
+        glyph,
+        crate::widgets::SMALL_ICON_BUTTON,
+        13.0,
+        enabled,
+        palette,
+    );
+    let button = crate::widgets::tooltip(button, tip);
+    if !enabled {
+        return button;
+    }
+    button.on_click(move |_, window, cx| {
+        with_merge(cx, |merge| swap(merge));
+        window.refresh();
+    })
 }

@@ -83,28 +83,36 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// The quick bar, top to bottom. `Rectangle` stands for the whole shapes group: its button
-    /// shows the last shape picked, the style card picks another.
-    pub const BAR: [Tool; 13] = [
+    /// The quick bar, top to bottom: egui's `Tool::ALL`, plus stamp and redact before the
+    /// eraser. `Highlight` and `Rectangle` stand for their groups ([`Tool::group`]): the
+    /// button shows the last tool picked in it, the style card picks another.
+    pub const BAR: [Tool; 11] = [
         Tool::Select,
         Tool::Hand,
         Tool::Text,
         Tool::Note,
         Tool::Highlight,
-        Tool::Underline,
-        Tool::StrikeOut,
         Tool::Ink,
         Tool::Rectangle,
-        Tool::Stamp,
         Tool::Picture,
+        Tool::Stamp,
         Tool::Redact,
         Tool::Eraser,
     ];
     /// The shapes group.
     pub const SHAPES: [Tool; 4] = [Tool::Rectangle, Tool::Ellipse, Tool::Line, Tool::Arrow];
+    /// The text markup group.
+    pub const MARKUP: [Tool; 3] = [Tool::Highlight, Tool::Underline, Tool::StrikeOut];
 
     pub fn is_shape(self) -> bool {
         Self::SHAPES.contains(&self)
+    }
+
+    /// The flyout group of the bar this tool is in, if any.
+    pub fn group(self) -> Option<&'static [Tool]> {
+        [&Self::SHAPES[..], &Self::MARKUP[..]]
+            .into_iter()
+            .find(|group| group.contains(&self))
     }
 
     /// Phosphor glyph (egui `quickbar::Tool::icon` for the tools both apps have).
@@ -376,6 +384,8 @@ pub struct ToolState {
     pub keep_ratio: bool,
     /// The shape the shapes group button picks.
     pub shape: Tool,
+    /// The markup (highlight, underline, strikethrough) its group button picks.
+    pub markup: Tool,
     /// The stamp the stamp tool places, and whether it gets today's date.
     pub stamp: StampLabel,
     pub stamp_date: bool,
@@ -391,6 +401,7 @@ impl Default for ToolState {
             styles: Styles::default(),
             keep_ratio: true,
             shape: Tool::Rectangle,
+            markup: Tool::Highlight,
             stamp: StampLabel::Approved,
             stamp_date: false,
             active: None,
@@ -431,6 +442,8 @@ fn set_tool(tool: Tool, cx: &mut App) {
     state.tool = tool;
     if tool.is_shape() {
         state.shape = tool;
+    } else if Tool::MARKUP.contains(&tool) {
+        state.markup = tool;
     }
     cx.refresh_windows();
 }
@@ -510,6 +523,21 @@ pub fn viewer_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every tool is on the bar, alone or through the group button of its group.
+    #[test]
+    fn every_tool_is_reachable_from_the_bar() {
+        let reachable = |tool: Tool| {
+            Tool::BAR.contains(&tool)
+                || tool
+                    .group()
+                    .is_some_and(|group| Tool::BAR.contains(&group[0]))
+        };
+        let tools = [Tool::SHAPES.as_slice(), &Tool::MARKUP, &Tool::BAR].concat();
+        assert!(tools.into_iter().all(reachable));
+        assert_eq!(Tool::Underline.group(), Some(&Tool::MARKUP[..]));
+        assert_eq!(Tool::Select.group(), None);
+    }
 
     #[test]
     fn toggling_formats_over_all_characters() {

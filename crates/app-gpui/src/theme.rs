@@ -146,7 +146,32 @@ pub fn set_dark(dark: bool, cx: &mut App) {
     };
     gpui::component::Theme::change(mode, None, cx);
     crate::fonts::apply_to_components(cx);
+    apply_to_components(cx);
     cx.refresh_windows();
+}
+
+/// Paint gpui-component widgets (menus, tooltips, fields, checkboxes, buttons) in this
+/// palette, with egui's widget radius, so they look like the egui ones.
+fn apply_to_components(cx: &mut App) {
+    let p = Palette::of(cx);
+    gpui::component::Theme::update(cx, |theme| {
+        let c = &mut theme.colors;
+        (c.background, c.foreground, c.border, c.input) = (p.panel, p.text, p.border, p.border);
+        (c.popover, c.popover_foreground) = (p.panel, p.text);
+        (c.accent, c.accent_foreground) = (p.hover, p.text);
+        (c.muted, c.muted_foreground) = (p.surface, p.text_dim);
+        (c.ring, c.caret, c.selection) = (p.accent_text, p.text, p.selected);
+        (c.list_hover, c.list_active) = (p.hover, p.selected);
+        (c.button, c.button_hover, c.button_active) = (p.surface, p.hover, p.selected);
+        (c.secondary, c.secondary_hover, c.secondary_active) = (p.surface, p.hover, p.selected);
+        (c.button_foreground, c.secondary_foreground) = (p.text, p.text);
+        (c.primary, c.primary_hover, c.primary_active) = (p.accent, p.accent, p.accent);
+        (c.button_primary, c.button_primary_hover) = (p.accent, p.accent);
+        c.button_primary_active = p.accent;
+        (c.primary_foreground, c.button_primary_foreground) = (p.on_accent, p.on_accent);
+        theme.radius = gpui::px(RADIUS);
+        theme.radius_lg = gpui::px(MENU_RADIUS);
+    });
 }
 
 pub fn toggle(cx: &mut App) {

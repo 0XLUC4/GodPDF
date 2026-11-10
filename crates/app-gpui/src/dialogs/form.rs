@@ -3,13 +3,13 @@
 
 use gpui::component::input::{Input, InputState};
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Entity, FontWeight, SharedString, WeakEntity, Window, div, px};
+use gpui::{AnyElement, App, Entity, SharedString, WeakEntity, Window, div, px};
 
 use super::kinds::Kind;
 use super::{DialogCancel, DialogConfirm, Open, card, confirm, state};
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::widgets::{button, primary_button};
+use crate::widgets::{accent_button, framed_button};
 
 const LABEL_WIDTH: f32 = 150.0;
 
@@ -138,48 +138,34 @@ pub fn render(form: &Form, palette: &Palette) -> AnyElement {
                 options, selected, ..
             } => div().flex_1().flex().flex_wrap().gap(px(4.)).children(
                 options.iter().enumerate().map(|(option, name)| {
-                    button(("choice", index * 100 + option), name.clone(), &palette)
-                        .border_1()
-                        .border_color(palette.border)
-                        .when(option == *selected, |chip| chip.bg(palette.selected))
-                        .on_click(move |_, window, cx| {
-                            select(index, option, cx);
-                            window.refresh();
-                        })
+                    framed_button(
+                        ("choice", index * 100 + option),
+                        name.clone(),
+                        true,
+                        &palette,
+                    )
+                    .when(option == *selected, |chip| chip.bg(palette.selected))
+                    .on_click(move |_, window, cx| {
+                        select(index, option, cx);
+                        window.refresh();
+                    })
                 }),
             ),
         };
         div()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .child(
-                div()
-                    .w(px(LABEL_WIDTH))
-                    .flex_none()
-                    .text_sm()
-                    .text_color(palette.text_dim)
-                    .child(field.label()),
-            )
+            .gap(px(8.))
+            .child(div().w(px(LABEL_WIDTH)).flex_none().child(field.label()))
             .child(value)
     });
-    card(&palette, 480.)
+    card(&palette, 420.)
         .key_context("GodPdfDialog")
         .on_action(|_: &DialogConfirm, window, cx| confirm(false, window, cx))
         .on_action(|_: &DialogCancel, window, cx| super::close(window, cx))
-        .child(
-            div()
-                .text_size(px(19.))
-                .font_weight(FontWeight::BOLD)
-                .child(title),
-        )
+        .child(super::title(title))
         .when(!description.is_empty(), |card| {
-            card.child(
-                div()
-                    .text_sm()
-                    .text_color(palette.text_dim)
-                    .child(description),
-            )
+            card.child(div().text_color(palette.text_dim).child(description))
         })
         .child(
             div()
@@ -189,30 +175,23 @@ pub fn render(form: &Form, palette: &Palette) -> AnyElement {
                 .pt(px(6.))
                 .children(rows),
         )
-        .children(form.error.clone().map(|error| {
-            div()
-                .text_sm()
-                .font_weight(FontWeight::BOLD)
-                .text_color(palette.error)
-                .child(format!("⚠ {error}"))
-        }))
+        .children(
+            form.error
+                .clone()
+                .map(|error| super::error_line(error, &palette)),
+        )
         .child(
-            div()
-                .flex()
-                .gap(px(8.))
-                .pt(px(8.))
+            super::button_row()
                 .child(
-                    primary_button("dialog-primary", primary, &palette)
+                    accent_button("dialog-primary", primary, true, &palette)
                         .on_click(|_, window, cx| confirm(false, window, cx)),
                 )
                 .children(secondary.map(|label| {
-                    button("dialog-secondary", label, &palette)
-                        .h(px(38.))
+                    framed_button("dialog-secondary", label, true, &palette)
                         .on_click(|_, window, cx| confirm(true, window, cx))
                 }))
                 .child(
-                    button("dialog-cancel", "Cancel", &palette)
-                        .h(px(38.))
+                    framed_button("dialog-cancel", "Cancel", true, &palette)
                         .on_click(|_, window, cx| super::close(window, cx)),
                 ),
         )

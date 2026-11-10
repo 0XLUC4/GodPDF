@@ -5,21 +5,19 @@ use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use gpui::assets::IconName;
-use gpui::component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui::component::menu::ContextMenuExt;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, ObjectFit, RenderImage, SharedString, WeakEntity, Window,
     div, img, px, uniform_list, white,
 };
 
+use super::{BOX, menu_entry};
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::{files, toasts};
+use crate::{files, icons, toasts, widgets};
 
 const ROW_HEIGHT: f32 = 196.;
-/// Longest side of a thumbnail, in logical pixels.
-const THUMB_SIDE: f32 = 156.;
 /// Thumbnails rendering at once.
 const MAX_IN_FLIGHT: usize = 4;
 /// Thumbnails kept beyond the visible rows, on each side.
@@ -84,7 +82,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     });
     let entity = tab.clone();
     uniform_list("thumbs", count, move |rows, window, cx| {
-        let max_px = (THUMB_SIDE * window.scale_factor()).round() as u32;
+        let max_px = (BOX.0.max(BOX.1) * window.scale_factor()).round() as u32;
         let weak = entity.downgrade();
         entity.update(cx, |tab, cx| {
             trim(tab, rows.clone());
@@ -108,6 +106,10 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     .into_any_element()
 }
 
+/// One row as egui `sidebar::pages` draws it: 196 high; hover / current fill 2 px in,
+/// radius 8 (current = accent at 18 %); the page fitted in a box 32 px narrower than the row
+/// and 156 high, centered 84 px from the top, white, 2 px accent outline when current; the
+/// number 13 centered 16 px above the bottom; Move up / down arrows on hover.
 fn row(
     tab: &WeakEntity<DocTab>,
     page: usize,
@@ -120,9 +122,9 @@ fn row(
     let thumb = match image {
         Some((image, (width, height))) => div()
             .bg(white())
-            .shadow_sm()
             .when(current, |thumb| {
-                thumb.border_2().border_color(palette.accent)
+                // egui strokes outside the picture.
+                thumb.m(px(-2.)).border_2().border_color(palette.accent)
             })
             .child(
                 img(image)
@@ -130,35 +132,94 @@ fn row(
                     .h(px(height))
                     .object_fit(ObjectFit::Fill),
             ),
-        None => div().size(px(THUMB_SIDE * 0.7)).bg(palette.canvas),
+        None => div()
+            .w(px(BOX.0 - 48.))
+            .h(px(BOX.1 - 48.))
+            .rounded(px(2.))
+            .bg(palette.canvas),
+    };
+    let arrow = |shown: bool, top: f32, glyph, tip, delta: isize| {
+        let tab = tab.clone();
+        shown.then(|| {
+            widgets::small_icon_button(
+                ("thumb-move", page * 2 + (delta > 0) as usize),
+                glyph,
+                tip,
+                &palette,
+            )
+            .absolute()
+            .top(px(top - 2.))
+            .right(px(10. - 2.))
+            .invisible()
+            .group_hover("thumb-row", |style| style.visible())
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                let to = page.saturating_add_signed(delta);
+                reorder(&tab, page, to, cx);
+            })
+        })
+    };
+    let fill = if current {
+        palette.accent.opacity(0.18)
+    } else {
+        gpui::transparent_black()
     };
     let jump_to = tab.clone();
     let drop_on = tab.clone();
     let menu_of = tab.clone();
-    div()
-        .id(("thumb", page))
-        .h(px(ROW_HEIGHT))
-        .mx(px(8.))
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap(px(8.))
+    let inner = div()
+        .relative()
+        .size_full()
         .rounded(px(8.))
-        .cursor_pointer()
-        .when(current, |row| row.bg(palette.selected))
-        .hover(move |style| style.bg(palette.hover))
-        .child(div().h(px(THUMB_SIDE)).flex().items_center().child(thumb))
+        .bg(fill)
+        .when(!current, |inner| {
+            inner.group_hover("thumb-row", move |style| style.bg(palette.hover))
+        })
         .child(
             div()
-                .text_sm()
+                .absolute()
+                .top(px(84. - BOX.1 / 2. - 2.))
+                .left_0()
+                .right_0()
+                .h(px(BOX.1))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(thumb),
+        )
+        .child(
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .right_0()
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.))
                 .text_color(if current {
-                    palette.text
+                    palette.accent_text
                 } else {
                     palette.text_dim
                 })
                 .child(format!("{}", page + 1)),
         )
+        .children(arrow(page > 0, 8., icons::CARET_UP, "Move up", -1))
+        .children(arrow(
+            page + 1 < count,
+            12. + widgets::SMALL_ICON_BUTTON,
+            icons::CARET_DOWN,
+            "Move down",
+            1,
+        ));
+    div()
+        .id(("thumb", page))
+        .group("thumb-row")
+        .h(px(ROW_HEIGHT))
+        .p(px(2.))
+        .cursor_pointer()
+        .child(inner)
         .on_click(move |_, _, cx| {
             update(&jump_to, cx, |tab, _| tab.scroll_to_page(page));
         })
@@ -172,7 +233,7 @@ fn row(
         .on_drop(move |dragged: &DraggedPage, _, cx| {
             reorder(&drop_on, dragged.page, page, cx);
         })
-        .context_menu(move |menu, _, _| page_menu(menu, &menu_of, page, count))
+        .context_menu(move |menu, _, _| page_menu(menu, &menu_of, page, count, &palette))
 }
 
 fn page_menu(
@@ -180,30 +241,43 @@ fn page_menu(
     tab: &WeakEntity<DocTab>,
     page: usize,
     count: usize,
+    palette: &Palette,
 ) -> gpui::component::menu::PopupMenu {
-    let item =
-        |label: &'static str, icon: IconName, run: fn(&WeakEntity<DocTab>, usize, &mut App)| {
-            let tab = tab.clone();
-            PopupMenuItem::new(label)
-                .icon(icon)
-                .on_click(move |_, _, cx| run(&tab, page, cx))
-        };
-    menu.item(item("Rotate left", IconName::RotateCcw, |tab, page, cx| {
-        rotate(tab, page, -90, cx)
-    }))
-    .item(item("Rotate right", IconName::RotateCw, |tab, page, cx| {
-        rotate(tab, page, 90, cx)
-    }))
+    let item = |glyph: &'static str,
+                label: &'static str,
+                enabled: bool,
+                run: fn(&WeakEntity<DocTab>, usize, &mut App)| {
+        let tab = tab.clone();
+        menu_entry(glyph, label, enabled, palette).on_click(move |_, _, cx| run(&tab, page, cx))
+    };
+    menu.item(item(
+        icons::ARROW_COUNTER_CLOCKWISE,
+        "Rotate left",
+        true,
+        |tab, page, cx| rotate(tab, page, -90, cx),
+    ))
+    .item(item(
+        icons::ARROW_CLOCKWISE,
+        "Rotate right",
+        true,
+        |tab, page, cx| rotate(tab, page, 90, cx),
+    ))
     .separator()
     .item(item(
+        icons::FILE_PLUS,
         "Insert blank page after",
-        IconName::FilePlus,
+        true,
         insert_blank,
     ))
-    .item(item("Insert PDF after…", IconName::FileInput, insert_file))
-    .item(item("Extract page…", IconName::FileOutput, extract))
+    .item(item(
+        icons::FILE_ARROW_DOWN,
+        "Insert PDF after…",
+        true,
+        insert_file,
+    ))
+    .item(item(icons::EXPORT, "Extract page…", true, extract))
     .separator()
-    .item(item("Delete page", IconName::Trash, delete).disabled(count <= 1))
+    .item(item(icons::TRASH, "Delete page", count > 1, delete))
 }
 
 /// Run `update` on `tab` if it is still open, then redraw it.
@@ -310,9 +384,9 @@ fn extract(tab: &WeakEntity<DocTab>, page: usize, cx: &mut App) {
     }
 }
 
-/// Logical size of the thumbnail of a page of `size` points: longest side [`THUMB_SIDE`].
+/// Logical size of the thumbnail of a page of `size` points, fitted in [`BOX`].
 fn fit(size: (f32, f32)) -> (f32, f32) {
-    let scale = THUMB_SIDE / size.0.max(size.1).max(1.0);
+    let scale = (BOX.0 / size.0.max(1.0)).min(BOX.1 / size.1.max(1.0));
     (size.0 * scale, size.1 * scale)
 }
 
@@ -404,12 +478,10 @@ mod tests {
     use super::{fit, move_to};
 
     #[test]
-    fn thumbnails_fit_their_longest_side() {
-        assert_eq!(fit((612.0, 792.0)).1, super::THUMB_SIDE);
-        assert_eq!(
-            fit((800.0, 400.0)),
-            (super::THUMB_SIDE, super::THUMB_SIDE / 2.0)
-        );
+    fn thumbnails_fit_their_box() {
+        let (width, height) = super::BOX;
+        assert_eq!(fit((612.0, 792.0)).1, height);
+        assert_eq!(fit((800.0, 400.0)), (width, width / 2.0));
     }
 
     #[test]

@@ -8,15 +8,15 @@ use std::sync::Arc;
 
 use godpdf_core::SearchHit;
 use godpdf_render::TextChar;
-use gpui::assets::IconName;
-use gpui::component::Sizable;
 use gpui::component::input::{Input, InputEvent, InputState};
+use gpui::component::spinner::Spinner;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, Hsla, Rgba, Window, div, px};
 
-use super::{Panel, icon_button, note, open_panel, state, with_active};
+use super::{Panel, label, open_panel, state, with_active};
 use crate::doc::{DocTab, guarded};
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
+use crate::{icons, widgets};
 
 /// Search results of one document.
 #[derive(Default)]
@@ -172,17 +172,24 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
 
     let total: usize = search.hits.iter().map(|hit| hit.count).sum();
     let status = if search.busy && fresh {
-        note("Searching…", &palette)
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(Spinner::new().color(palette.text_dim))
+            .child(label("Searching…", palette.text_dim))
     } else if let Some(err) = search.error.as_ref().filter(|_| fresh) {
-        note(format!("Search failed: {err}"), &palette)
+        label(err.clone(), palette.error)
     } else if !fresh || search.searched.is_empty() || search.searched != typed {
-        note("Press Enter to search all pages.", &palette)
-    } else if search.hits.is_empty() {
-        note(format!("No match for “{}”", search.searched), &palette)
+        label("Press Enter to search all pages.", palette.text_dim)
     } else {
-        note(
-            format!("{total} matches on {} pages", search.hits.len()),
-            &palette,
+        label(
+            format!(
+                "{total} matches on {} pages for “{}”",
+                search.hits.len(),
+                search.searched
+            ),
+            palette.text_dim,
         )
     };
     let show_hits = fresh && !search.busy && search.searched == typed && !typed.is_empty();
@@ -195,46 +202,42 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     } else {
         Vec::new()
     };
-    let steps = (show_hits && !search.hits.is_empty()).then(|| {
-        div()
-            .flex()
-            .gap(px(2.))
-            .child(
-                icon_button("search-prev", IconName::ChevronUp, &palette)
-                    .on_click(|_, _, cx| step(false, cx)),
-            )
-            .child(
-                icon_button("search-next", IconName::ChevronDown, &palette)
-                    .on_click(|_, _, cx| step(true, cx)),
-            )
-    });
+    // egui: field `available - 40` wide + 28 px button, 8 apart; then label, 4 px, the hits.
     div()
         .flex_1()
         .min_h_0()
         .flex()
         .flex_col()
-        .child(div().px(px(10.)).child(Input::new(&field).small()))
+        .gap(px(6.))
         .child(
             div()
                 .flex()
                 .items_center()
-                .justify_between()
-                .pr(px(6.))
-                .child(status)
-                .children(steps),
+                .gap(px(8.))
+                .pr(px(4.))
+                .child(div().flex_1().child(Input::new(&field).h(px(26.))))
+                .child(
+                    widgets::icon_button("search-run", icons::MAGNIFYING_GLASS, "Search", &palette)
+                        .on_click(|_, _, cx| run(true, cx)),
+                ),
         )
+        .child(status)
         .child(
             div()
                 .id("search-hits")
+                .mt(px(4.))
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(6.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
                 .children(rows),
         )
         .into_any_element()
 }
 
+/// egui `Button::selectable` sized `[width, 26]`: centered text, `selected` fill when on.
 fn hit_row(
     tab: &Entity<DocTab>,
     hit: &SearchHit,
@@ -246,12 +249,12 @@ fn hit_row(
     let hover = palette.hover;
     div()
         .id(("hit", page))
+        .flex_none()
         .h(px(26.))
-        .px(px(8.))
         .flex()
         .items_center()
-        .rounded(px(5.))
-        .text_sm()
+        .justify_center()
+        .rounded(px(theme::RADIUS))
         .cursor_pointer()
         .when(current, |row| row.bg(palette.selected))
         .hover(move |style| style.bg(hover))

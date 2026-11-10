@@ -1,20 +1,21 @@
-//! Left sidebar (ported from `crates/app/src/sidebar.rs`, `bookmarks.rs`, `organize.rs`): an
-//! icon rail and one open panel: page thumbnails, bookmarks or text search.
+//! Right panel (ported from `crates/app/src/sidebar.rs`, `comments.rs`, `bookmarks.rs` and
+//! `GodApp::right_panel`), opened from the icon rail (`shell/rail.rs`): comments, page
+//! thumbnails, bookmarks or text search.
 //!
 //! App-wide state is the [`PanelState`] global (open panel, search field, the tab shown).
 //! Per-document state is [`TabPanels`], a field of `DocTab` (thumbnail cache, search hits,
 //! bookmark being renamed), so it goes away with its tab.
 
 mod bookmarks;
+mod comments;
 mod search;
 mod thumbs;
 
-use gpui::assets::IconName;
 use gpui::component::input::InputState;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, Global, KeyBinding, Subscription, WeakEntity, Window,
-    actions, div, px,
+    AnyElement, App, Context, Entity, Global, Hsla, KeyBinding, SharedString, Subscription,
+    WeakEntity, Window, actions, div, px,
 };
 
 use crate::doc::DocTab;
@@ -37,6 +38,8 @@ actions!(
 // shortcut: fixed width, egui lets it be dragged 240..=520; add a drag handle if wanted.
 const PANEL_WIDTH: f32 = 320.;
 const PANEL_MARGIN: (f32, f32) = (14., 6.);
+/// Box a page thumbnail is fitted in (egui `sidebar::pages`: row width - 32 by 156).
+const BOX: (f32, f32) = (PANEL_WIDTH - 2. * PANEL_MARGIN.0 - 32., 156.);
 
 /// The views of the right rail (egui `sidebar::Tab`), in rail order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +112,7 @@ impl Global for PanelState {}
 /// Sidebar state of one document.
 #[derive(Default)]
 pub struct TabPanels {
+    comments: comments::Comments,
     thumbs: thumbs::Thumbs,
     search: search::Search,
     bookmarks: bookmarks::Marks,
@@ -197,13 +201,17 @@ pub fn right(
     state(cx).active = Some(tab.downgrade());
     let panel = open_panel(cx)?;
     let palette = Palette::of(cx);
+    let comment_count = (panel == Panel::Comments)
+        .then(|| comments::count(&tab, cx))
+        .flatten();
     let content = match panel {
+        Panel::Comments => comments::render(&tab, cx),
         Panel::Pages => thumbs::render(&tab, window, cx),
         Panel::Bookmarks => bookmarks::render(&tab, window, cx),
         Panel::Search => search::render(&tab, window, cx),
-        // TODO(right panel): port `comments.rs`, `formfill.rs`, `signature::panel`.
-        Panel::Comments | Panel::Form | Panel::Sign => {
-            note("Not available yet in this version.", &palette).into_any_element()
+        // TODO(right panel): port `formfill.rs`, `signature::panel`.
+        Panel::Form | Panel::Sign => {
+            label("Not available yet in this version.", palette.text_dim).into_any_element()
         }
     };
     Some(
@@ -224,7 +232,15 @@ pub fn right(
                     .mb(px(8.))
                     .flex()
                     .items_center()
-                    .child(div().flex_1().text_size(px(17.)).child(panel.title()))
+                    .gap(px(8.))
+                    .child(div().text_size(px(17.)).child(panel.title()))
+                    .children(comment_count.map(|count| {
+                        div()
+                            .text_size(px(15.))
+                            .text_color(palette.text_dim)
+                            .child(count.to_string())
+                    }))
+                    .child(div().flex_1())
                     .child(
                         widgets::icon_button(
                             "close-right-panel",
@@ -245,33 +261,27 @@ pub fn page_overlay(tab: &mut DocTab, page: usize, cx: &mut Context<DocTab>) -> 
     search::page_overlay(tab, page, cx)
 }
 
-/// A small text row in the panel, dimmed (hints, counts, errors).
-fn note(text: impl Into<gpui::SharedString>, palette: &Palette) -> gpui::Div {
-    div()
-        .px(px(12.))
-        .py(px(6.))
-        .text_sm()
-        .text_color(palette.text_dim)
-        .child(text.into())
+/// A plain label of the panel (egui `ui.label` in a colour): body size, no padding.
+fn label(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
+    div().text_color(color).child(text.into())
 }
 
-/// A square icon button in the panel palette. Add `.on_click(..)`.
-fn icon_button(
-    id: impl Into<gpui::ElementId>,
-    icon: IconName,
+/// A context menu entry like egui's `Button::new(with_icon(glyph, label))`: Phosphor glyph,
+/// half a glyph gap, label; dimmed when disabled. Add `.on_click(..)`.
+fn menu_entry(
+    glyph: &'static str,
+    text: impl Into<SharedString>,
+    enabled: bool,
     palette: &Palette,
-) -> gpui::Stateful<gpui::Div> {
-    let hover = palette.hover;
-    div()
-        .id(id)
-        .size(px(26.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .text_size(px(14.))
-        .text_color(palette.text)
-        .cursor_pointer()
-        .hover(move |style| style.bg(hover))
-        .child(icon)
+) -> gpui::component::menu::PopupMenuItem {
+    let text = text.into();
+    let color = if enabled {
+        palette.text
+    } else {
+        palette.disabled()
+    };
+    gpui::component::menu::PopupMenuItem::element(move |_, _| {
+        widgets::with_icon(glyph, text.clone(), crate::fonts::BODY, color)
+    })
+    .disabled(!enabled)
 }

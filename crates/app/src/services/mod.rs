@@ -1,7 +1,7 @@
 //! App services: settings kept between sessions (`settings.rs`),
 //! updates from GitHub (`updates.rs`), the "Working…" spinner of background jobs
-//! (`jobs.rs`), files changed by another program (`watch.rs`), and their dialogs: About,
-//! Updates, Preferences and the password asked for an encrypted PDF.
+//! (`jobs.rs`), files changed by another program (`watch.rs`), the Updates popover of the
+//! tab row, and the dialogs: About, Preferences and the password asked for an encrypted PDF.
 //!
 //! Dialogs work as in `dialogs/`: an action records the dialog as pending in the
 //! [`Services`] global; [`overlay`] (it has the window) builds and focuses it.
@@ -13,6 +13,7 @@ pub mod watch;
 
 use std::path::PathBuf;
 
+use gpui::AnimationExt as _;
 use gpui::component::input::{Input, InputState};
 use gpui::component::spinner::Spinner;
 use gpui::component::{Sizable, Size};
@@ -43,14 +44,12 @@ struct Locked {
 
 enum Pending {
     About,
-    Updates,
     Preferences,
     Password(Locked),
 }
 
 enum Dialog {
     About(FocusHandle),
-    Updates(FocusHandle),
     Preferences(FocusHandle),
     Password {
         locked: Locked,
@@ -86,14 +85,8 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &About, cx| open_later(Pending::About, cx));
     cx.on_action(|_: &Preferences, cx| open_later(Pending::Preferences, cx));
     cx.on_action(|_: &Updates, cx| {
-        // Look again unless a list is already in.
-        if !matches!(
-            updates::get(cx).map(|updates| &updates.state),
-            Some(updates::State::Ready(_))
-        ) {
-            updates::check(cx);
-        }
-        open_later(Pending::Updates, cx);
+        set_updates_open(true, cx);
+        cx.refresh_windows();
     });
 }
 
@@ -150,12 +143,6 @@ pub fn ask_password(
     open_later(Pending::Password(locked), cx);
 }
 
-/// Close the open dialog without a window at hand (focus goes back on the next frame).
-pub fn close_dialog(cx: &mut App) {
-    state(cx).open = None;
-    cx.refresh_windows();
-}
-
 fn close(window: &mut Window, cx: &mut App) {
     let services = state(cx);
     services.open = None;
@@ -208,7 +195,6 @@ fn unlock(window: &mut Window, cx: &mut App) {
 fn build(pending: Pending, window: &mut Window, cx: &mut App) {
     let (open, input) = match pending {
         Pending::About => (Dialog::About(cx.focus_handle()), None),
-        Pending::Updates => (Dialog::Updates(cx.focus_handle()), None),
         Pending::Preferences => (Dialog::Preferences(cx.focus_handle()), None),
         Pending::Password(locked) => {
             let input = cx.new(|cx| {
@@ -225,9 +211,7 @@ fn build(pending: Pending, window: &mut Window, cx: &mut App) {
         }
     };
     let focus = match &open {
-        Dialog::About(focus) | Dialog::Updates(focus) | Dialog::Preferences(focus) => {
-            Some(focus.clone())
-        }
+        Dialog::About(focus) | Dialog::Preferences(focus) => Some(focus.clone()),
         Dialog::Password { .. } => None,
     };
     let focused = window.focused(cx);
@@ -251,7 +235,6 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let palette = Palette::of(cx);
     let card = match cx.try_global::<Services>()?.open.as_ref()? {
         Dialog::About(focus) => info_card(focus, &palette).children(about(&palette)),
-        Dialog::Updates(focus) => info_card(focus, &palette).children(updates_body(&palette, cx)),
         Dialog::Preferences(focus) => {
             info_card(focus, &palette).children(preferences(&palette, cx))
         }
@@ -405,255 +388,6 @@ fn password(
         )
 }
 
-/// The Updates dialog: status, the releases with their notes, install / links.
-fn updates_body(palette: &Palette, cx: &App) -> Vec<AnyElement> {
-    use updates::{CAN_INSTALL, RELEASES_PAGE, State};
-    let current = env!("CARGO_PKG_VERSION");
-    let mut body = vec![
-        dialogs::title(widgets::with_icon(
-            icons::ARROW_CIRCLE_UP,
-            "Updates",
-            19.,
-            palette.text,
-        ))
-        .into_any_element(),
-    ];
-    let (state, install) = updates::get(cx)
-        .map(|updates| (updates.state.clone(), updates.install.clone()))
-        .unwrap_or_default();
-    match state {
-        State::Idle | State::Loading => {
-            body.push(spinner_line("Looking for new versions…", palette));
-        }
-        State::Failed(err) => {
-            body.push(
-                div()
-                    .text_color(palette.error)
-                    .child(err)
-                    .into_any_element(),
-            );
-            body.push(
-                div()
-                    .flex()
-                    .child(
-                        framed_button(
-                            "updates-retry",
-                            widgets::with_icon(
-                                icons::ARROW_CLOCKWISE,
-                                "Try again",
-                                fonts::BODY,
-                                palette.text,
-                            ),
-                            true,
-                            palette,
-                        )
-                        .on_click(|_, window, cx| {
-                            updates::check(cx);
-                            window.refresh();
-                        }),
-                    )
-                    .into_any_element(),
-            );
-        }
-        State::Ready(releases) => {
-            let newest = releases.iter().find(|release| release.is_newer());
-            let status = match newest {
-                Some(release) => format!("{} is out. You have version {current}.", release.tag),
-                None => format!("You have the latest version ({current})."),
-            };
-            body.push(div().child(status).into_any_element());
-            if releases.is_empty() {
-                body.push(
-                    div()
-                        .text_color(palette.text_dim)
-                        .child("No release published yet.")
-                        .into_any_element(),
-                );
-            }
-            let newest_tag = newest.map(|release| release.tag.clone());
-            let rows = releases.into_iter().enumerate().map(|(index, release)| {
-                let latest = newest_tag.as_deref() == Some(release.tag.as_str());
-                let action = match (&release.asset, latest && CAN_INSTALL) {
-                    (Some(asset), true) => Some(install_row(asset.clone(), &install, palette)),
-                    _ if !release.url.is_empty() => Some(link(
-                        ("release-link", index),
-                        Some(icons::ARROW_SQUARE_OUT),
-                        "View on GitHub",
-                        release.url.clone(),
-                        palette,
-                    )),
-                    _ => None,
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(theme::ITEM_SPACING.1))
-                    .pt(px(6.))
-                    .border_t_1()
-                    .border_color(palette.border)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(theme::ITEM_SPACING.0))
-                            .child(div().text_size(px(16.)).child(release.name.clone()))
-                            .when(release.is_newer(), |row| {
-                                row.child(div().text_color(palette.accent_text).child("New"))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(9.))
-                            .text_color(palette.text_dim)
-                            .child(format!("{} · {}", release.tag, release.date)),
-                    )
-                    .children(markdown(&release.notes, palette))
-                    .children(action)
-            });
-            body.push(
-                div()
-                    .id("releases")
-                    .max_h(px(360.))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .gap(px(theme::ITEM_SPACING.1))
-                    .children(rows)
-                    .into_any_element(),
-            );
-        }
-    }
-    body.push(div().h(px(0.)).into_any_element());
-    body.push(link(
-        "all-releases",
-        None,
-        "All releases on GitHub",
-        RELEASES_PAGE.to_owned(),
-        palette,
-    ));
-    body.push(close_row("Close", palette));
-    body
-}
-
-/// The blue "Download and install" button, or the download under way.
-fn install_row(asset: String, install: &updates::Install, palette: &Palette) -> AnyElement {
-    use updates::Install;
-    if matches!(install, Install::Downloading) {
-        return spinner_line(
-            "Downloading the update… GodPDF restarts when it is done.",
-            palette,
-        );
-    }
-    let white = gpui::white();
-    let button = div()
-        .id("install-update")
-        .flex()
-        .items_center()
-        .h(px(30.))
-        .px(px(theme::BUTTON_PADDING.0))
-        .rounded(px(theme::RADIUS))
-        .bg(theme::hex(theme::DOWNLOAD_BLUE))
-        .cursor_pointer()
-        .hover(|style| style.opacity(0.9))
-        .child(widgets::with_icon(
-            icons::DOWNLOAD_SIMPLE,
-            "Download and install",
-            fonts::BODY,
-            white,
-        ))
-        .on_click(move |_, window, cx| {
-            updates::install(asset.clone(), cx);
-            window.refresh();
-        });
-    div()
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap(px(theme::ITEM_SPACING.1))
-        .pt(px(4.))
-        .child(widgets::tooltip(
-            button,
-            "Replace GodPDF with this version and restart",
-        ))
-        .children(match install {
-            Install::Failed(err) => Some(div().text_color(palette.error).child(err.clone())),
-            _ => None,
-        })
-        .into_any_element()
-}
-
-fn spinner_line(text: &'static str, palette: &Palette) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(theme::ITEM_SPACING.0))
-        .child(Spinner::new().with_size(Size::Small).color(palette.text))
-        .child(text)
-        .into_any_element()
-}
-
-/// A link: accent text, underlined on hover, opens `url` in the browser.
-fn link(
-    id: impl Into<gpui::ElementId>,
-    glyph: Option<&'static str>,
-    label: &'static str,
-    url: String,
-    palette: &Palette,
-) -> AnyElement {
-    let color = palette.accent_text;
-    let content = match glyph {
-        Some(glyph) => widgets::with_icon(glyph, label, fonts::BODY, color),
-        None => div().text_color(color).child(label),
-    };
-    div()
-        .flex()
-        .child(
-            div()
-                .id(id)
-                .cursor_pointer()
-                .hover(|style| style.underline())
-                .child(content)
-                .on_click(move |_, _, cx| cx.open_url(&url)),
-        )
-        .into_any_element()
-}
-
-/// The release notes: headings, bullets, `**bold**` and `code` marks
-/// dropped (Ubuntu Light has no bold).
-fn markdown(text: &str, palette: &Palette) -> Vec<AnyElement> {
-    let clean = |line: &str| line.replace("**", "").replace('`', "");
-    text.lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return div().h(px(4.)).into_any_element();
-            }
-            if let Some(heading) = trimmed.strip_prefix('#') {
-                let heading = clean(heading.trim_start_matches('#').trim());
-                return div().text_size(px(15.)).child(heading).into_any_element();
-            }
-            let bullet = ["- ", "* ", "+ "]
-                .iter()
-                .find_map(|marker| trimmed.strip_prefix(marker));
-            match bullet {
-                Some(item) => div()
-                    .flex()
-                    .items_start()
-                    .gap(px(theme::ITEM_SPACING.0))
-                    .text_size(px(14.))
-                    .child("•")
-                    .child(div().flex_1().min_w_0().child(clean(item)))
-                    .into_any_element(),
-                None => div()
-                    .text_size(px(14.))
-                    .text_color(palette.text)
-                    .child(clean(trimmed))
-                    .into_any_element(),
-            }
-        })
-        .collect()
-}
-
 /// The "Working…" spinner of the header, while a background job runs.
 pub fn working(palette: &Palette, cx: &App) -> Option<AnyElement> {
     if !jobs::busy(cx) {
@@ -667,25 +401,249 @@ pub fn working(palette: &Palette, cx: &App) -> Option<AnyElement> {
     Some(widgets::tooltip(spinner, "Working…").into_any_element())
 }
 
-/// The Updates button of the tab row: blue dot and "Update available: <tag>" when one is out.
+/// Open or close the Updates popover; opening looks for releases unless a list is already in.
+fn set_updates_open(open: bool, cx: &mut App) {
+    let state = cx.default_global::<updates::Updates>();
+    state.open = open;
+    if open && !matches!(state.state, updates::State::Ready(_)) {
+        updates::check(cx);
+    }
+}
+
+/// The Updates button of the tab row (blue dot and "GodPDF X.Y.Z is available" when a new
+/// version is out) with its popover, right-aligned under it. Esc or a click outside closes it.
 pub fn updates_button(palette: &Palette, cx: &App) -> AnyElement {
     let newest = updates::newest(cx);
+    let open = updates::get(cx).is_some_and(|updates| updates.open);
     let tip = newest.as_ref().map_or_else(
         || "Updates".to_owned(),
-        |release| format!("Update available: {}", release.tag),
+        |release| format!("{} {} is available", crate::APP_NAME, release.version()),
     );
-    let button = widgets::icon_button("updates", icons::ARROW_CIRCLE_UP, tip, palette)
-        .relative()
-        .on_click(widgets::dispatch(Updates));
-    let dot = newest.map(|_| {
-        // Radius 4 at the top-right corner, 6 in.
+    let palette = *palette;
+    gpui::base::Popover::new("updates-popover")
+        .anchor(gpui::Anchor::TopRight)
+        .offset(px(6.))
+        .open(open)
+        .on_open_change(|open, _, cx| set_updates_open(*open, cx))
+        .trigger_with(move |_, _, _| {
+            let dot = newest.map(|_| {
+                // Radius 4 at the top-right corner, 6 in.
+                div()
+                    .absolute()
+                    .top(px(6. - 4.))
+                    .right(px(6. - 4.))
+                    .size(px(8.))
+                    .rounded_full()
+                    .bg(theme::hex(theme::DOWNLOAD_BLUE))
+            });
+            widgets::icon_button("updates", icons::ARROW_CIRCLE_UP, tip, &palette)
+                .relative()
+                .children(dot)
+                .into_any_element()
+        })
+        .content(move |_, _, cx| updates_card(&palette, cx))
+        .into_any_element()
+}
+
+/// The popover card: the new version with its notes and "Update and restart", or the
+/// status (up to date / checking / failed) with a button to check again.
+fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
+    use updates::{Install, State};
+    let current = env!("CARGO_PKG_VERSION");
+    let (state, downloading) = updates::get(cx)
+        .map(|updates| {
+            let downloading = matches!(updates.install, Install::Downloading);
+            (updates.state.clone(), downloading)
+        })
+        .unwrap_or_default();
+    let card = div()
+        .w(px(300.))
+        .p(px(16.))
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .bg(palette.panel)
+        .border_1()
+        .border_color(palette.border)
+        .rounded(px(theme::WINDOW_RADIUS))
+        .shadow(widgets::popup_shadow(palette))
+        .text_size(px(fonts::BODY))
+        .text_color(palette.text);
+    let title = |text: String| {
         div()
-            .absolute()
-            .top(px(6. - 4.))
-            .right(px(6. - 4.))
-            .size(px(8.))
-            .rounded_full()
-            .bg(theme::hex(theme::DOWNLOAD_BLUE))
-    });
-    button.children(dot).into_any_element()
+            .text_size(px(15.))
+            .text_color(palette.text)
+            .child(text)
+    };
+    let muted = |text: String| div().text_color(palette.text_dim).child(text);
+
+    let newest = match &state {
+        State::Ready(releases) => releases.iter().find(|release| release.is_newer()).cloned(),
+        _ => None,
+    };
+    if let Some(release) = newest {
+        let notes = updates::bullets(&release.notes);
+        let install = release.asset.clone().filter(|_| updates::CAN_INSTALL);
+        return card
+            .child(title(format!(
+                "{} {} is available",
+                crate::APP_NAME,
+                release.version()
+            )))
+            .child(muted(format!("You have {current}.")))
+            .when(!notes.is_empty(), |card| {
+                card.child(
+                    div()
+                        .id("updates-notes")
+                        .mt(px(6.))
+                        .max_h(px(260.))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .children(notes.into_iter().map(|item| {
+                            div()
+                                .flex()
+                                .items_start()
+                                .gap(px(8.))
+                                .child("•")
+                                .child(div().flex_1().min_w_0().child(item))
+                        })),
+                )
+            })
+            .child(div().h(px(8.)))
+            .child(update_button(install.clone(), release.url, downloading))
+            .when(install.is_some(), |card| {
+                card.child(
+                    div()
+                        .pt(px(2.))
+                        .text_size(px(11.))
+                        .text_color(palette.text_dim)
+                        .child("Unsaved changes are asked about before the app restarts."),
+                )
+            })
+            .into_any_element();
+    }
+
+    let (heading, line, checking) = match state {
+        State::Idle | State::Loading => (
+            "Checking…".to_owned(),
+            format!("{} {current}", crate::APP_NAME),
+            true,
+        ),
+        State::Ready(_) => (
+            "You're up to date".to_owned(),
+            format!("{} {current}", crate::APP_NAME),
+            false,
+        ),
+        State::Failed(err) => ("Could not check for updates".to_owned(), err, false),
+    };
+    card.child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(title(heading))
+                    .child(muted(line)),
+            )
+            .child(refresh_button(checking, palette)),
+    )
+    .into_any_element()
+}
+
+/// The full-width blue button: "Update and restart" (a spinner while downloading), or "View
+/// on GitHub" where the app cannot replace itself.
+fn update_button(install: Option<String>, page: String, downloading: bool) -> AnyElement {
+    let white = gpui::white();
+    let button = div()
+        .id("install-update")
+        .w_full()
+        .h(px(34.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .rounded(px(theme::RADIUS))
+        .bg(theme::hex(theme::DOWNLOAD_BLUE))
+        .text_color(white);
+    let button = match install {
+        Some(_) if downloading => button
+            .opacity(0.6)
+            .child(Spinner::new().with_size(Size::Small).color(white))
+            .child("Downloading…"),
+        Some(asset) => button
+            .cursor_pointer()
+            .hover(|style| style.opacity(0.9))
+            .child("Update and restart")
+            .on_click(move |_, window, cx| {
+                updates::install(asset.clone(), cx);
+                window.refresh();
+            }),
+        None => {
+            let page = if page.is_empty() {
+                updates::RELEASES_PAGE.to_owned()
+            } else {
+                page
+            };
+            button
+                .cursor_pointer()
+                .hover(|style| style.opacity(0.9))
+                .child("View on GitHub")
+                .on_click(move |_, _, cx| cx.open_url(&page))
+        }
+    };
+    button.into_any_element()
+}
+
+/// Check again; the arrow spins while checking.
+fn refresh_button(checking: bool, palette: &Palette) -> AnyElement {
+    // A Lucide SVG, not a Phosphor glyph: GPUI rotates SVGs and images only, not text.
+    let arrow = gpui::svg()
+        .path("icons/refresh-cw.svg")
+        .size(px(16.))
+        .text_color(if checking {
+            palette.text_dim
+        } else {
+            palette.text
+        });
+    let arrow = if checking {
+        arrow
+            .with_animation(
+                "updates-checking",
+                gpui::Animation::new(std::time::Duration::from_secs(1)).repeat(),
+                |arrow, delta| {
+                    arrow.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
+                },
+            )
+            .into_any_element()
+    } else {
+        arrow.into_any_element()
+    };
+    let hover = palette.hover;
+    let button = div()
+        .id("updates-refresh")
+        .flex_none()
+        .size(px(widgets::ICON_BUTTON))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(theme::RADIUS))
+        .child(arrow)
+        .when(!checking, |button| {
+            button
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .on_click(|_, window, cx| {
+                    updates::check(cx);
+                    window.refresh();
+                })
+        });
+    widgets::tooltip(button, "Check for updates").into_any_element()
 }

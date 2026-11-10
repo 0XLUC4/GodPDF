@@ -1,6 +1,6 @@
 //! New versions on GitHub: the releases list, the
-//! blue dot on the tab row, and "Download and install", which swaps the program file and
-//! restarts on the new one.
+//! blue dot and popover of the tab row, and "Update and restart", which swaps the program
+//! file and restarts on the new one.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,6 @@ pub const CAN_INSTALL: bool = cfg!(windows);
 #[derive(Clone, Debug)]
 pub struct Release {
     pub tag: String,
-    pub name: String,
-    pub date: String,
     pub notes: String,
     pub url: String,
     pub asset: Option<String>,
@@ -25,6 +23,25 @@ impl Release {
     pub fn is_newer(&self) -> bool {
         is_newer(&self.tag, env!("CARGO_PKG_VERSION"))
     }
+
+    /// The tag without its leading "v": "1.2.0".
+    pub fn version(&self) -> &str {
+        self.tag.trim_start_matches(['v', 'V'])
+    }
+}
+
+/// The bullet lines (`- ` or `* `) of release notes, without their marker and the
+/// `**bold**` / `code` marks.
+pub fn bullets(notes: &str) -> Vec<String> {
+    notes
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
+        })
+        .map(|item| item.replace("**", "").replace('`', "").trim().to_owned())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 #[derive(Clone, Default)]
@@ -41,7 +58,6 @@ pub enum Install {
     #[default]
     Idle,
     Downloading,
-    Failed(String),
 }
 
 #[derive(Default)]
@@ -50,6 +66,8 @@ pub struct Updates {
     pub install: Install,
     /// Installed: start this program when the app quits.
     pub restart: Option<PathBuf>,
+    /// The popover under the Updates button is open.
+    pub open: bool,
 }
 
 impl Global for Updates {}
@@ -88,6 +106,7 @@ pub fn check(cx: &mut App) {
 }
 
 /// Download `url` over the program, then quit (asking about unsaved work) to restart on it.
+/// A failure is a toast.
 pub fn install(url: String, cx: &mut App) {
     let updates = cx.default_global::<Updates>();
     if matches!(updates.install, Install::Downloading) || updates.restart.is_some() {
@@ -101,11 +120,11 @@ pub fn install(url: String, cx: &mut App) {
         let result = replaced.await;
         cx.update(|cx| {
             let updates = cx.default_global::<Updates>();
+            updates.install = Install::Idle;
             match result {
                 Ok(program) => {
-                    updates.install = Install::Idle;
                     updates.restart = Some(program);
-                    super::close_dialog(cx);
+                    updates.open = false;
                     // Through the Quit action: unsaved documents are asked about first.
                     if let Some(window) =
                         cx.active_window().or_else(|| cx.windows().first().copied())
@@ -115,7 +134,7 @@ pub fn install(url: String, cx: &mut App) {
                         });
                     }
                 }
-                Err(err) => updates.install = Install::Failed(err),
+                Err(err) => crate::toasts::error(cx, err),
             }
             cx.refresh_windows();
         });
@@ -214,7 +233,6 @@ fn parse(body: &str) -> Result<Vec<Release>, String> {
         .filter(|value| !value.get("draft").and_then(Value::as_bool).unwrap_or(false))
         .map(|value| {
             let tag = text(value, "tag_name");
-            let name = text(value, "name");
             let assets = value
                 .get("assets")
                 .and_then(Value::as_array)
@@ -232,8 +250,6 @@ fn parse(body: &str) -> Result<Vec<Release>, String> {
                 .filter(|url| !url.is_empty());
             Release {
                 asset,
-                name: if name.is_empty() { tag.clone() } else { name },
-                date: text(value, "published_at").chars().take(10).collect(),
                 notes: text(value, "body").replace("\r\n", "\n"),
                 url: text(value, "html_url"),
                 tag,
@@ -272,6 +288,19 @@ mod tests {
     }
 
     #[test]
+    fn release_notes_bullets() {
+        let notes = "## What's new
+- Faster **thumbnails**
+  * `Ctrl+K` palette
+plain line
+-not a bullet
+- 
+";
+        assert_eq!(bullets(notes), vec!["Faster thumbnails", "Ctrl+K palette"]);
+        assert!(bullets("").is_empty());
+    }
+
+    #[test]
     fn parses_releases_newest_first() {
         let body = r#"[
             {"tag_name": "v1.0.0", "name": "", "published_at": "2026-09-01T10:00:00Z",
@@ -284,14 +313,13 @@ mod tests {
         ]"#;
         let releases = parse(body).unwrap();
         assert_eq!(releases.len(), 2);
-        assert_eq!(releases[0].name, "Big one");
-        assert_eq!(releases[0].date, "2026-10-01");
+        assert_eq!(releases[0].tag, "v1.2.0");
         assert_eq!(releases[0].notes, "Second\nline");
         assert_eq!(
             releases[0].asset.as_deref(),
             Some("https://example.com/exe")
         );
-        assert_eq!(releases[1].name, "v1.0.0");
+        assert_eq!(releases[1].tag, "v1.0.0");
         assert_eq!(releases[1].asset, None);
     }
 }

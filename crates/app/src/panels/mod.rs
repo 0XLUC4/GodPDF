@@ -303,7 +303,7 @@ fn label(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
 
 /// A context menu entry: Phosphor glyph,
 /// half a glyph gap, label; dimmed when disabled. Add `.on_click(..)`.
-fn menu_entry(
+pub(crate) fn menu_entry(
     glyph: &'static str,
     text: impl Into<SharedString>,
     enabled: bool,

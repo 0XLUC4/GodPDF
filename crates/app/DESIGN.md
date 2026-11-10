@@ -96,8 +96,17 @@ is left.
   (`CLOCK_COUNTER_CLOCKWISE`), separator, Show in folder (`FOLDER_OPEN`), Copy path (`COPY`).
 - 6 px gap, then "+ Open": frameless button, `PLUS` + "Open" at 14, tooltip "Open PDF (Ctrl+O)".
 - Right, left to right: `ARROW_CIRCLE_UP` "Updates" (blue dot r 4 at top-right −6/+6 when an
-  update is out, tooltip "Update available: <tag>"), `QUESTION` "About GodPDF", `MOON` "Dark
+  update is out, tooltip "GodPDF X.Y.Z is available"), `QUESTION` "About GodPDF", `MOON` "Dark
   mode" / `SUN` "Light mode" (28 × 28 icon buttons).
+- Updates popover (`services::updates_button`, gpui-base `Popover`; Esc or a click outside
+  closes it; the Updates command opens it): 6 under the button, right-aligned, 300 wide, fill
+  `panel`, 1 px `border`, radius 12, popup shadow, padding 16. Update out: title 15 "GodPDF
+  X.Y.Z is available", "You have X.Y.Z." dim, the notes' `- ` lines as bullets (max 260 high,
+  scrolls), a full-width 34 high blue (`DOWNLOAD_BLUE`) "Update and restart" (spinner +
+  "Downloading…" meanwhile, errors as toasts) and "Unsaved changes are asked about before the
+  app restarts." 11 dim. Otherwise "You're up to date" / "Checking…" / "Could not check for
+  updates" with "GodPDF X.Y.Z" (or the error) dim, and a refresh button on the right
+  (Lucide `refresh-cw` SVG, spinning while checking: Phosphor glyphs are text and cannot rotate).
 
 ### Header: `src/shell/header.rs`
 
@@ -190,12 +199,17 @@ text 13, right: pill button (fill `bg`, 1 px `text_dim`, radius 14: "Remove pass
 
 ### Welcome: `src/shell/welcome.rs`
 
-Centered column (max 980): logo 112 × 112
-radius 24, 10 px, "GodPDF" 40, tagline "Every PDF tool. Local. Pure Rust." 17 dim, 24 px,
-three buttons 170 × 44 radius 10, text 16, 8 apart: "Open PDF" `FOLDER_OPEN` (fill `accent`,
-text `on_accent`), "New PDF" `FILE_PLUS` and "Merge PDFs" `STACK` (1 px `accent` stroke).
-Then, with recent files: 26 px, "RECENT" (small, strong, `accent_text`) and one frameless row
-per file (`FILE_PDF` + name, tooltip the path).
+Centered column (max 980), 24 apart: the recent files, then three buttons 170 × 44 radius 10,
+text 16, 8 apart: "Open PDF" `FOLDER_OPEN` (fill `accent`, text `on_accent`), "New PDF"
+`FILE_PLUS` and "Merge PDFs" `STACK` (1 px `accent` stroke).
+Recent files: "RECENT" (small, `accent_text`), then a wrapping grid of cards (columns from the
+width, `welcome::columns`), 14 apart: card 160 wide, padding 8, radius 10, `surface` (hover
+`hover`), 1 px `border`; first page preview fitted in 144 × 204 on `canvas` (rendered in the
+background, cached per path + modified time; `LOCK` for encrypted files, `FILE_PDF` for
+unreadable ones, empty while rendering); name 13 and folder 11 dim, both with ellipsis;
+tooltip the path. Click opens; `X` small button on hover (top-right, 4 in) or right-click
+"Remove from recent" removes it. A missing file: 50 % opacity, `FILE_X`, "File not found",
+only removable. No recent file: logo 56 radius 12 and "Open a PDF to see it here" 15 dim.
 Recent files: `Shell::recent` (newest first, 8), kept in `services::settings`; also Menu >
 File > Open recent. Closed tabs: `Shell::closed`, Ctrl+Shift+T reopens.
 

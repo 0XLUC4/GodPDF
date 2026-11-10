@@ -210,7 +210,7 @@ pub fn render(
             .children(panels::right(Some(tab), window, cx))
             .child(rail::render(tab, &palette, cx))
             .into_any_element(),
-        None => welcome::render(app, &palette, cx),
+        None => welcome::render(app, &palette, window, cx),
     };
     div()
         .size_full()

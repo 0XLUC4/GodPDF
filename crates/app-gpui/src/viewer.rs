@@ -86,7 +86,9 @@ impl Render for DocTab {
                 .page_error(page)
                 .map(|err| format!("Page {}: {err}", page + 1));
             let hits = crate::panels::page_overlay(self, page, cx);
+            let text_under = crate::text::page_underlay(self, page, window, cx);
             let overlay = tools::page_overlay(self, page, rect, window, cx);
+            let text_over = crate::text::page_overlay(self, page, window, cx);
             pages.push(
                 div()
                     .absolute()
@@ -107,7 +109,9 @@ impl Render for DocTab {
                             .child(error)
                     })
                     .children(hits)
-                    .children(overlay),
+                    .children(text_under)
+                    .children(overlay)
+                    .children(text_over),
             );
         }
         self.trim_cache(visible, window);

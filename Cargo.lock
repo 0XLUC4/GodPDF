@@ -2513,11 +2513,16 @@ dependencies = [
 name = "godpdf-gpui"
 version = "1.8.1"
 dependencies = [
+ "anyhow",
  "godpdf-core",
  "godpdf-render",
  "gpui-kit",
  "image",
+ "ocrs",
  "rfd",
+ "rten",
+ "ureq",
+ "windows 0.62.2",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ use crate::dialogs::{
 };
 use crate::theme::{self, Palette, hex};
 use crate::tools::{HighlightTool, InkTool, NoteTool, PictureTool, RectangleTool, TextTool};
-use crate::{fonts, icons, panels, toasts, widgets};
+use crate::{fonts, icons, panels, text, toasts, widgets};
 
 // shortcut: fixed width, egui lets it be dragged 220..=420; add a drag handle if wanted.
 const WIDTH: f32 = 280.0;
@@ -97,7 +97,7 @@ const ALL_TOOLS: &[Row] = &[
         "Set or remove a password",
     ),
     row(
-        Missing,
+        Run(|| Box::new(text::EditText)),
         icons::TEXT_AA,
         PINK,
         "Edit PDF text",
@@ -174,7 +174,7 @@ const ALL_TOOLS: &[Row] = &[
         "Edit title, author, keywords",
     ),
     row(
-        Missing,
+        Run(|| Box::new(text::ExtractText)),
         icons::TEXT_ALIGN_LEFT,
         TEAL,
         "Extract text",

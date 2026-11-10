@@ -478,6 +478,10 @@ fn look(label: &str) -> (&'static str, &'static str) {
         "Remove all comments" => (icons::ERASER, ""),
         "Flatten comments and forms" => (icons::STACK_SIMPLE, ""),
         "Compress" => (icons::ARROWS_IN, ""),
+        "Compare with…" => (icons::GIT_DIFF, ""),
+        "Recognize text (OCR)" => (icons::SCAN, ""),
+        "Extract text" => (icons::TEXT_ALIGN_LEFT, ""),
+        "Edit PDF text" => (icons::TEXT_AA, ""),
         _ => (icons::FILE, ""),
     }
 }

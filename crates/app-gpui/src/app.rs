@@ -13,7 +13,7 @@ use crate::doc::{DocTab, guarded};
 use crate::geometry::ZOOM_STEP;
 use crate::shell::{self, FitPage, Shell};
 use crate::theme::{self, Palette};
-use crate::{dialogs, files, fonts, panels, toasts, tools};
+use crate::{dialogs, files, fonts, panels, text, toasts, tools};
 
 actions!(
     godpdf,
@@ -59,6 +59,8 @@ pub fn register(cx: &mut App) {
     tools::register(cx);
     panels::register(cx);
     dialogs::register(cx);
+    // After the tools: its Esc binding takes precedence over theirs.
+    text::register(cx);
 }
 
 pub struct GodPdfApp {
@@ -403,6 +405,7 @@ impl Render for GodPdfApp {
                 window,
                 cx,
             ))
+            .children(text::overlay(active.as_ref(), window, cx))
             .children(toasts::render(cx))
     }
 }

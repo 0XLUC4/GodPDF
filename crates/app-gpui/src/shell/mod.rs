@@ -19,15 +19,25 @@ mod rail;
 mod tabrow;
 mod welcome;
 
+use std::path::PathBuf;
+
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, Entity, EntityId, Window, actions, div};
+use gpui::{AnyElement, App, Context, Entity, EntityId, KeyBinding, Window, actions, div};
 
 use crate::app::GodPdfApp;
 use crate::doc::DocTab;
 use crate::panels;
 use crate::theme::Palette;
 
-actions!(godpdf, [ToggleToolsPanel, FitPage]);
+actions!(godpdf, [ToggleToolsPanel, FitPage, ReopenTab]);
+
+/// Most recent files kept (egui `MAX_RECENT`).
+const MAX_RECENT: usize = 8;
+
+/// Ctrl+Shift+T reopens the last closed tab (egui `Cmd::ReopenTab`).
+pub fn register(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(secondary!("shift-t"), ReopenTab, None)]);
+}
 
 /// Height of the document tab row.
 pub const TAB_HEIGHT: f32 = 38.0;
@@ -91,6 +101,11 @@ pub struct Shell {
     pub home: bool,
     /// Banners closed with their cross, per document.
     pub dismissed: Vec<(EntityId, Banner)>,
+    /// Files of the tabs closed, the last one last: what "Reopen closed tab" opens.
+    pub closed: Vec<PathBuf>,
+    /// Files opened, newest first (welcome screen, Menu > File > Open recent).
+    /// shortcut: kept for this run only, persist it once GPUI has settings storage.
+    pub recent: Vec<PathBuf>,
 }
 
 impl Default for Shell {
@@ -101,7 +116,18 @@ impl Default for Shell {
             tools_expanded: false,
             home: false,
             dismissed: Vec::new(),
+            closed: Vec::new(),
+            recent: Vec::new(),
         }
+    }
+}
+
+impl Shell {
+    /// egui `remember_recent`.
+    pub fn remember_recent(&mut self, path: &std::path::Path) {
+        self.recent.retain(|recent| recent != path);
+        self.recent.insert(0, path.to_path_buf());
+        self.recent.truncate(MAX_RECENT);
     }
 }
 
@@ -130,6 +156,7 @@ impl GodPdfApp {
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         if !self.doc_view() {
             self.shell.home = self.tabs.is_empty();
+            cx.notify();
             return;
         }
         self.shell.mode = mode;
@@ -152,7 +179,7 @@ pub fn render(
     cx: &mut Context<GodPdfApp>,
 ) -> AnyElement {
     let palette = Palette::of(cx);
-    let tab_row = tabrow::render(app, &palette, cx);
+    let tab_row = tabrow::render(app, &palette, window, cx);
     let header = header::render(app, &palette, cx);
     let body = match active.filter(|_| app.doc_view()) {
         Some(tab) => div()
@@ -172,7 +199,7 @@ pub fn render(
             .children(panels::right(Some(tab), window, cx))
             .child(rail::render(tab, &palette, cx))
             .into_any_element(),
-        None => welcome::render(&palette, cx),
+        None => welcome::render(app, &palette, cx),
     };
     div()
         .size_full()

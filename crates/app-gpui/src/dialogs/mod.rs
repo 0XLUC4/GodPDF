@@ -19,10 +19,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use godpdf_core as core;
-use gpui::component::menu::PopupMenu;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, Global, KeyBinding, MouseButton,
+    AnyElement, App, Div, Entity, EntityId, FocusHandle, Global, KeyBinding, MouseButton,
     WeakEntity, Window, actions, div, hsla, px,
 };
 
@@ -30,7 +29,7 @@ use crate::app::GodPdfApp;
 use crate::doc::{DocTab, guarded};
 use crate::theme::Palette;
 use crate::toasts;
-use commands::{COMMANDS, Group};
+pub use commands::{COMMANDS, Group};
 use form::Form;
 use kinds::Kind;
 use merge::Merge;
@@ -246,20 +245,6 @@ pub fn register(cx: &mut App) {
             });
         }
     });
-}
-
-/// One submenu per command family, listing its commands (the header's Menu button).
-pub fn menu_groups(menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    Group::ALL.iter().fold(menu, |menu, &group| {
-        menu.submenu(group.title(), window, cx, move |menu, _, _| {
-            COMMANDS
-                .iter()
-                .filter(|command| command.group == group)
-                .fold(menu, |menu, command| {
-                    menu.menu(command.label, (command.action)())
-                })
-        })
-    })
 }
 
 /// A password was set for the document `tab`: it is encrypted when saved.

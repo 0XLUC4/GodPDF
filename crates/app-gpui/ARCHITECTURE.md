@@ -18,16 +18,18 @@ reference for behavior: port from it.
 | Module | Role |
 |---|---|
 | `main.rs` | Starts the app, opens the window (gpui-kit `Root` around `GodPdfApp`), quit-on-close. |
-| `app.rs` | `GodPdfApp`, the root view: tool bar row, tab row, body, welcome screen. App actions + key bindings (`register`). Open / save / close / undo / redo / zoom handlers. |
+| `app.rs` | `GodPdfApp`, the root view (UI font on the root). App actions + key bindings (`register`). Open / save / close / undo / redo / zoom handlers. |
+| `shell/` | Window chrome like the egui app, one file per region: `tabrow.rs`, `header.rs`, `leftpanel.rs` (tools panel), `rail.rs` (right icon rail), `banner.rs`, `welcome.rs`; `Shell` state (mode, tools panel, home tab). Measurements: DESIGN.md. |
+| `fonts.rs` / `icons.rs` | Bundled egui fonts (Ubuntu Light, Hack, Phosphor), loaded in `main`; Phosphor glyph constants named as `egui_phosphor::regular`. |
 | `doc.rs` | `DocTab` (one `Entity` per open document): `Session`, renderer, page bitmap cache, `ViewState` (zoom, scroll, viewer bounds). |
 | `viewer.rs` | `impl Render for DocTab`: the continuous-scroll viewer, wheel scroll / Ctrl+wheel zoom, scrollbar. |
 | `geometry.rs` | Pure math: page `Layout`, visible pages, zoom anchoring, displayed points <-> PDF space. Tested. |
-| `theme.rs` | Palette of the egui app (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`. |
+| `theme.rs` | Palette and visuals of the egui app (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`; tool colours. |
 | `toasts.rs` | `Global` toast stack: `toasts::error(cx, ..)`, `info`, `success`. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
-| `widgets.rs` | `button`, `action_button`, `primary_button`, `separator` in the palette. |
+| `widgets.rs` | egui widgets at egui sizes: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`), pure geometry (`geom.rs`, tested). |
-| `panels/` | Left sidebar (icon rail + one panel): page thumbnails with drag reorder and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`). `right` is still an empty hook. |
+| `panels/` | Right panel opened from the rail (`shell/rail.rs`): page thumbnails with drag reorder and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`); Comments / Form / Signature are placeholders. |
 | `dialogs/` | Command list (`commands.rs`, feeds the palette and the tool bar menus), command palette Ctrl+K (`palette.rs`), form dialogs (`form.rs` rows + `kinds.rs` what each does), merge (`merge.rs`), background export / split (`output.rs`), print (`print.rs`), page ranges (`ranges.rs`). |
 
 Each hook module has a `register(cx)` (called from `app::register`) for its actions and key
@@ -45,7 +47,7 @@ same handler:
 3. Handle it. App-wide handlers sit on the root div in `GodPdfApp::render`
    (`.on_action(cx.listener(..))`); a module can instead handle it globally with
    `cx.on_action(|_: &MyCommand, cx| ..)` in `register` (no view access, use globals).
-4. A button runs it with `widgets::action_button(id, label, MyCommand, &palette)` or
+4. A button runs it with `.on_click(widgets::dispatch(MyCommand))` or
    `window.dispatch_action(Box::new(MyCommand), cx)`.
 
 Current bindings (same as egui): Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+W
@@ -71,8 +73,8 @@ around the pointer.
 
 ## A panel
 
-`panels/mod.rs`: `left(active_tab, window, cx)` / `right(..)` return the panel, laid out left
-and right of the viewer in a flex row (give it a fixed width). Keep which panel is open in a
+`panels/mod.rs`: `right(active_tab, window, cx)` returns the open panel, laid out between the
+viewer and the rail (`shell/mod.rs`). Keep which panel is open in a
 `Global`. Read the document with `tab.read(cx)`; jump to a page with
 `tab.update(cx, |tab, cx| { tab.scroll_to_page(page); cx.notify() })`.
 Thumbnails: render with `godpdf_render::Document::thumbnail` on
@@ -137,6 +139,12 @@ give back on close. Enter / Esc in a field are `DialogConfirm` / `DialogCancel` 
 `DocTab::apply`. A password set in "Encrypt with password" is applied by `app::save_tab`
 through `dialogs::bytes_to_save`; the session stays unencrypted. Shortcuts: Ctrl+K palette,
 Ctrl+P print, Ctrl+G go to page.
+
+## Look
+
+Same as the egui app: fonts, Phosphor icons (`widgets::icon(icons::X, 16.0, color)`, never
+Lucide `IconName` in new code), palette and sizes. Every region's measurements are in
+DESIGN.md.
 
 ## Not in wave 0
 

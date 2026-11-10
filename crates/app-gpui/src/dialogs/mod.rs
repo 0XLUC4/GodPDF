@@ -19,12 +19,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use godpdf_core as core;
-use gpui::component::Sizable;
-use gpui::component::button::{Button, ButtonVariants};
-use gpui::component::menu::DropdownMenu;
+use gpui::component::menu::PopupMenu;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Div, Entity, EntityId, FocusHandle, Global, KeyBinding, MouseButton,
+    AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, Global, KeyBinding, MouseButton,
     WeakEntity, Window, actions, div, hsla, px,
 };
 
@@ -32,7 +30,6 @@ use crate::app::GodPdfApp;
 use crate::doc::{DocTab, guarded};
 use crate::theme::Palette;
 use crate::toasts;
-use crate::widgets::action_button;
 use commands::{COMMANDS, Group};
 use form::Form;
 use kinds::Kind;
@@ -251,33 +248,24 @@ pub fn register(cx: &mut App) {
     });
 }
 
-/// The tool bar menus (one per family of commands) and the command palette button.
-pub fn menus(palette: &Palette) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(2.))
-        .children(Group::MENUS.map(|group| {
-            Button::new(group.title())
-                .label(group.title())
-                .ghost()
-                .small()
-                .dropdown_menu(move |menu, _, _| {
-                    COMMANDS
-                        .iter()
-                        .filter(|command| command.group == group)
-                        .fold(menu, |menu, command| {
-                            menu.menu(command.label, (command.action)())
-                        })
+/// One submenu per command family, listing its commands (the header's Menu button).
+pub fn menu_groups(menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    Group::ALL.iter().fold(menu, |menu, &group| {
+        menu.submenu(group.title(), window, cx, move |menu, _, _| {
+            COMMANDS
+                .iter()
+                .filter(|command| command.group == group)
+                .fold(menu, |menu, command| {
+                    menu.menu(command.label, (command.action)())
                 })
-        }))
-        .child(action_button(
-            "command-palette",
-            "Commands",
-            CommandPalette,
-            palette,
-        ))
-        .into_any_element()
+        })
+    })
+}
+
+/// A password was set for the document `tab`: it is encrypted when saved.
+pub fn has_password(tab: EntityId, cx: &App) -> bool {
+    cx.try_global::<Dialogs>()
+        .is_some_and(|dialogs| dialogs.passwords.contains_key(&tab))
 }
 
 /// The bytes to write for the document `tab`: encrypted when a password was set for it.

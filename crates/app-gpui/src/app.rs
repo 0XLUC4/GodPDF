@@ -1,19 +1,19 @@
-//! Root view: tool bar, document tabs, viewer, welcome screen, toasts; app-wide actions.
+//! Root view: the window chrome (`shell/`), dialogs, toasts; app-wide actions.
 
 use std::path::PathBuf;
 
 use godpdf_core::Session;
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, ExternalPaths, FocusHandle, KeyBinding, PromptLevel, SharedString,
-    Window, actions, div, px,
+    App, Context, Entity, ExternalPaths, FocusHandle, KeyBinding, PromptLevel, Window, actions,
+    div, px,
 };
 
 use crate::doc::{DocTab, guarded};
 use crate::geometry::ZOOM_STEP;
+use crate::shell::{self, FitPage, Shell};
 use crate::theme::{self, Palette};
-use crate::widgets::{action_button, primary_button, separator};
-use crate::{dialogs, files, panels, toasts, tools};
+use crate::{dialogs, files, fonts, panels, toasts, tools};
 
 actions!(
     godpdf,
@@ -63,6 +63,8 @@ pub fn register(cx: &mut App) {
 pub struct GodPdfApp {
     pub tabs: Vec<Entity<DocTab>>,
     pub active: usize,
+    /// What the window chrome shows (mode, tools panel, home tab, banners).
+    pub shell: Shell,
     focus: FocusHandle,
     /// Window title last set, to call the platform only on change.
     title: String,
@@ -79,6 +81,7 @@ impl GodPdfApp {
         let mut app = Self {
             tabs: Vec::new(),
             active: 0,
+            shell: Shell::default(),
             focus,
             title: String::new(),
         };
@@ -144,6 +147,7 @@ impl GodPdfApp {
         cx.observe(&tab, |_, _, cx| cx.notify()).detach();
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
+        self.shell.home = false;
         cx.notify();
     }
 
@@ -324,171 +328,6 @@ impl GodPdfApp {
             None => {}
         }
     }
-
-    fn render_toolbar(&self, palette: &Palette, cx: &App) -> impl IntoElement {
-        let tab = self.active_tab().map(|tab| tab.read(cx));
-        let doc_buttons = tab.map(|tab| {
-            let page = if tab.page_count() == 0 {
-                "No pages".to_owned()
-            } else {
-                format!("Page {} / {}", tab.view.current_page + 1, tab.page_count())
-            };
-            div()
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                .child(action_button("save", "Save", Save, palette))
-                .child(action_button("save-as", "Save as", SaveAs, palette))
-                .child(separator(palette))
-                .child(action_button("undo", "Undo", Undo, palette))
-                .child(action_button("redo", "Redo", Redo, palette))
-                .child(separator(palette))
-                .child(action_button("zoom-out", "−", ZoomOut, palette))
-                .child(
-                    div()
-                        .w(px(52.))
-                        .text_center()
-                        .text_sm()
-                        .child(format!("{:.0}%", tab.view.zoom * 100.0)),
-                )
-                .child(action_button("zoom-in", "+", ZoomIn, palette))
-                .child(action_button("fit-width", "Fit width", FitWidth, palette))
-                .child(separator(palette))
-                .child(
-                    div()
-                        .px(px(8.))
-                        .text_sm()
-                        .text_color(palette.text_dim)
-                        .child(page),
-                )
-        });
-        let dark = cx
-            .try_global::<theme::Theme>()
-            .is_some_and(|theme| theme.dark);
-        div()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .h(px(44.))
-            .px(px(10.))
-            .bg(palette.panel)
-            .border_b_1()
-            .border_color(palette.border)
-            .child(
-                div()
-                    .px(px(8.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(crate::APP_NAME),
-            )
-            .child(action_button("open", "Open", Open, palette))
-            .child(dialogs::menus(palette))
-            .children(doc_buttons)
-            .child(div().flex_1())
-            .child(action_button(
-                "theme",
-                if dark { "Light" } else { "Dark" },
-                ToggleTheme,
-                palette,
-            ))
-    }
-
-    fn render_tabs(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *palette;
-        div()
-            .id("tabs")
-            .flex()
-            .h(px(34.))
-            .px(px(8.))
-            .gap(px(4.))
-            .items_end()
-            .bg(palette.surface)
-            .border_b_1()
-            .border_color(palette.border)
-            .overflow_x_scroll()
-            .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                let tab = tab.read(cx);
-                let active = index == self.active;
-                let title: SharedString = if tab.is_dirty() {
-                    format!("● {}", tab.title()).into()
-                } else {
-                    tab.title().to_owned().into()
-                };
-                div()
-                    .id(("tab", index))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(28.))
-                    .pl(px(12.))
-                    .pr(px(4.))
-                    .max_w(px(220.))
-                    .rounded_t(px(7.))
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |chip| chip.bg(palette.bg).text_color(palette.text))
-                    .when(!active, |chip| {
-                        chip.text_color(palette.text_dim)
-                            .hover(move |style| style.bg(palette.hover))
-                    })
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.active = index;
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .id(("close-tab", index))
-                            .px(px(6.))
-                            .rounded(px(5.))
-                            .hover(move |style| style.bg(palette.hover))
-                            .child("×")
-                            .on_click(cx.listener(move |app, _, window, cx| {
-                                cx.stop_propagation();
-                                app.request_close(index, window, cx);
-                            })),
-                    )
-            }))
-    }
-
-    fn render_welcome(&self, palette: &Palette) -> impl IntoElement {
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(14.))
-            .bg(palette.bg)
-            .child(
-                div()
-                    .text_size(px(40.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(crate::APP_NAME),
-            )
-            .child(
-                div()
-                    .text_size(px(17.))
-                    .text_color(palette.text_dim)
-                    .child("Read, comment and edit PDFs."),
-            )
-            .child(
-                primary_button("welcome-open", "Open PDF", palette).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(Open), cx);
-                }),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(palette.text_dim)
-                    .child("or drop PDF files here"),
-            )
-    }
 }
 
 impl Render for GodPdfApp {
@@ -504,14 +343,6 @@ impl Render for GodPdfApp {
         }
 
         let active = self.active_tab().cloned();
-        let body = match &active {
-            Some(tab) => div()
-                .flex_1()
-                .min_w_0()
-                .child(tab.clone())
-                .into_any_element(),
-            None => self.render_welcome(&palette).into_any_element(),
-        };
         let hover = palette.hover;
         div()
             .relative()
@@ -519,6 +350,8 @@ impl Render for GodPdfApp {
             .flex()
             .flex_col()
             .bg(palette.bg)
+            .font_family(fonts::UI)
+            .font_weight(fonts::UI_WEIGHT)
             .text_color(palette.text)
             .track_focus(&self.focus)
             .key_context(CONTEXT)
@@ -540,6 +373,10 @@ impl Render for GodPdfApp {
             .on_action(cx.listener(|app, _: &FitWidth, _, cx| {
                 app.with_tab(cx, |tab, _| tab.fit_width());
             }))
+            .on_action(cx.listener(|app, _: &FitPage, _, cx| {
+                app.with_tab(cx, |tab, _| tab.fit_page());
+            }))
+            .on_action(cx.listener(Self::toggle_tools_panel))
             .on_action(|_: &ToggleTheme, _, cx| theme::toggle(cx))
             .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {
@@ -547,20 +384,9 @@ impl Render for GodPdfApp {
                 }
             }))
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(hover))
-            .child(self.render_toolbar(&palette, cx))
+            .text_size(px(fonts::BODY))
             .children(tools::toolbar(window, cx))
-            .when(!self.tabs.is_empty(), |root| {
-                root.child(self.render_tabs(&palette, cx))
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .children(panels::left(active.as_ref(), window, cx))
-                    .child(body)
-                    .children(panels::right(active.as_ref(), window, cx)),
-            )
+            .child(shell::render(self, active.as_ref(), window, cx))
             .children(dialogs::overlay(
                 cx.weak_entity(),
                 active.as_ref(),

@@ -3,7 +3,6 @@
 //! formats), or the property card of the selected picture.
 
 use godpdf_core::{Annotation, CharStyle, Color, Font, StampLabel};
-use gpui::assets::IconName;
 use gpui::component::Sizable;
 use gpui::component::checkbox::Checkbox;
 use gpui::component::input::{Input, InputEvent, InputState};
@@ -22,7 +21,7 @@ use super::{
 };
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::{toasts, widgets};
+use crate::{icons, toasts, widgets};
 
 /// Distance of the bar from the viewer's top-left corner.
 const INSET: f32 = 16.0;
@@ -336,7 +335,7 @@ pub fn render(
         tools = tools.child(with_tooltip(
             icon_button(
                 SharedString::from(format!("tool-{:?}", candidate)),
-                candidate.icon(),
+                widgets::glyph(candidate.icon()),
                 active,
                 true,
                 &palette,
@@ -345,11 +344,23 @@ pub fn render(
             candidate.tooltip(),
         ));
     }
-    let mut undo = icon_button("quick-undo", IconName::Undo2, false, can_undo, &palette);
+    let mut undo = icon_button(
+        "quick-undo",
+        widgets::glyph(icons::ARROW_U_UP_LEFT),
+        false,
+        can_undo,
+        &palette,
+    );
     if can_undo {
         undo = undo.on_click(dispatch(Box::new(crate::app::Undo)));
     }
-    let mut redo = icon_button("quick-redo", IconName::Redo2, false, can_redo, &palette);
+    let mut redo = icon_button(
+        "quick-redo",
+        widgets::glyph(icons::ARROW_U_UP_RIGHT),
+        false,
+        can_redo,
+        &palette,
+    );
     if can_redo {
         redo = redo.on_click(dispatch(Box::new(crate::app::Redo)));
     }
@@ -453,14 +464,14 @@ fn style_card(
                 controls = controls.child(divider(palette).w(px(BUTTON - 8.)));
                 for format in super::Format::ALL {
                     let (icon, tooltip) = match format {
-                        Format::Bold => (IconName::Bold, "Bold (Ctrl+B)"),
-                        Format::Italic => (IconName::Italic, "Italic (Ctrl+I)"),
-                        Format::Underline => (IconName::Underline, "Underline (Ctrl+U)"),
+                        Format::Bold => (icons::TEXT_B, "Bold (Ctrl+B)"),
+                        Format::Italic => (icons::TEXT_ITALIC, "Italic (Ctrl+I)"),
+                        Format::Underline => (icons::TEXT_UNDERLINE, "Underline (Ctrl+U)"),
                     };
                     controls = controls.child(with_tooltip(
                         icon_button(
                             SharedString::from(format!("format-{format:?}")),
-                            icon,
+                            widgets::glyph(icon),
                             format.is_on(active),
                             true,
                             palette,
@@ -495,7 +506,7 @@ fn style_card(
                 column = column.child(with_tooltip(
                     icon_button(
                         SharedString::from(format!("shape-{shape:?}")),
-                        shape.icon(),
+                        widgets::glyph(shape.icon()),
                         shape == tool,
                         true,
                         palette,
@@ -694,11 +705,11 @@ where
     F: Fn(Change) -> L,
     L: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let small = |id: &str, icon: IconName, tooltip: String, change: Change| {
+    let small = |id: &str, icon: &'static str, tooltip: String, change: Change| {
         with_tooltip(
             icon_button(
                 SharedString::from(id.to_owned()),
-                icon,
+                widgets::glyph(icon),
                 false,
                 true,
                 palette,
@@ -712,14 +723,14 @@ where
     column
         .child(small(
             &format!("larger-{what}"),
-            IconName::Plus,
+            icons::PLUS,
             format!("Larger {what}"),
             Change::Step(1.0),
         ))
         .child(div().text_xs().text_color(palette.text).child(value))
         .child(small(
             &format!("smaller-{what}"),
-            IconName::Minus,
+            icons::MINUS,
             format!("Smaller {what}"),
             Change::Step(-1.0),
         ))
@@ -737,7 +748,7 @@ fn hint_card(text: &'static str, palette: &Palette) -> AnyElement {
                 .flex_none()
                 .text_size(px(14.))
                 .text_color(palette.text_dim)
-                .child(IconName::Info),
+                .child(widgets::glyph(icons::INFO)),
         )
         .child(div().text_sm().text_color(palette.text_dim).child(text))
         .into_any_element()
@@ -898,7 +909,7 @@ fn picture_card(
         .text_sm()
         .cursor_pointer()
         .hover(move |style| style.bg(hover))
-        .child(div().text_size(px(14.)).child(IconName::Maximize2))
+        .child(widgets::icon(icons::ARROWS_OUT_SIMPLE, 14.0, palette.text))
         .child("Original size")
         .on_click(cx.listener(move |tab, _: &ClickEvent, _, cx| {
             set_picture_rect(tab, page, &id, original, cx);

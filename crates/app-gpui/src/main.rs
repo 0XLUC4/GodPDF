@@ -22,9 +22,12 @@ mod dialogs;
 #[allow(dead_code)]
 mod doc;
 mod files;
+mod fonts;
 #[allow(dead_code)]
 mod geometry;
+mod icons;
 mod panels;
+mod shell;
 #[allow(dead_code)]
 mod theme;
 mod toasts;
@@ -43,6 +46,7 @@ fn main() {
         .with_assets(gpui::assets::Assets)
         .run(move |cx: &mut App| {
             gpui::init(cx);
+            fonts::load(cx);
             theme::set_dark(false, cx);
             app::register(cx);
             let bounds = Bounds::centered(None, size(px(1280.), px(860.)), cx);

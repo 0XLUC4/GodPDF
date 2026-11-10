@@ -111,6 +111,14 @@ impl Layout {
 }
 
 /// Zoom that fits the widest page in the viewer width.
+/// Zoom at which a `page` (points) fits whole in a `view` (logical pixels), margins included.
+pub fn fit_page_zoom(page: (f32, f32), view: (f32, f32)) -> f32 {
+    let fit = |view: f32, page: f32| (view - 2.0 * PAD) / page.max(1.0);
+    fit(view.0, page.0)
+        .min(fit(view.1, page.1))
+        .clamp(MIN_ZOOM, MAX_ZOOM)
+}
+
 pub fn fit_width_zoom(sizes: &[(f32, f32)], view_width: f32) -> f32 {
     let widest = sizes.iter().map(|size| size.0).fold(1.0, f32::max);
     ((view_width - 2.0 * PAD) / widest).clamp(MIN_ZOOM, MAX_ZOOM)
@@ -197,6 +205,13 @@ mod tests {
     use super::*;
 
     const LETTER: (f32, f32) = (612.0, 792.0);
+
+    #[test]
+    fn fit_page_fits_the_tighter_side() {
+        // Tall view: the width decides; wide view: the height.
+        assert_eq!(fit_page_zoom((100.0, 100.0), (256.0, 1000.0)), 2.0);
+        assert_eq!(fit_page_zoom((100.0, 100.0), (1000.0, 156.0)), 1.0);
+    }
 
     fn geom(rotation: i32) -> PageGeometry {
         PageGeometry {

@@ -1,4 +1,5 @@
-//! Monochrome palette of the egui app (`crates/app/src/theme.rs`): black on white, white on black.
+//! Monochrome palette of the egui app (`crates/app/src/theme.rs`): black on white, white on
+//! black, and the egui visuals it sets (`configure`) as constants. See DESIGN.md.
 
 use gpui::{App, Global, Hsla, Rgba, rgb};
 
@@ -23,17 +24,57 @@ pub struct Palette {
     pub accent: Hsla,
     /// Text drawn on top of `accent`.
     pub on_accent: Hsla,
+    /// Accent usable as text/link color on this background.
+    pub accent_text: Hsla,
     /// Fill of selected / pressed controls.
     pub selected: Hsla,
     /// Viewer canvas behind pages.
     pub canvas: Hsla,
+    pub success: Hsla,
     pub error: Hsla,
+    /// Shadow of windows (dialogs) and popups: black at this alpha (egui 110 / 28 of 255).
+    pub shadow_alpha: f32,
 }
 
 fn grey(level: u32) -> Hsla {
     let color: Rgba = rgb(level << 16 | level << 8 | level);
     color.into()
 }
+
+/// `0xRRGGBB` as a color.
+pub fn hex(color: u32) -> Hsla {
+    rgb(color).into()
+}
+
+// ---- egui visuals (`theme::configure`), same for both palettes.
+
+/// `widgets.*.corner_radius`: buttons, fields, menus entries.
+pub const RADIUS: f32 = 7.0;
+/// `window_corner_radius`: dialogs.
+pub const WINDOW_RADIUS: f32 = 12.0;
+/// `menu_corner_radius`: popups and menus.
+pub const MENU_RADIUS: f32 = 9.0;
+/// `spacing.item_spacing` (x, y).
+pub const ITEM_SPACING: (f32, f32) = (8.0, 6.0);
+/// `spacing.button_padding` (x, y).
+pub const BUTTON_PADDING: (f32, f32) = (10.0, 5.0);
+/// `spacing.menu_margin` / `window_margin`.
+pub const MENU_MARGIN: f32 = 8.0;
+pub const WINDOW_MARGIN: f32 = 16.0;
+/// `spacing.interact_size.y`: height of a standard button or field.
+pub const INTERACT_HEIGHT: f32 = 26.0;
+
+// ---- tool colours (`crates/app/src/commands.rs`), one per family.
+
+pub const GREEN: u32 = 0x3FB950;
+pub const PURPLE: u32 = 0xA371F7;
+pub const AMBER: u32 = 0xE3A008;
+pub const BLUE: u32 = 0x4C8DF6;
+pub const TEAL: u32 = 0x1FB5A5;
+pub const PINK: u32 = 0xE85AAD;
+pub const RED: u32 = 0xF05252;
+/// Update dot on the tab row (`dialogs::DOWNLOAD_BLUE`).
+pub const DOWNLOAD_BLUE: u32 = 0x2563EB;
 
 impl Palette {
     pub fn dark() -> Self {
@@ -47,9 +88,12 @@ impl Palette {
             text_dim: grey(0x9A),
             accent: grey(0xF2),
             on_accent: grey(0x11),
+            accent_text: grey(0xF2),
             selected: grey(0x33),
             canvas: grey(0x0A),
+            success: grey(0xF2),
             error: grey(0xF2),
+            shadow_alpha: 110.0 / 255.0,
         }
     }
 
@@ -65,18 +109,30 @@ impl Palette {
             text_dim: grey(0x66),
             accent: grey(0x11),
             on_accent: grey(0xFF),
+            accent_text: grey(0x11),
             selected: grey(0xE6),
             canvas: grey(0xF2),
+            success: grey(0x11),
             error: grey(0x11),
+            shadow_alpha: 28.0 / 255.0,
         }
     }
 
+    pub fn is_dark(cx: &App) -> bool {
+        cx.try_global::<Theme>().is_some_and(|theme| theme.dark)
+    }
+
     pub fn of(cx: &App) -> Self {
-        if cx.try_global::<Theme>().is_some_and(|theme| theme.dark) {
+        if Self::is_dark(cx) {
             Self::dark()
         } else {
             Self::light()
         }
+    }
+
+    /// egui `gamma_multiply(0.5)` of `text_dim`: disabled text.
+    pub fn disabled(&self) -> Hsla {
+        self.text_dim.opacity(0.5)
     }
 }
 
@@ -89,10 +145,10 @@ pub fn set_dark(dark: bool, cx: &mut App) {
         gpui::component::ThemeMode::Light
     };
     gpui::component::Theme::change(mode, None, cx);
+    crate::fonts::apply_to_components(cx);
     cx.refresh_windows();
 }
 
 pub fn toggle(cx: &mut App) {
-    let dark = cx.try_global::<Theme>().is_some_and(|theme| theme.dark);
-    set_dark(!dark, cx);
+    set_dark(!Palette::is_dark(cx), cx);
 }

@@ -12,7 +12,6 @@ mod geom;
 mod quickbar;
 mod stamp;
 
-use gpui::assets::IconName;
 use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
@@ -21,6 +20,7 @@ use godpdf_core::{CharStyle, Color, Font, StampLabel};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
+use crate::icons;
 
 pub use canvas::Canvas;
 
@@ -107,24 +107,25 @@ impl Tool {
         Self::SHAPES.contains(&self)
     }
 
-    fn icon(self) -> IconName {
+    /// Phosphor glyph (egui `quickbar::Tool::icon` for the tools both apps have).
+    fn icon(self) -> &'static str {
         match self {
-            Self::Select => IconName::MousePointer,
-            Self::Hand => IconName::Hand,
-            Self::Text => IconName::Type,
-            Self::Note => IconName::StickyNote,
-            Self::Highlight => IconName::Highlighter,
-            Self::Ink => IconName::Pencil,
-            Self::Rectangle => IconName::Square,
-            Self::Ellipse => IconName::Circle,
-            Self::Line => IconName::Minus,
-            Self::Arrow => IconName::MoveUpRight,
-            Self::Underline => IconName::Underline,
-            Self::StrikeOut => IconName::Strikethrough,
-            Self::Stamp => IconName::Stamp,
-            Self::Redact => IconName::EyeOff,
-            Self::Picture => IconName::Image,
-            Self::Eraser => IconName::Eraser,
+            Self::Select => icons::CURSOR,
+            Self::Hand => icons::HAND,
+            Self::Text => icons::TEXT_T,
+            Self::Note => icons::NOTE,
+            Self::Highlight => icons::HIGHLIGHTER,
+            Self::Ink => icons::PENCIL_SIMPLE,
+            Self::Rectangle => icons::SQUARE,
+            Self::Ellipse => icons::CIRCLE,
+            Self::Line => icons::LINE_SEGMENT,
+            Self::Arrow => icons::ARROW_UP_RIGHT,
+            Self::Underline => icons::TEXT_UNDERLINE,
+            Self::StrikeOut => icons::TEXT_STRIKETHROUGH,
+            Self::Stamp => icons::STAMP,
+            Self::Redact => icons::EYE_SLASH,
+            Self::Picture => icons::IMAGE,
+            Self::Eraser => icons::ERASER,
         }
     }
 

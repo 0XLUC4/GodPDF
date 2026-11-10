@@ -33,11 +33,14 @@ impl Group {
         }
     }
 
-    /// Groups with a menu in the tool bar.
-    pub const MENUS: [Group; 5] = [
+    /// Every family, in menu order.
+    pub const ALL: [Group; 8] = [
         Group::File,
+        Group::Edit,
+        Group::View,
         Group::Organize,
         Group::Combine,
+        Group::Comment,
         Group::Protect,
         Group::Document,
     ];

@@ -274,6 +274,17 @@ impl DocTab {
         }
     }
 
+    /// Zoom so the current page fits whole in the view, and show it.
+    pub fn fit_page(&mut self) {
+        let size = self.view_size();
+        let page = self.view.current_page;
+        if let Some(&(width, height)) = self.page_sizes.get(page) {
+            let zoom = geometry::fit_page_zoom((width, height), size);
+            self.set_zoom(zoom, None);
+            self.scroll_to_page(page);
+        }
+    }
+
     pub fn page_error(&self, page: usize) -> Option<&str> {
         self.page_errors.get(&page).map(String::as_str)
     }

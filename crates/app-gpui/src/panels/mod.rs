@@ -19,6 +19,7 @@ use gpui::{
 
 use crate::doc::DocTab;
 use crate::theme::Palette;
+use crate::{icons, widgets};
 
 actions!(
     godpdf,
@@ -32,38 +33,56 @@ actions!(
     ]
 );
 
-const RAIL_WIDTH: f32 = 44.;
-const PANEL_WIDTH: f32 = 240.;
+/// Right panel (egui `right_panel`): default width, inner margin.
+// shortcut: fixed width, egui lets it be dragged 240..=520; add a drag handle if wanted.
+const PANEL_WIDTH: f32 = 320.;
+const PANEL_MARGIN: (f32, f32) = (14., 6.);
 
+/// The views of the right rail (egui `sidebar::Tab`), in rail order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Panel {
+    Comments,
     Pages,
     Bookmarks,
     Search,
+    Form,
+    Sign,
 }
 
 impl Panel {
-    const ALL: [Panel; 3] = [Panel::Pages, Panel::Bookmarks, Panel::Search];
+    pub const ALL: [Panel; 6] = [
+        Panel::Comments,
+        Panel::Pages,
+        Panel::Bookmarks,
+        Panel::Search,
+        Panel::Form,
+        Panel::Sign,
+    ];
 
-    fn icon(self) -> IconName {
+    pub fn icon(self) -> &'static str {
         match self {
-            Self::Pages => IconName::Files,
-            Self::Bookmarks => IconName::Bookmark,
-            Self::Search => IconName::Search,
+            Self::Comments => icons::CHAT_TEXT,
+            Self::Pages => icons::FILES,
+            Self::Bookmarks => icons::BOOKMARK_SIMPLE,
+            Self::Search => icons::MAGNIFYING_GLASS,
+            Self::Form => icons::LIST_CHECKS,
+            Self::Sign => icons::SIGNATURE,
         }
     }
 
-    fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
+            Self::Comments => "Comments",
             Self::Pages => "Pages",
             Self::Bookmarks => "Bookmarks",
             Self::Search => "Search",
+            Self::Form => "Form",
+            Self::Sign => "Signature",
         }
     }
 }
 
 /// App-wide sidebar state.
-#[derive(Default)]
 pub struct PanelState {
     open: Option<Panel>,
     /// The document the sidebar shows, set while it renders: key actions go to it.
@@ -72,6 +91,17 @@ pub struct PanelState {
     search_input: Option<(Entity<InputState>, Subscription)>,
     /// Focus the search field on the next render (Ctrl+F has no window at hand).
     focus_search: bool,
+}
+
+impl Default for PanelState {
+    fn default() -> Self {
+        Self {
+            open: Some(Panel::Pages),
+            active: None,
+            search_input: None,
+            focus_search: false,
+        }
+    }
 }
 
 impl Global for PanelState {}
@@ -88,12 +118,12 @@ fn state(cx: &mut App) -> &mut PanelState {
     cx.default_global::<PanelState>()
 }
 
-fn open_panel(cx: &App) -> Option<Panel> {
+pub fn open_panel(cx: &App) -> Option<Panel> {
     cx.try_global::<PanelState>().and_then(|state| state.open)
 }
 
 /// Show `panel`, or hide the sidebar when it is already shown.
-fn toggle(panel: Panel, cx: &mut App) {
+pub fn toggle(panel: Panel, cx: &mut App) {
     let state = state(cx);
     state.open = if state.open == Some(panel) {
         None
@@ -103,7 +133,7 @@ fn toggle(panel: Panel, cx: &mut App) {
     cx.refresh_windows();
 }
 
-fn show(panel: Panel, cx: &mut App) {
+pub fn show(panel: Panel, cx: &mut App) {
     state(cx).open = Some(panel);
     cx.refresh_windows();
 }
@@ -142,96 +172,72 @@ pub fn register(cx: &mut App) {
     });
 }
 
-/// Left of the viewer: the icon rail, and the open panel next to it. `None` without a document.
-pub fn left(tab: Option<&Entity<DocTab>>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+/// Rail button clicked (egui `rail`): toggle `panel`, focusing the search field on open.
+pub fn rail_click(panel: Panel, cx: &mut App) {
+    if panel == Panel::Search && open_panel(cx) != Some(Panel::Search) {
+        state(cx).focus_search = true;
+    }
+    toggle(panel, cx);
+}
+
+/// Hide the right panel.
+pub fn close(cx: &mut App) {
+    state(cx).open = None;
+    cx.refresh_windows();
+}
+
+/// The right panel (egui `right_panel`) left of the rail: title (17) + close, then the view.
+/// `None` without a document or when closed.
+pub fn right(
+    tab: Option<&Entity<DocTab>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
     let tab = tab?.clone();
     state(cx).active = Some(tab.downgrade());
+    let panel = open_panel(cx)?;
     let palette = Palette::of(cx);
-    let open = open_panel(cx);
-    let body = open.map(|panel| {
-        let content = match panel {
-            Panel::Pages => thumbs::render(&tab, window, cx),
-            Panel::Bookmarks => bookmarks::render(&tab, window, cx),
-            Panel::Search => search::render(&tab, window, cx),
-        };
+    let content = match panel {
+        Panel::Pages => thumbs::render(&tab, window, cx),
+        Panel::Bookmarks => bookmarks::render(&tab, window, cx),
+        Panel::Search => search::render(&tab, window, cx),
+        // TODO(right panel): port `comments.rs`, `formfill.rs`, `signature::panel`.
+        Panel::Comments | Panel::Form | Panel::Sign => {
+            note("Not available yet in this version.", &palette).into_any_element()
+        }
+    };
+    Some(
         div()
             .w(px(PANEL_WIDTH))
             .flex_none()
             .h_full()
             .flex()
             .flex_col()
-            .bg(palette.panel)
-            .border_r_1()
+            .px(px(PANEL_MARGIN.0))
+            .py(px(PANEL_MARGIN.1))
+            .bg(palette.bg)
+            .border_l_1()
             .border_color(palette.border)
             .child(
                 div()
-                    .px(px(12.))
-                    .pt(px(10.))
-                    .pb(px(6.))
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(panel.title()),
+                    .mt(px(10.))
+                    .mb(px(8.))
+                    .flex()
+                    .items_center()
+                    .child(div().flex_1().text_size(px(17.)).child(panel.title()))
+                    .child(
+                        widgets::icon_button(
+                            "close-right-panel",
+                            icons::X,
+                            "Close panel",
+                            &palette,
+                        )
+                        .on_click(|_, _, cx| close(cx)),
+                    ),
             )
             .child(div().flex_1().min_h_0().flex().flex_col().child(content))
-    });
-    let rail = div()
-        .w(px(RAIL_WIDTH))
-        .flex_none()
-        .h_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(4.))
-        .pt(px(8.))
-        .bg(palette.panel)
-        .border_r_1()
-        .border_color(palette.border)
-        .children(Panel::ALL.map(|panel| rail_button(panel, open == Some(panel), &palette)));
-    Some(
-        div()
-            .flex()
-            .flex_none()
-            .h_full()
-            .child(rail)
-            .children(body)
             .into_any_element(),
     )
-}
-
-fn rail_button(panel: Panel, active: bool, palette: &Palette) -> impl IntoElement {
-    let hover = palette.hover;
-    div()
-        .id(panel.title())
-        .size(px(32.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(7.))
-        .text_size(px(16.))
-        .cursor_pointer()
-        .text_color(if active {
-            palette.text
-        } else {
-            palette.text_dim
-        })
-        .when(active, |button| button.bg(palette.selected))
-        .hover(move |style| style.bg(hover))
-        .child(panel.icon())
-        .on_click(move |_, _, cx| {
-            if panel == Panel::Search && open_panel(cx) != Some(Panel::Search) {
-                state(cx).focus_search = true;
-            }
-            toggle(panel, cx);
-        })
-}
-
-/// Right of the viewer: nothing yet (comments and properties are another wave).
-pub fn right(
-    _tab: Option<&Entity<DocTab>>,
-    _window: &mut Window,
-    _cx: &mut App,
-) -> Option<AnyElement> {
-    None
 }
 
 /// Search hits marked over one page (called by the viewer for every visible page).

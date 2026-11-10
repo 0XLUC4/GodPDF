@@ -3,7 +3,7 @@ mod common;
 use common::{edit, make_pdf, make_pdf_with_outline};
 use godpdf_core::{
     Error, Metadata, PageGeometry, SearchHit, extract_all_text, extract_text, outline,
-    page_geometry, read_metadata, rotate_pages, search, write_metadata,
+    page_geometries, page_geometry, read_metadata, rotate_pages, search, write_metadata,
 };
 
 #[test]
@@ -97,6 +97,17 @@ fn page_geometry_reports_rotation() {
         page_geometry(&pdf, 2),
         Err(Error::PageOutOfRange { page: 2, count: 2 })
     ));
+}
+
+#[test]
+fn page_geometries_match_each_page() {
+    let rotated = rotate_pages(&make_pdf(3, None), &[1], 90).unwrap();
+    let all = page_geometries(&rotated).unwrap();
+    assert_eq!(all.len(), 3);
+    for (page, geom) in all.iter().enumerate() {
+        assert_eq!(*geom, page_geometry(&rotated, page).unwrap());
+    }
+    assert_eq!(all[1].rotation, 90);
 }
 
 #[test]

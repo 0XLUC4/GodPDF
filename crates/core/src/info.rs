@@ -44,17 +44,29 @@ pub fn page_geometry(pdf: &[u8], page: usize) -> Result<PageGeometry> {
     let doc = load(pdf)?;
     let ids = page_ids(&doc);
     check_page(page, ids.len())?;
-    let id = ids[page];
-    let rotation = inherited(&doc, id, b"Rotate")
-        .and_then(|rotate| deref(&doc, &rotate)?.as_i64().ok())
+    Ok(geometry_of(&doc, ids[page]))
+}
+
+/// [`page_geometry`] of every page, from a single parse.
+pub fn page_geometries(pdf: &[u8]) -> Result<Vec<PageGeometry>> {
+    let doc = load(pdf)?;
+    Ok(page_ids(&doc)
+        .into_iter()
+        .map(|id| geometry_of(&doc, id))
+        .collect())
+}
+
+fn geometry_of(doc: &Document, id: ObjectId) -> PageGeometry {
+    let rotation = inherited(doc, id, b"Rotate")
+        .and_then(|rotate| deref(doc, &rotate)?.as_i64().ok())
         .map_or(0, |deg| (deg.rem_euclid(360) / 90 * 90) as i32);
-    let page_box = |key: &[u8]| inherited(&doc, id, key).and_then(|b| box_origin(&doc, &b));
+    let page_box = |key: &[u8]| inherited(doc, id, key).and_then(|b| box_origin(doc, &b));
     // Viewers display CropBox ∩ MediaBox, so the visible origin is the max of both corners.
     let origin = match (page_box(b"MediaBox"), page_box(b"CropBox")) {
         (Some(media), Some(crop)) => (media.0.max(crop.0), media.1.max(crop.1)),
         (media, crop) => crop.or(media).unwrap_or((0.0, 0.0)),
     };
-    Ok(PageGeometry { rotation, origin })
+    PageGeometry { rotation, origin }
 }
 
 /// Lower-left corner of a (possibly unnormalized) page box.

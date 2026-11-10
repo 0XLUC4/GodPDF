@@ -13,8 +13,9 @@ use gpui::prelude::*;
 use gpui::{
     Action, AnyElement, App, Context, CursorStyle, Div, FillOptions, FontWeight, Hsla, MouseButton,
     MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, PathStyle, Pixels, Point, RenderImage,
-    Window, black, canvas, div, img, point, px, rgb, white,
+    StrokeOptions, Window, black, canvas, div, img, point, px, rgb, white,
 };
+use lyon::tessellation::{LineCap, LineJoin};
 
 use super::geom::{self, DRect};
 use super::{Tool, current_tool, editor, fields, hsla, richtext, sign, stamp, tool_state};
@@ -26,7 +27,10 @@ use crate::{icons, text, toasts};
 const HIT_SLOP: f32 = 3.0;
 /// Screen pixels around a corner handle that grab it.
 const HANDLE_HIT: f32 = 8.0;
-const HANDLE_SIZE: f32 = 7.0;
+/// Even, so a handle centred on a whole pixel has whole-pixel edges.
+const HANDLE_SIZE: f32 = 8.0;
+/// Screen pixels the selection outline (and its corner handles) sits outside the annotation.
+const OUTLINE_GROW: f32 = 2.0;
 /// Opacity of the highlight preview.
 const PREVIEW_OPACITY: f32 = 0.4;
 /// Drags with a side shorter than this (points) are clicks.
@@ -129,6 +133,8 @@ pub struct Canvas {
     picture: Option<PictureImage>,
     /// Where the eraser's brush circle is drawn: page and displayed point of the pointer.
     pointer: Option<(usize, (f32, f32))>,
+    /// The line, arrow or ink under the pointer (Select), outlined as hovered.
+    hovered: Option<(usize, String)>,
 }
 
 /// A picture annotation decoded once to be drawn at the pointer, image `None` while decoding.
@@ -145,9 +151,25 @@ pub(super) struct Item {
     pub id: String,
     pub rect: DRect,
     pub annotation: Option<Annotation>,
+    /// A line, arrow or ink: its polylines (displayed points) and half its stroke width. Those
+    /// are hit along the stroke, not anywhere in their box.
+    stroke: Option<Stroke>,
 }
 
+/// Polylines (displayed points) and half the stroke width.
+type Stroke = (Vec<Vec<(f32, f32)>>, f32);
+
 impl Item {
+    /// `point` is on it, or within `slop` points.
+    fn hits(&self, point: (f32, f32), slop: f32) -> bool {
+        match &self.stroke {
+            Some((lines, half)) => lines
+                .iter()
+                .any(|line| geom::polyline_distance(line, point) <= half + slop),
+            None => self.rect.contains(point, slop),
+        }
+    }
+
     /// Only our kinds can be rewritten; links, form fields... can only be erased.
     fn movable(&self) -> bool {
         self.annotation.is_some()
@@ -207,15 +229,35 @@ pub(super) fn page_frame(tab: &mut DocTab, page: usize) -> Option<(PageGeometry,
 pub(super) fn items(tab: &mut DocTab, page: usize, cx: &mut App) -> Option<Vec<Item>> {
     let (geom, displayed) = page_frame(tab, page)?;
     let list = annotations(tab, page, cx);
+    let shown = |point: (f32, f32)| crate::geometry::from_pdf(&geom, displayed, point);
+    let stroke = |annotation: &Option<Annotation>| match annotation {
+        Some(Annotation::Line {
+            start, end, width, ..
+        }) => Some((vec![vec![shown(*start), shown(*end)]], width / 2.0)),
+        Some(Annotation::Ink { strokes, width, .. }) => Some((
+            strokes
+                .iter()
+                .map(|line| line.iter().map(|&point| shown(point)).collect())
+                .collect(),
+            width / 2.0,
+        )),
+        _ => None,
+    };
     Some(
         list.iter()
             .map(|placed| Item {
                 id: placed.id.clone(),
                 rect: DRect::from_pdf(&geom, displayed, &placed.rect),
+                stroke: stroke(&placed.annotation),
                 annotation: placed.annotation.clone(),
             })
             .collect(),
     )
+}
+
+/// The topmost (last drawn) item `point` hits, allowing `slop` points around each.
+fn hit(items: &[Item], point: (f32, f32), slop: f32) -> Option<usize> {
+    items.iter().rposition(|item| item.hits(point, slop))
 }
 
 /// The selected annotation, as it is in the document.
@@ -327,7 +369,6 @@ fn on_down(
         }
         Tool::Stamp => place_stamp(tab, page, point, cx),
         Tool::Sign => sign::click(tab, page, point, cx),
-        Tool::Redact if unmark_at(tab, page, point) => {}
         Tool::Highlight | Tool::Underline | Tool::StrikeOut
             if text::select_from(tab, page, point, event.click_count) =>
         {
@@ -382,7 +423,8 @@ fn select_down(
                 && (item.rect.y0..=item.rect.y1).contains(&point.1);
             on_edge.then_some(2)
         } else {
-            item.rect.corners().iter().position(|corner| {
+            let handles = item.rect.inset(-OUTLINE_GROW / zoom);
+            handles.corners().iter().position(|corner| {
                 (corner.0 - point.0).abs() <= grab && (corner.1 - point.1).abs() <= grab
             })
         };
@@ -400,8 +442,7 @@ fn select_down(
             return;
         }
     }
-    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
-    let hit = geom::hit_test(&rects, point, HIT_SLOP / zoom).map(|index| &items[index]);
+    let hit = hit(&items, point, HIT_SLOP / zoom).map(|index| &items[index]);
     tab.canvas.selected = hit.map(|item| Selected {
         page,
         id: item.id.clone(),
@@ -437,16 +478,44 @@ fn select_down(
     }
 }
 
-/// Have the page without the annotation under the pointer ready before it is grabbed.
-fn lift_hovered(tab: &mut DocTab, page: usize, position: Point<Pixels>, cx: &mut Context<DocTab>) {
-    if current_tool(cx) != Tool::Select {
+/// Right click with Select: select the annotation under `position`, if any (no gesture).
+fn select_at(tab: &mut DocTab, page: usize, position: Point<Pixels>, cx: &mut Context<DocTab>) {
+    let busy = tab.canvas.gesture.is_some() || tab.canvas.editor.is_some();
+    if current_tool(cx) != Tool::Select || busy {
         return;
     }
     let (Some(point), Some(items)) = (page_point(tab, page, position), items(tab, page, cx)) else {
         return;
     };
-    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
-    if let Some(index) = geom::hit_test(&rects, point, HIT_SLOP / tab.view.zoom)
+    if let Some(index) = hit(&items, point, HIT_SLOP / tab.view.zoom) {
+        text::clear_selection(tab);
+        tab.canvas.selected = Some(Selected {
+            page,
+            id: items[index].id.clone(),
+        });
+        cx.notify();
+    }
+}
+
+/// Have the page without the annotation under the pointer ready before it is grabbed.
+fn lift_hovered(tab: &mut DocTab, page: usize, position: Point<Pixels>, cx: &mut Context<DocTab>) {
+    // The text being typed keeps its page lifted.
+    if current_tool(cx) != Tool::Select || tab.canvas.editor.is_some() {
+        return;
+    }
+    let (Some(point), Some(items)) = (page_point(tab, page, position), items(tab, page, cx)) else {
+        return;
+    };
+    let index = hit(&items, point, HIT_SLOP / tab.view.zoom);
+    // A stroke shows hovered only near it, not anywhere in its box: drawn from here.
+    let hovered = index
+        .filter(|&index| items[index].stroke.is_some())
+        .map(|index| (page, items[index].id.clone()));
+    if tab.canvas.hovered != hovered {
+        tab.canvas.hovered = hovered;
+        cx.notify();
+    }
+    if let Some(index) = index
         && items[index].movable()
     {
         prepare(tab, page, &items[index], cx);
@@ -612,7 +681,7 @@ fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Conte
             *rect = geom::resized_rect(*original, *corner, point, size, *text);
             // A picture keeps its proportions; Shift stretches it freely.
             if *picture && !event.modifiers.shift {
-                *rect = geom::keep_ratio(*original, *rect, *corner);
+                *rect = geom::keep_ratio(*original, *rect, *corner, size);
             }
         }
         Some(Gesture::Pan { last }) => {
@@ -755,6 +824,11 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
     };
     let (label, annotation) = match tool {
         Tool::Line | Tool::Arrow if short => return,
+        // A click on a mark takes it off; a drag from inside one draws another.
+        Tool::Redact if short => {
+            unmark_at(tab, page, first);
+            return;
+        }
         Tool::Highlight
         | Tool::Underline
         | Tool::StrikeOut
@@ -1093,8 +1167,7 @@ fn erase_at(
 
 /// The annotation the comment eraser's circle at `point` touches (the topmost).
 fn under_brush(items: &[Item], point: (f32, f32), zoom: f32) -> Option<usize> {
-    let rects: Vec<DRect> = items.iter().map(|item| item.rect).collect();
-    geom::hit_test(&rects, point, ELEMENT_BRUSH / 2.0 / zoom)
+    hit(items, point, ELEMENT_BRUSH / 2.0 / zoom)
 }
 
 /// Take out the page content under the brush path `points` (one undo step).
@@ -1133,7 +1206,9 @@ pub fn reorder_selected(tab: &mut DocTab, to: godpdf_core::ZOrder, cx: &mut Cont
         // A `#<index>` id names another annotation once moved.
         Ok(()) if selected.id.starts_with('#') => tab.canvas.selected = None,
         Ok(()) => {}
-        Err(err) => toasts::info(cx, err.trim_start_matches("invalid argument: ").to_owned()),
+        // "Already in front" and the like: nothing to say.
+        Err(err) if err.starts_with("invalid argument") => {}
+        Err(err) => toasts::error(cx, format!("Cannot reorder: {err}")),
     }
 }
 
@@ -1239,6 +1314,7 @@ pub fn page_overlay(
     let ghost_layer = ghost.map(|ghost| ghost_elements(tab, ghost, zoom, scale));
     let ghost_rect = ghost.map(|ghost| (ghost.id.clone(), ghost.dst));
     tab.canvas.ghost = settled;
+    let editing_base = editor::lifted_page(tab, page, zoom);
     let gesture = tab.canvas.gesture.as_ref();
     let mut layer = div()
         .id(("canvas-page", page))
@@ -1252,11 +1328,27 @@ pub fn page_overlay(
                 tab.canvas.pointer = None;
                 cx.notify();
             }
+            if !hovered
+                && tab
+                    .canvas
+                    .hovered
+                    .as_ref()
+                    .is_some_and(|(at, _)| *at == page)
+            {
+                tab.canvas.hovered = None;
+                cx.notify();
+            }
         }))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |tab, event, window, cx| on_down(tab, page, event, window, cx)),
         )
+        // Before the comment's own menu opens: a right click selects what it is on.
+        .capture_any_mouse_down(cx.listener(move |tab, event: &MouseDownEvent, _, cx| {
+            if event.button == MouseButton::Right {
+                select_at(tab, page, event.position, cx);
+            }
+        }))
         .on_mouse_move(cx.listener(move |tab, event, _, cx| on_move(tab, page, event, cx)))
         .on_mouse_up(
             MouseButton::Left,
@@ -1266,7 +1358,8 @@ pub fn page_overlay(
             MouseButton::Left,
             cx.listener(|tab, _, _, cx| finish(tab, cx)),
         )
-        .children(ghost_layer.into_iter().flatten());
+        .children(ghost_layer.into_iter().flatten())
+        .children(editing_base);
 
     let red: Hsla = rgb(REDACT_RED).into();
     for (_, mark) in redaction_marks {
@@ -1289,19 +1382,37 @@ pub fn page_overlay(
             .as_ref()
             .filter(|sel| sel.page == page)
             .map(|sel| sel.id.clone());
-        for item in &items {
-            if Some(&item.id) == selected_id.as_ref() {
+        let hovered_stroke = tab
+            .canvas
+            .hovered
+            .as_ref()
+            .filter(|(at, _)| *at == page)
+            .map(|(_, id)| id.clone());
+        let palette = crate::theme::Palette::of(cx);
+        for (index, item) in items.iter().enumerate() {
+            // Kept under the selection's outline: a right click that just selected it keeps
+            // the menu it opened.
+            let selected = Some(&item.id) == selected_id.as_ref();
+            let cursor = if item.movable() {
+                grab(false)
+            } else {
+                CursorStyle::PointingHand
+            };
+            let hover_box = boxed(item.rect, zoom, 1.0)
+                .id(("comment-box", index))
+                .cursor(cursor);
+            // A right click selects it (page layer, capture) and opens the menu at once.
+            let hover_box = if selected {
+                hover_box
+            } else if item.stroke.is_none() {
+                hover_box.hover(move |style| style.border_1().border_color(hover_grey))
+            } else if Some(&item.id) == hovered_stroke.as_ref() {
+                hover_box.border_1().border_color(hover_grey)
+            } else {
                 continue;
-            }
-            layer = layer.child(
-                boxed(item.rect, zoom, 1.0)
-                    .cursor(if item.movable() {
-                        grab(false)
-                    } else {
-                        CursorStyle::PointingHand
-                    })
-                    .hover(move |style| style.border_1().border_color(hover_grey)),
-            );
+            };
+            layer = layer
+                .child(hover_box.context_menu(move |menu, _, _| selection_menu(menu, &palette)));
         }
     }
     // The comment eraser tints what its circle would take.
@@ -1330,7 +1441,7 @@ pub fn page_overlay(
         };
         let palette = crate::theme::Palette::of(cx);
         layer = layer.child(
-            boxed(rect, zoom, 2.0)
+            boxed(rect, zoom, OUTLINE_GROW)
                 .id("selected-comment")
                 .border_1()
                 .border_dashed()
@@ -1344,13 +1455,15 @@ pub fn page_overlay(
             layer = layer.child(boxed(rect, zoom, 0.0).child(editor::grip(rect.height() * zoom)));
         } else if item.resizable() {
             let text = item.is_text();
-            for (corner, (x, y)) in rect.corners().into_iter().enumerate() {
-                let half = HANDLE_SIZE / 2.0;
+            // On the outline's corners, snapped to whole pixels.
+            let at = |value: f32| px((value - HANDLE_SIZE / 2.0).round());
+            let outline = rect.inset(-OUTLINE_GROW / zoom);
+            for (corner, (x, y)) in outline.corners().into_iter().enumerate() {
                 layer = layer.child(
                     div()
                         .absolute()
-                        .left(px(x * zoom - half))
-                        .top(px(y * zoom - half))
+                        .left(at(x * zoom))
+                        .top(at(y * zoom))
                         .size(px(HANDLE_SIZE))
                         .bg(white())
                         .border_1()
@@ -1375,17 +1488,9 @@ pub fn page_overlay(
     }) = gesture
         && *brushed == page
     {
-        let brush = tool_state(cx).brush;
-        let centres = geom::brush_squares(points, brush)
-            .iter()
-            .map(|square| ((square.x0 + square.x1) / 2.0, (square.y0 + square.y1) / 2.0))
-            .collect();
-        layer = layer.child(discs(
-            centres,
-            brush / 2.0,
-            with_alpha(black(), BRUSH_OPACITY),
-            zoom,
-        ));
+        // The squares core will take out, as they are.
+        let squares = geom::brush_squares(points, tool_state(cx).brush);
+        layer = layer.child(area(squares, with_alpha(black(), BRUSH_OPACITY), zoom));
     }
     // A markup dragged over text: its look over the characters picked so far.
     let marking = matches!(gesture, Some(Gesture::Text)) && tool != Tool::Select;
@@ -1403,12 +1508,14 @@ pub fn page_overlay(
     if let Some(point) = pointer
         && tab.canvas.editor.is_none()
     {
-        let side = if tool_state(cx).erase_content {
+        // The page eraser takes out squares; the comment eraser reaches round the pointer.
+        let content = tool_state(cx).erase_content;
+        let side = if content {
             tool_state(cx).brush * zoom
         } else {
             ELEMENT_BRUSH
         };
-        layer = layer.child(brush_ring(point, side, zoom, cx));
+        layer = layer.child(brush_ring(point, side, !content, zoom, cx));
     }
     // Over the comments: a click on a form field fills it in.
     if tool == Tool::Select && tab.canvas.editor.is_none() {
@@ -1507,8 +1614,9 @@ fn shape(
             .border_dashed()
             .border_color(black())
             .into_any_element(),
+        // Core keeps the stroke inside the rect: the path runs half a width in.
         Tool::Ellipse => strokes(
-            vec![geom::ellipse_points(rect, 64)],
+            vec![geom::ellipse_points(rect.inset(width / 2.0), 64)],
             width,
             color,
             fill,
@@ -1546,46 +1654,45 @@ fn markup(tool: Tool, lines: &[DRect], color: Hsla, zoom: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// The eraser's brush under the pointer: a circle `side` pixels wide centred on `point`
-/// (displayed points), a crisp outline in the text colour over a halo, so it shows on any page.
-fn brush_ring(point: (f32, f32), side: f32, zoom: f32, cx: &App) -> Div {
+/// The eraser's brush under the pointer: a circle (`round`) or a square `side` pixels wide
+/// centred on `point` (displayed points), a crisp outline in the text colour over a halo, so it
+/// shows on any page.
+fn brush_ring(point: (f32, f32), side: f32, round: bool, zoom: f32, cx: &App) -> Div {
     let palette = crate::theme::Palette::of(cx);
     let side = side.max(4.0).round();
     let outer = side + 2.0;
+    let radius = |size: f32| if round { size / 2.0 } else { 0.0 };
     div()
         .absolute()
-        .left(px(point.0 * zoom - outer / 2.0))
-        .top(px(point.1 * zoom - outer / 2.0))
+        .left(px((point.0 * zoom - outer / 2.0).round()))
+        .top(px((point.1 * zoom - outer / 2.0).round()))
         .size(px(outer))
-        .rounded(px(outer / 2.0))
+        .rounded(px(radius(outer)))
         .border_1()
         .border_color(with_alpha(palette.bg, 0.8))
         .child(
             div()
                 .size(px(side))
-                .rounded(px(side / 2.0))
-                .border(px(1.5))
+                .rounded(px(radius(side)))
+                .border_1()
                 .border_color(palette.text)
                 .bg(with_alpha(palette.text, 0.12)),
         )
 }
 
-/// Discs of `radius` points around `centres` (displayed points), painted as one area so their
-/// overlaps do not darken.
-fn discs(centres: Vec<(f32, f32)>, radius: f32, color: Hsla, zoom: f32) -> AnyElement {
+/// `squares` (displayed points) painted as one area, so their overlaps do not darken.
+fn area(squares: Vec<DRect>, color: Hsla, zoom: f32) -> AnyElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
             let mut area = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
-            for &(x, y) in &centres {
-                let circle: Vec<Point<Pixels>> = (0..32)
-                    .map(|step| {
-                        let angle = step as f32 / 32.0 * std::f32::consts::TAU;
-                        let (dx, dy) = (radius * angle.cos(), radius * angle.sin());
-                        bounds.origin + point(px((x + dx) * zoom), px((y + dy) * zoom))
-                    })
+            for square in &squares {
+                let corners: Vec<Point<Pixels>> = square
+                    .corners()
+                    .iter()
+                    .map(|&(x, y)| bounds.origin + point(px(x * zoom), px(y * zoom)))
                     .collect();
-                area.add_polygon(&circle, true);
+                area.add_polygon(&corners, true);
             }
             if let Ok(area) = area.build() {
                 window.paint_path(area, color);
@@ -1606,20 +1713,13 @@ fn discs(centres: Vec<(f32, f32)>, radius: f32, color: Hsla, zoom: f32) -> AnyEl
 /// turned page) are cut out of the page picture.
 fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec<AnyElement> {
     let mut elements = Vec::new();
-    if let Some(base) = tab.lifted(ghost.page, &ghost.id) {
-        elements.push(
-            img(base)
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .object_fit(ObjectFit::Fill)
-                .into_any_element(),
-        );
-    }
     let Some((geom, displayed)) = page_frame(tab, ghost.page) else {
         return elements;
     };
+    // Only where it was: elsewhere the page (and its sharp part at high zoom) is right as is.
+    if let Some(base) = tab.lifted(ghost.page, &ghost.id) {
+        elements.push(cut_out(base, ghost.src, ghost.src, displayed, zoom));
+    }
     let shown = |point: (f32, f32)| crate::geometry::from_pdf(&geom, displayed, point);
     let corners = [(ghost.dst.x0, ghost.dst.y0), (ghost.dst.x1, ghost.dst.y1)];
     let drawn = match &ghost.annotation {
@@ -1729,7 +1829,7 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec
         }
         _ => tab
             .cached_page(ghost.page)
-            .map(|picture| cut_out(picture, ghost, displayed, zoom)),
+            .map(|picture| cut_out(picture, ghost.src, ghost.dst, displayed, zoom)),
     };
     elements.extend(drawn);
     elements
@@ -1789,10 +1889,16 @@ fn stamp_element(rect: DRect, label: StampLabel, date: Option<&str>, zoom: f32) 
         .into_any_element()
 }
 
-/// The part `ghost.src` of the page picture shown at `ghost.dst`.
-fn cut_out(picture: Arc<RenderImage>, ghost: &Ghost, page: (f32, f32), zoom: f32) -> AnyElement {
-    let at = geom::crop(ghost.src, ghost.dst, page);
-    boxed(ghost.dst, zoom, 0.0)
+/// The part `src` of a picture of the whole page (`page` points) shown at `dst`.
+pub(super) fn cut_out(
+    picture: Arc<RenderImage>,
+    src: DRect,
+    dst: DRect,
+    page: (f32, f32),
+    zoom: f32,
+) -> AnyElement {
+    let at = geom::crop(src, dst, page);
+    boxed(dst, zoom, 0.0)
         .overflow_hidden()
         .child(
             img(picture)
@@ -1825,7 +1931,13 @@ fn strokes(
                     window.paint_path(area, fill);
                 }
             }
-            let mut path = PathBuilder::stroke(px(width * zoom));
+            // Round ends and corners, as core writes lines, arrows and ink.
+            let options = StrokeOptions::default()
+                .with_line_width(width * zoom)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round);
+            let mut path =
+                PathBuilder::stroke(px(width * zoom)).with_style(PathStyle::Stroke(options));
             trace(&mut path, &lines, bounds.origin, zoom);
             // A single point makes no path: nothing to show yet.
             if let Ok(path) = path.build() {

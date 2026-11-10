@@ -47,8 +47,8 @@ pub use forms::{
 };
 pub use helvetica::line_width as helvetica_line_width;
 pub use info::{
-    Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometry, read_metadata,
-    write_metadata,
+    Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometries, page_geometry,
+    read_metadata, write_metadata,
 };
 pub use layout::{booklet, crop_pages, halve_pages, join_pages, pages_per_sheet, resize_pages};
 pub use organize::{

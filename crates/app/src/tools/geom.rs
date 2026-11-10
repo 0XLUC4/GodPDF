@@ -53,6 +53,20 @@ impl DRect {
         }
     }
 
+    /// `amount` smaller on every side (larger when negative), never past its middle.
+    pub fn inset(&self, amount: f32) -> Self {
+        let (dx, dy) = (
+            amount.min(self.width() / 2.0),
+            amount.min(self.height() / 2.0),
+        );
+        Self {
+            x0: self.x0 + dx,
+            y0: self.y0 + dy,
+            x1: self.x1 - dx,
+            y1: self.y1 - dy,
+        }
+    }
+
     /// Corners: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
     pub fn corners(&self) -> [(f32, f32); 4] {
         [
@@ -78,6 +92,29 @@ impl DRect {
 /// Topmost (last drawn) rectangle containing `point`, allowing `slop` around each.
 pub fn hit_test(rects: &[DRect], point: (f32, f32), slop: f32) -> Option<usize> {
     rects.iter().rposition(|rect| rect.contains(point, slop))
+}
+
+/// Distance from `point` to the polyline `line` (to its point when it has only one);
+/// infinite for no point.
+pub fn polyline_distance(line: &[(f32, f32)], point: (f32, f32)) -> f32 {
+    let to = |(x, y): (f32, f32)| (point.0 - x).hypot(point.1 - y);
+    let segment = |a: (f32, f32), b: (f32, f32)| {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let length = dx * dx + dy * dy;
+        if length <= f32::EPSILON {
+            return to(a);
+        }
+        let t = (((point.0 - a.0) * dx + (point.1 - a.1) * dy) / length).clamp(0.0, 1.0);
+        to((a.0 + dx * t, a.1 + dy * t))
+    };
+    match line {
+        [] => f32::INFINITY,
+        [only] => to(*only),
+        _ => line
+            .windows(2)
+            .map(|pair| segment(pair[0], pair[1]))
+            .fold(f32::INFINITY, f32::min),
+    }
 }
 
 /// A displayed-space offset expressed in PDF space (rotation aware).
@@ -135,19 +172,27 @@ pub fn resized_rect(
     }
 }
 
-/// `rect` given the shape of `original`, as big as the larger of its two sides asks, the
-/// corner opposite `corner` staying put.
-pub fn keep_ratio(original: DRect, rect: DRect, corner: usize) -> DRect {
+/// `rect` given the shape of `original`, as big as the larger of its two sides asks but never
+/// past the edges of a page of size `page`, the corner opposite `corner` staying put.
+pub fn keep_ratio(original: DRect, rect: DRect, corner: usize, page: (f32, f32)) -> DRect {
     let fixed = original.corners()[(corner + 2) % 4];
-    let scale =
-        (rect.width() / original.width().max(1.0)).max(rect.height() / original.height().max(1.0));
+    let (right, down) = (corner == 1 || corner == 2, corner == 2 || corner == 3);
+    let room = (
+        if right { page.0 - fixed.0 } else { fixed.0 },
+        if down { page.1 - fixed.1 } else { fixed.1 },
+    );
+    let (width, height) = (original.width().max(1.0), original.height().max(1.0));
+    let scale = (rect.width() / width)
+        .max(rect.height() / height)
+        .min(room.0 / width)
+        .min(room.1 / height);
     let (w, h) = (original.width() * scale, original.height() * scale);
-    let (x0, x1) = if corner == 1 || corner == 2 {
+    let (x0, x1) = if right {
         (fixed.0, fixed.0 + w)
     } else {
         (fixed.0 - w, fixed.0)
     };
-    let (y0, y1) = if corner == 2 || corner == 3 {
+    let (y0, y1) = if down {
         (fixed.1, fixed.1 + h)
     } else {
         (fixed.1 - h, fixed.1)
@@ -410,6 +455,19 @@ mod tests {
     }
 
     #[test]
+    fn distance_to_a_stroke() {
+        let line = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)];
+        assert_eq!(polyline_distance(&line, (5.0, 3.0)), 3.0);
+        assert_eq!(polyline_distance(&line, (13.0, 5.0)), 3.0);
+        // Past an end: to the end point.
+        assert_eq!(polyline_distance(&line, (-3.0, -4.0)), 5.0);
+        // The far corner of the bounding box is far from the stroke.
+        assert!(polyline_distance(&line, (0.0, 10.0)) > 7.0);
+        assert_eq!(polyline_distance(&[(1.0, 1.0)], (4.0, 5.0)), 5.0);
+        assert_eq!(polyline_distance(&[], (0.0, 0.0)), f32::INFINITY);
+    }
+
+    #[test]
     fn delta_flips_y_and_follows_rotation() {
         let shown = (600.0, 800.0);
         assert_eq!(pdf_delta(&geom(0), shown, (10.0, 20.0)), (10.0, -20.0));
@@ -461,13 +519,19 @@ mod tests {
     #[test]
     fn a_picture_keeps_its_proportions() {
         let original = rect(100.0, 100.0, 200.0, 150.0);
+        let page = (600.0, 800.0);
         assert_eq!(
-            keep_ratio(original, rect(100.0, 100.0, 300.0, 160.0), 2),
+            keep_ratio(original, rect(100.0, 100.0, 300.0, 160.0), 2, page),
             rect(100.0, 100.0, 300.0, 200.0)
         );
         assert_eq!(
-            keep_ratio(original, rect(150.0, 140.0, 200.0, 150.0), 0),
+            keep_ratio(original, rect(150.0, 140.0, 200.0, 150.0), 0, page),
             rect(150.0, 125.0, 200.0, 150.0)
+        );
+        // Pulled down along the right edge: as wide as the page lets it, no wider.
+        assert_eq!(
+            keep_ratio(original, rect(100.0, 100.0, 600.0, 500.0), 2, page),
+            rect(100.0, 100.0, 600.0, 350.0)
         );
     }
 

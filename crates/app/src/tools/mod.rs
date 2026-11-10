@@ -29,6 +29,8 @@ use crate::geometry::PageRect;
 use crate::icons;
 
 pub use canvas::Canvas;
+/// Write the text being typed and drop the gesture and selection (as Esc on the page does).
+pub use canvas::reset as finish_editing;
 pub use picker::parse_hex;
 pub use sign::place_in as place_signature;
 
@@ -142,7 +144,7 @@ impl Tool {
             Self::Note => icons::NOTE,
             Self::Highlight => icons::HIGHLIGHTER,
             Self::Ink => icons::PENCIL_SIMPLE,
-            Self::Rectangle => icons::SQUARE,
+            Self::Rectangle => icons::RECTANGLE,
             Self::Ellipse => icons::CIRCLE,
             Self::Line => icons::LINE_SEGMENT,
             Self::Arrow => icons::ARROW_UP_RIGHT,
@@ -161,10 +163,10 @@ impl Tool {
         match self {
             Self::Select => "Select",
             Self::Hand => "Hand",
-            Self::Text => "Text box",
+            Self::Text => "Free text",
             Self::Note => "Sticky note",
             Self::Highlight => "Highlight",
-            Self::Ink => "Draw",
+            Self::Ink => "Ink",
             Self::Rectangle => "Rectangle",
             Self::Ellipse => "Ellipse",
             Self::Line => "Line",
@@ -557,7 +559,14 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &SignTool, cx| set_tool(Tool::Sign, cx));
     cx.on_action(|_: &FieldTool, cx| set_tool(Tool::Field, cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));
-    cx.on_action(|_: &Deselect, cx| with_active(cx, canvas::reset));
+    // Esc closes the topmost floating card first: the colour picker.
+    cx.on_action(|_: &Deselect, cx| {
+        if tool_state(cx).picker.open.take().is_some() {
+            cx.refresh_windows();
+            return;
+        }
+        with_active(cx, canvas::reset)
+    });
     let reorder = |to: ZOrder| {
         move |tab: &mut DocTab, cx: &mut Context<DocTab>| canvas::reorder_selected(tab, to, cx)
     };

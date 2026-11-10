@@ -94,6 +94,8 @@ pub struct PanelState {
     search_input: Option<(Entity<InputState>, Subscription)>,
     /// Focus the search field on the next render (Ctrl+F has no window at hand).
     focus_search: bool,
+    /// The document whose search text the field shows.
+    search_tab: Option<gpui::EntityId>,
 }
 
 impl Default for PanelState {
@@ -103,6 +105,7 @@ impl Default for PanelState {
             active: None,
             search_input: None,
             focus_search: false,
+            search_tab: None,
         }
     }
 }

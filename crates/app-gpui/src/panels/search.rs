@@ -18,14 +18,18 @@ use crate::doc::{DocTab, guarded};
 use crate::theme::{self, Palette};
 use crate::{icons, widgets};
 
-/// Search results of one document.
+/// Search of one document: the text of its field and the results.
 #[derive(Default)]
 pub struct Search {
+    /// What is typed in the search field for this document (the field is shared by tabs).
+    query: String,
     /// Query the hits belong to; empty before the first search.
     searched: String,
     hits: Vec<SearchHit>,
     error: Option<String>,
     busy: bool,
+    /// The match stepped to: its page and its index among those [`find`] gives there.
+    at: Option<(usize, usize)>,
     /// Document generation the hits and text positions were read from.
     generation: u64,
     /// Text positions of pages with hits, read once per generation.
@@ -38,42 +42,38 @@ impl Search {
         if self.generation != generation {
             *self = Self {
                 generation,
+                query: std::mem::take(&mut self.query),
                 ..Self::default()
             };
         }
     }
 }
 
-/// Text in the search field, trimmed.
-fn query(cx: &App) -> String {
-    cx.try_global::<super::PanelState>()
-        .and_then(|state| state.search_input.as_ref())
-        .map(|(input, _)| input.read(cx).value().trim().to_owned())
-        .unwrap_or_default()
-}
-
-/// The search field, created on first use.
+/// The search field, created on first use. What is typed goes to the document shown.
 fn input(window: &mut Window, cx: &mut App) -> Entity<InputState> {
     if let Some((input, _)) = &state(cx).search_input {
         return input.clone();
     }
     let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search text…"));
-    let subscription = cx.subscribe(&input, |_, event: &InputEvent, cx| {
-        if let InputEvent::PressEnter { shift, .. } = event {
-            run(!shift, cx);
+    let subscription = cx.subscribe(&input, |input, event: &InputEvent, cx| match event {
+        InputEvent::PressEnter { shift, .. } => run(!*shift, cx),
+        InputEvent::Change => {
+            let typed = input.read(cx).value().to_string();
+            with_active(cx, |tab, _| tab.panels.search.query = typed);
         }
+        _ => {}
     });
     state(cx).search_input = Some((input.clone(), subscription));
     input
 }
 
-/// Enter: search for the field's text, or go to the next hit when it is already searched.
+/// Enter: search for the field's text, or go to the next match when it is already searched.
 fn run(forward: bool, cx: &mut App) {
-    let query = query(cx);
-    if query.is_empty() {
-        return;
-    }
     with_active(cx, |tab, cx| {
+        let query = tab.panels.search.query.trim().to_owned();
+        if query.is_empty() {
+            return;
+        }
         let generation = tab.generation();
         let search = &mut tab.panels.search;
         search.sync(generation);
@@ -97,15 +97,13 @@ fn run(forward: bool, cx: &mut App) {
                     return;
                 }
                 search.busy = false;
+                search.at = None;
                 match result {
                     Ok((query, hits)) => {
                         search.searched = query;
                         search.hits = hits;
                         search.error = None;
-                        let current = tab.view.current_page;
-                        if !search.hits.iter().any(|hit| hit.page == current) {
-                            go(tab, true);
-                        }
+                        go(tab, true);
                     }
                     Err(err) => {
                         search.hits.clear();
@@ -119,7 +117,7 @@ fn run(forward: bool, cx: &mut App) {
     });
 }
 
-/// F3 / Shift+F3: next or previous page with hits; searches first when needed.
+/// F3 / Shift+F3: next or previous match; searches first when needed.
 pub fn step(forward: bool, cx: &mut App) {
     if open_panel(cx) != Some(Panel::Search) {
         super::show(Panel::Search, cx);
@@ -127,15 +125,88 @@ pub fn step(forward: bool, cx: &mut App) {
     run(forward, cx);
 }
 
+/// Text positions of `page`, read once per generation.
+fn page_chars(tab: &mut DocTab, page: usize) -> Arc<Vec<TextChar>> {
+    if let Some(chars) = tab.panels.search.chars.get(&page) {
+        return Arc::clone(chars);
+    }
+    let chars = Arc::new(read_chars(tab, page));
+    tab.panels.search.chars.insert(page, Arc::clone(&chars));
+    chars
+}
+
+/// Step to the next (or previous) match and scroll it into view.
 fn go(tab: &mut DocTab, forward: bool) {
-    let pages = hit_pages(&tab.panels.search.hits);
-    if let Some(page) = next_page(&pages, tab.view.current_page, forward) {
+    let search = &tab.panels.search;
+    let (pages, at, query) = (hit_pages(&search.hits), search.at, search.searched.clone());
+    // shortcut: steps by core's count per page; a page whose glyphs read otherwise may get
+    // a stop without a mark. Count with `find` if that shows up.
+    let counts: HashMap<usize, usize> = search
+        .hits
+        .iter()
+        .map(|hit| (hit.page, hit.count))
+        .collect();
+    let count = |page: usize| counts.get(&page).copied().unwrap_or(1);
+    let Some((page, index)) = next_match(&pages, count, at, tab.view.current_page, forward) else {
+        return;
+    };
+    tab.panels.search.at = Some((page, index));
+    let chars = page_chars(tab, page);
+    let band = find(&chars, &query)
+        .get(index)
+        .and_then(|found| bands(&chars, found.clone()).first().copied());
+    let layout = tab.layout();
+    let (Some(band), Some(rect)) = (band, layout.rects.get(page)) else {
         tab.scroll_to_page(page);
+        return;
+    };
+    // Shown a third of the way down when it is out of sight.
+    let view_height = f32::from(tab.view.bounds.size.height);
+    let (top, bottom) = (
+        rect.y + band[1] * layout.zoom,
+        rect.y + band[3] * layout.zoom,
+    );
+    let scroll = tab.view.scroll.1;
+    if top < scroll || bottom > scroll + view_height {
+        tab.scroll_by((0.0, top - view_height / 3.0 - scroll));
     }
 }
 
 fn hit_pages(hits: &[SearchHit]) -> Vec<usize> {
     hits.iter().map(|hit| hit.page).collect()
+}
+
+/// The match after `at` (before it when `!forward`), wrapping around the document. Without
+/// `at`, the first match from the page being read on (the last one before it backwards).
+/// `pages` is ascending; `count` gives the number of matches of a page.
+pub fn next_match(
+    pages: &[usize],
+    count: impl Fn(usize) -> usize,
+    at: Option<(usize, usize)>,
+    current: usize,
+    forward: bool,
+) -> Option<(usize, usize)> {
+    let last = |page: usize| count(page).max(1) - 1;
+    match at.filter(|(page, _)| pages.contains(page)) {
+        Some((page, index)) if forward && index < last(page) => Some((page, index + 1)),
+        Some((page, index)) if !forward && index > 0 => Some((page, index.min(last(page) + 1) - 1)),
+        Some((page, _)) => {
+            let next = next_page(pages, page, forward)?;
+            Some((next, if forward { 0 } else { last(next) }))
+        }
+        None if forward => {
+            let page = pages
+                .iter()
+                .copied()
+                .find(|&page| page >= current)
+                .or_else(|| pages.first().copied())?;
+            Some((page, 0))
+        }
+        None => {
+            let page = next_page(pages, current, false)?;
+            Some((page, last(page)))
+        }
+    }
 }
 
 /// The page with hits after `current` (before it when `!forward`), wrapping around.
@@ -160,11 +231,18 @@ pub fn next_page(pages: &[usize], current: usize, forward: bool) -> Option<usize
 pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
     let field = input(window, cx);
+    // The field shows the text typed for the document in front.
+    let shown = tab.entity_id();
+    if state(cx).search_tab != Some(shown) {
+        state(cx).search_tab = Some(shown);
+        let text = tab.read(cx).panels.search.query.clone();
+        field.update(cx, |field, cx| field.set_value(text, window, cx));
+    }
     if std::mem::take(&mut state(cx).focus_search) {
         field.update(cx, |field, cx| field.focus(window, cx));
     }
-    let typed = query(cx);
     let tab_ref = tab.read(cx);
+    let typed = tab_ref.panels.search.query.trim().to_owned();
     let generation = tab_ref.generation();
     let current = tab_ref.view.current_page;
     let search = &tab_ref.panels.search;
@@ -272,7 +350,7 @@ pub fn page_overlay(tab: &mut DocTab, page: usize, cx: &mut Context<DocTab>) -> 
     if open_panel(cx) != Some(Panel::Search) {
         return None;
     }
-    let typed = query(cx);
+    let typed = tab.panels.search.query.trim().to_owned();
     let generation = tab.generation();
     let search = &tab.panels.search;
     let marked = search.generation == generation
@@ -283,26 +361,38 @@ pub fn page_overlay(tab: &mut DocTab, page: usize, cx: &mut Context<DocTab>) -> 
     if !marked {
         return None;
     }
-    let chars = match tab.panels.search.chars.get(&page) {
-        Some(chars) => Arc::clone(chars),
-        None => {
-            let chars = Arc::new(read_chars(tab, page));
-            tab.panels.search.chars.insert(page, Arc::clone(&chars));
-            chars
-        }
-    };
+    let chars = page_chars(tab, page);
     let zoom = tab.view.zoom;
-    let fill: Hsla = Rgba {
-        r: 1.0,
-        g: 0.77,
-        b: 0.0,
-        a: 0.38,
-    }
-    .into();
+    let mark = |a: f32, g: f32| -> Hsla {
+        Rgba {
+            r: 1.0,
+            g,
+            b: 0.0,
+            a,
+        }
+        .into()
+    };
+    let current = tab
+        .panels
+        .search
+        .at
+        .filter(|(at, _)| *at == page)
+        .map(|(_, index)| index);
     let marks = find(&chars, &typed)
         .into_iter()
-        .flat_map(|found| bands(&chars, found))
-        .map(|[x0, y0, x1, y1]| {
+        .enumerate()
+        .flat_map(|(index, found)| {
+            // The match stepped to stands out in orange.
+            let fill = if current == Some(index) {
+                mark(0.6, 0.45)
+            } else {
+                mark(0.38, 0.77)
+            };
+            bands(&chars, found)
+                .into_iter()
+                .map(move |band| (band, fill))
+        })
+        .map(|([x0, y0, x1, y1], fill)| {
             div()
                 .absolute()
                 .left(px(x0 * zoom - 1.))
@@ -428,6 +518,21 @@ mod tests {
             bands(&chars, found[0].clone()),
             vec![[50.0, 0.0, 70.0, 12.0], [0.0, 20.0, 20.0, 32.0]]
         );
+    }
+
+    #[test]
+    fn steps_match_by_match_across_pages() {
+        let pages = [2, 5];
+        let count = |page: usize| if page == 2 { 2 } else { 1 };
+        let next = |at, forward| next_match(&pages, count, at, 3, forward);
+        assert_eq!(next(None, true), Some((5, 0)));
+        assert_eq!(next(None, false), Some((2, 1)));
+        assert_eq!(next(Some((2, 0)), true), Some((2, 1)));
+        assert_eq!(next(Some((2, 1)), true), Some((5, 0)));
+        assert_eq!(next(Some((5, 0)), true), Some((2, 0)));
+        assert_eq!(next(Some((2, 0)), false), Some((5, 0)));
+        assert_eq!(next(Some((5, 0)), false), Some((2, 1)));
+        assert_eq!(next_match(&[], count, None, 0, true), None);
     }
 
     #[test]

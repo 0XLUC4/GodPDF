@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, DragMoveEvent, EmptyView, Entity, Global, Pixels, Point,
+    AnyElement, App, Context, DragMoveEvent, EmptyView, Entity, EntityId, Global, Pixels, Point,
     Subscription, WeakEntity, div, px,
 };
 
@@ -126,7 +126,10 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
             .on_click(dispatch(ZoomOut)),
         );
 
+    // Scrolls when the window is too short for both groups.
     div()
+        .id("rail")
+        .overflow_y_scroll()
         .w(px(WIDTH))
         .flex_none()
         .h_full()
@@ -151,9 +154,9 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
         .into_any_element()
 }
 
-/// The page box while it is typed in.
+/// The page box while it is typed in, with the tab it belongs to.
 #[derive(Default)]
-struct PageField(Option<(Entity<InputState>, Subscription)>);
+struct PageField(Option<(EntityId, Entity<InputState>, Subscription)>);
 
 impl Global for PageField {}
 
@@ -165,7 +168,8 @@ struct PageDrag {
 }
 
 /// Page number box, 38 × 26: drag right / up for later pages (one
-/// page per point), click to type a number (Enter or leaving the field goes there).
+/// page per point), click to type a number (Enter or leaving the field goes there, Esc
+/// cancels).
 fn page_box(
     tab: &Entity<DocTab>,
     current: usize,
@@ -174,11 +178,18 @@ fn page_box(
     cx: &mut Context<GodPdfApp>,
 ) -> AnyElement {
     let size = |element: gpui::Div| element.w(px(38.)).h(px(theme::INTERACT_HEIGHT));
-    if let Some((field, _)) = cx
+    if let Some((_, field, _)) = cx
         .try_global::<PageField>()
         .and_then(|field| field.0.as_ref())
+        .filter(|(owner, _, _)| *owner == tab.entity_id())
     {
         return size(div())
+            .on_key_down(|event, _, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.set_global(PageField::default());
+                    cx.refresh_windows();
+                }
+            })
             .child(Input::new(field).size_full())
             .into_any_element();
     }
@@ -238,6 +249,7 @@ fn edit(tab: &WeakEntity<DocTab>, shown: usize, window: &mut gpui::Window, cx: &
         field.focus(window, cx);
         field.select_all(window, cx);
     });
+    let owner = tab.entity_id();
     let tab = tab.clone();
     let subscription = cx.subscribe(&field, move |field, event: &InputEvent, cx| {
         if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
@@ -252,7 +264,7 @@ fn edit(tab: &WeakEntity<DocTab>, shown: usize, window: &mut gpui::Window, cx: &
             cx.refresh_windows();
         }
     });
-    cx.set_global(PageField(Some((field, subscription))));
+    cx.set_global(PageField(Some((owner, field, subscription))));
     cx.refresh_windows();
 }
 

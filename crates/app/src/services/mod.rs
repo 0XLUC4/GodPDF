@@ -92,6 +92,9 @@ pub fn register(cx: &mut App) {
 
 /// Startup work of the root view: settings applied, old program removed, updates looked
 /// for, files watched; settings written (and the new version started) on quit.
+/// How often changed settings are written while the app runs.
+const SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
     let remembered = settings::load();
     app.shell.show_tools = remembered.tools_panel;
@@ -103,6 +106,16 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
     updates::remove_old_program();
     updates::check(cx);
     watch::start(cx);
+    // Also while running, so a crash or a forced shutdown keeps the recent files.
+    cx.spawn(async move |_, cx| {
+        loop {
+            cx.background_executor().timer(SAVE_EVERY).await;
+            cx.background_executor()
+                .spawn(async { settings::save() })
+                .await;
+        }
+    })
+    .detach();
     cx.on_app_quit(|_, cx| {
         settings::save();
         updates::restart_if_installed(cx);
@@ -111,7 +124,7 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
     .detach();
 }
 
-/// Note what is shown, to be written on quit. Called by the root view every frame.
+/// Note what is shown, to be written soon. Called by the root view every frame.
 pub fn track(app: &GodPdfApp, window: &Window, cx: &App) {
     let (bounds, maximized) = match window.window_bounds() {
         gpui::WindowBounds::Windowed(bounds) => (bounds, false),

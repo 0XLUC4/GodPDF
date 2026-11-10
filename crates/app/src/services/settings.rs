@@ -1,8 +1,9 @@
 //! Settings kept between sessions: theme, right panel, tools panel, recent files, window
 //! size. JSON in `settings.json`, in the app data folder (`%APPDATA%\GodPDF\data` on Windows).
 //!
-//! The root view notes what it shows every frame ([`track`]); it is written once, when the
-//! app quits ([`save`]).
+//! The root view notes what it shows every frame ([`track`]); it is written when it changed,
+//! every few seconds and when the app quits ([`save`]), so a crash loses little. The write is
+//! atomic: a crash mid-write never truncates the file.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -43,6 +44,8 @@ impl Default for Settings {
 pub const MIN_SIZE: (f32, f32) = (640.0, 420.0);
 
 static LAST: Mutex<Option<Settings>> = Mutex::new(None);
+/// What is in the file: no write while nothing changed.
+static SAVED: Mutex<Option<Settings>> = Mutex::new(None);
 
 /// Note what the app shows now. Cheap: call every frame.
 pub fn track(seen: Settings) {
@@ -53,13 +56,23 @@ pub fn track(seen: Settings) {
     }
 }
 
-/// Write down what [`track`] saw last. Not worth an error message: defaults come back.
+/// Write down what [`track`] saw last, if it changed. Not worth an error message: defaults
+/// come back. Blocking (disk): call it off the UI thread, or at quit.
 pub fn save() {
     let Some(seen) = LAST.lock().ok().and_then(|last| last.clone()) else {
         return;
     };
-    if let Some(path) = file() {
-        let _ = std::fs::write(path, to_json(&seen));
+    // Held during the write: a periodic save and the quit save never interleave.
+    let Ok(mut saved) = SAVED.lock() else {
+        return;
+    };
+    if saved.as_ref() == Some(&seen) {
+        return;
+    }
+    if let Some(path) = file()
+        && crate::files::write_atomic(&path, to_json(&seen).as_bytes()).is_ok()
+    {
+        *saved = Some(seen);
     }
 }
 

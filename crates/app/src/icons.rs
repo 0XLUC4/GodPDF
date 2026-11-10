@@ -53,6 +53,7 @@ pub const FOLDER_OPEN: &str = "\u{E256}";
 pub const FRAME_CORNERS: &str = "\u{E626}";
 pub const GEAR: &str = "\u{E270}";
 pub const GIT_DIFF: &str = "\u{E27C}";
+pub const GRID_FOUR: &str = "\u{E296}";
 pub const HAND: &str = "\u{E298}";
 pub const HASH: &str = "\u{E2A2}";
 pub const HIGHLIGHTER: &str = "\u{EC76}";

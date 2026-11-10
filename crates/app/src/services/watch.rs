@@ -1,8 +1,9 @@
 //! A file changed by another program is read again, unless it was changed here too:
-//! the files of the open documents are looked at every 2 s.
+//! the files of the open documents are looked at every 2 s, off the UI thread (a file on a
+//! sleeping network drive can take seconds to answer).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use godpdf_core::Session;
@@ -29,7 +30,27 @@ pub fn start(cx: &mut Context<GodPdfApp>) {
     cx.spawn(async move |this, cx| {
         loop {
             cx.background_executor().timer(EVERY).await;
-            if this.update(cx, check).is_err() {
+            let Ok(files) = this.update(cx, |app, cx| {
+                app.tabs
+                    .iter()
+                    .filter_map(|tab| Some((tab.entity_id(), tab.read(cx).session.path.clone()?)))
+                    .collect::<Vec<_>>()
+            }) else {
+                break;
+            };
+            let seen = cx
+                .background_executor()
+                .spawn(async move {
+                    files
+                        .into_iter()
+                        .map(|(id, path)| {
+                            let time = modified(&path);
+                            (id, path, time)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            if this.update(cx, |app, cx| check(app, seen, cx)).is_err() {
                 break;
             }
         }
@@ -44,19 +65,35 @@ pub fn saved(tab: EntityId, path: &Path, cx: &mut App) {
     }
 }
 
-fn check(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
+/// What was `seen` of each document's file: its tab, path and modified time.
+fn check(
+    app: &mut GodPdfApp,
+    seen: Vec<(EntityId, PathBuf, Option<SystemTime>)>,
+    cx: &mut Context<GodPdfApp>,
+) {
     let open: Vec<_> = app.tabs.iter().map(|tab| tab.entity_id()).collect();
     cx.default_global::<Watch>()
         .0
         .retain(|id, _| open.contains(id));
-    for tab in app.tabs.clone() {
-        let id = tab.entity_id();
-        let Some(path) = tab.read(cx).session.path.clone() else {
+    for (id, path, time) in seen {
+        let Some(tab) = app.tabs.iter().find(|tab| tab.entity_id() == id).cloned() else {
             continue;
         };
-        let Some(time) = modified(&path) else {
+        // Saved elsewhere meanwhile: the next look sees the new file.
+        if tab.read(cx).session.path.as_ref() != Some(&path) {
+            continue;
+        }
+        let Some(time) = time else {
             continue;
         };
+        // Text being typed is not in the document yet: read the file again once it is.
+        let typing = {
+            let doc = tab.read(cx);
+            doc.text.editing() || doc.canvas.typing()
+        };
+        if typing {
+            continue;
+        }
         // First look: just remember it.
         let known = cx.default_global::<Watch>().0.insert(id, time);
         if known.is_none_or(|known| known == time) {
@@ -79,6 +116,7 @@ fn check(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
                     let mut session = Session::new(file.name, file.bytes);
                     session.path = Some(file.path);
                     tab.session = session;
+                    tab.canvas.forget_selection();
                     tab.reload();
                     cx.notify();
                 });

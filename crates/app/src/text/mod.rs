@@ -92,6 +92,13 @@ pub struct TabText {
     line: Option<lineedit::LineEdit>,
 }
 
+impl TabText {
+    /// A line of the page is being edited (not yet in the document).
+    pub fn editing(&self) -> bool {
+        self.line.is_some()
+    }
+}
+
 /// Forget what was read from older bytes.
 fn sync(tab: &mut DocTab) {
     let generation = tab.generation();

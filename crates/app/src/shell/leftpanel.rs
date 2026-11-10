@@ -61,10 +61,10 @@ use theme::{AMBER, BLUE, GREEN, PINK, PURPLE, RED, TEAL};
 const ALL_TOOLS: &[Row] = &[
     row(
         Run(|| Box::new(SaveAs)),
-        icons::EXPORT,
+        icons::FLOPPY_DISK_BACK,
         TEAL,
-        "Export a PDF",
-        "",
+        "Save As…",
+        "Save the PDF under another name",
     ),
     row(
         Run(|| Box::new(MergeFiles)),
@@ -106,7 +106,7 @@ const ALL_TOOLS: &[Row] = &[
         icons::ARROW_CLOCKWISE,
         GREEN,
         "Rotate page",
-        "Turn the current page by 90°",
+        "Turn the current page 90° to the right",
     ),
     row(
         Run(|| Box::new(RotateAll)),
@@ -208,14 +208,14 @@ const ORGANIZE: &[Row] = &[
         icons::ARROW_COUNTER_CLOCKWISE,
         GREEN,
         "Rotate left",
-        "Turn the current page by 90°",
+        "Turn the selected pages 90° to the left",
     ),
     row(
         Run(|| Box::new(RotateRight)),
         icons::ARROW_CLOCKWISE,
         GREEN,
         "Rotate right",
-        "Turn the current page by 90°",
+        "Turn the selected pages 90° to the right",
     ),
     row(
         Run(|| Box::new(RotateAll)),
@@ -249,7 +249,7 @@ const ORGANIZE: &[Row] = &[
         Run(|| Box::new(InsertBlankPage)),
         icons::FILE_PLUS,
         GREEN,
-        "Blank page",
+        "Insert blank page",
         "Add an empty page",
     ),
     row(
@@ -303,9 +303,9 @@ const ORGANIZE: &[Row] = &[
     ),
     row(
         Run(|| Box::new(PagesPerSheet)),
-        icons::SQUARES_FOUR,
+        icons::GRID_FOUR,
         GREEN,
-        "Per sheet",
+        "Pages per sheet",
         "2, 4, 6, 8, 9 or 16 pages on each sheet",
     ),
     row(
@@ -319,14 +319,14 @@ const ORGANIZE: &[Row] = &[
         Run(|| Box::new(JoinPages)),
         icons::ROWS,
         GREEN,
-        "One page",
+        "Join into one page",
         "Every page one under the other, on one page",
     ),
     row(
         Run(|| Box::new(organize::RemoveBlank)),
         icons::FILE_X,
         RED,
-        "Blank pages",
+        "Remove blank pages",
         "Find the empty pages and take them out",
     ),
     row(

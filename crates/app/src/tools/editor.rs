@@ -575,6 +575,7 @@ pub fn render(
                 .border_1()
                 .border_color(rgb(BORDER))
                 .occlude()
+                .cursor(CursorStyle::IBeam)
                 .key_context(TEXT_BOX)
                 .on_action(escape)
                 .on_action(cx.listener(|tab, _: &ToggleBold, window, cx| {

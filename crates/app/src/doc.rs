@@ -406,6 +406,18 @@ impl DocTab {
         self.pump_lift(cx);
     }
 
+    /// A lift of the current document is rendered or rendering (whatever its target).
+    pub fn lift_current(&self) -> bool {
+        self.lifted
+            .as_ref()
+            .is_some_and(|lifted| lifted.generation == self.generation)
+    }
+
+    /// Free the GPU texture of `image` on the next paint.
+    pub fn evict(&mut self, image: Arc<RenderImage>) {
+        self.evicted.push(image);
+    }
+
     /// `page` without the annotation `id`, once [`Self::lift`] has rendered it.
     pub fn lifted(&self, page: usize, id: &str) -> Option<Arc<RenderImage>> {
         let lifted = self.lifted.as_ref()?;

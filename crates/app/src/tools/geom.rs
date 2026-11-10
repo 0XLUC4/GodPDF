@@ -312,9 +312,56 @@ pub fn crop(src: DRect, dst: DRect, page: (f32, f32)) -> DRect {
     }
 }
 
+/// Squares `size` points wide along the brush path `points`, close enough to cover it
+/// (centres at most half a side apart, none closer than a quarter side).
+pub fn brush_squares(points: &[(f32, f32)], size: f32) -> Vec<DRect> {
+    let half = size / 2.0;
+    let mut centres: Vec<(f32, f32)> = points.first().copied().into_iter().collect();
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let steps = ((b.0 - a.0).hypot(b.1 - a.1) / half).ceil().max(1.0) as usize;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let centre = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+            let last = centres[centres.len() - 1];
+            if (centre.0 - last.0).hypot(centre.1 - last.1) >= half / 2.0 {
+                centres.push(centre);
+            }
+        }
+    }
+    centres
+        .into_iter()
+        .map(|(x, y)| DRect {
+            x0: x - half,
+            y0: y - half,
+            x1: x + half,
+            y1: y + half,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brush_squares_cover_the_path() {
+        // A click is one square around it.
+        assert_eq!(
+            brush_squares(&[(10.0, 10.0)], 4.0),
+            [rect(8.0, 8.0, 12.0, 12.0)]
+        );
+        assert!(brush_squares(&[], 4.0).is_empty());
+        // 20 points right with a 4 point brush: centres every 2 points, 11 squares.
+        let squares = brush_squares(&[(0.0, 0.0), (20.0, 0.0)], 4.0);
+        assert_eq!(squares.len(), 11);
+        assert_eq!(squares[10], rect(18.0, -2.0, 22.0, 2.0));
+        // Jitter under a quarter side adds nothing.
+        assert_eq!(
+            brush_squares(&[(0.0, 0.0), (0.5, 0.0), (0.0, 0.5)], 4.0).len(),
+            1
+        );
+    }
 
     fn geom(rotation: i32) -> PageGeometry {
         PageGeometry {

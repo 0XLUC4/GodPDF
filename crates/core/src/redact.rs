@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
-use crate::annotate::{Rect, annots_entries, normalized, read_rect, set_annots};
+use crate::annotate::{Color, Rect, annots_entries, normalized, read_rect, set_annots};
 use crate::pdf::{check_page, deref, dict_entry, inherited, load, page_ids, save};
 use crate::retype::{IDENTITY, Matrix, PageFont, moved, page_fonts, then};
 use crate::{Error, Result};
@@ -33,6 +33,47 @@ const ASCENT: f32 = 0.9;
 /// - Only this page is changed: the same text elsewhere in the file (other pages, metadata,
 ///   bookmarks, attachments, earlier revisions of an incrementally saved file) stays.
 pub fn redact(pdf: &[u8], page: usize, areas: &[Rect]) -> Result<Vec<u8>> {
+    redact_with(pdf, page, areas, Some(BLACK))
+}
+
+/// [`redact`], with the areas painted `cover` instead of black (`None` leaves them unpainted:
+/// what was taken out is gone, what was only painted over shows again).
+pub fn redact_with(
+    pdf: &[u8],
+    page: usize,
+    areas: &[Rect],
+    cover: Option<Color>,
+) -> Result<Vec<u8>> {
+    take_out(pdf, page, areas, cover, true)
+}
+
+/// The eraser on the page itself: the glyphs that touch `areas` are removed and the areas are
+/// painted white, so images and vector art under them disappear from view. Images, forms and
+/// annotations are kept (a brushed corner must not take out a whole scanned page).
+pub fn erase_content(pdf: &[u8], page: usize, areas: &[Rect]) -> Result<Vec<u8>> {
+    take_out(pdf, page, areas, Some(WHITE), false)
+}
+
+const BLACK: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+};
+const WHITE: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+};
+
+/// Remove the glyphs of `page` in `areas` (and, when `whole`, the images, forms and
+/// annotations touching them), then paint the areas `cover`.
+fn take_out(
+    pdf: &[u8],
+    page: usize,
+    areas: &[Rect],
+    cover: Option<Color>,
+    whole: bool,
+) -> Result<Vec<u8>> {
     if areas.is_empty() {
         return Err(Error::InvalidArgument("nothing to redact".into()));
     }
@@ -45,23 +86,36 @@ pub fn redact(pdf: &[u8], page: usize, areas: &[Rect]) -> Result<Vec<u8>> {
     check_page(page, pages.len())?;
     let page = pages[page];
     let fonts = page_fonts(&doc, page);
-    let xobjects = xobject_boxes(&doc, page);
+    let xobjects = if whole {
+        xobject_boxes(&doc, page)
+    } else {
+        HashMap::new()
+    };
     let operations = Content::decode(&doc.get_page_content(page))?.operations;
     let mut kept = vec![Operation::new("q", Vec::new())];
-    kept.extend(strip(operations, &areas, &fonts, &xobjects));
+    kept.extend(strip(operations, &areas, &fonts, &xobjects, whole));
     kept.push(Operation::new("Q", Vec::new()));
-    kept.push(Operation::new("g", vec![Object::Integer(0)]));
-    for area in &areas {
-        let operands = [area.x0, area.y0, area.x1 - area.x0, area.y1 - area.y0];
-        kept.push(Operation::new("re", operands.map(Object::Real).to_vec()));
+    if let Some(Color { r, g, b }) = cover {
+        let paint = if r == g && g == b {
+            Operation::new("g", vec![Object::Real(r)])
+        } else {
+            Operation::new("rg", [r, g, b].map(Object::Real).to_vec())
+        };
+        kept.push(paint);
+        for area in &areas {
+            let operands = [area.x0, area.y0, area.x1 - area.x0, area.y1 - area.y0];
+            kept.push(Operation::new("re", operands.map(Object::Real).to_vec()));
+        }
+        kept.push(Operation::new("f", Vec::new()));
     }
-    kept.push(Operation::new("f", Vec::new()));
     // A stream of its own: the old one may be shared with other pages.
     let bytes = Content { operations: kept }.encode()?;
     let stream = doc.add_object(Stream::new(Dictionary::new(), bytes));
     doc.get_dictionary_mut(page)?
         .set("Contents", Object::Reference(stream));
-    remove_annotations(&mut doc, page, &areas)?;
+    if whole {
+        remove_annotations(&mut doc, page, &areas)?;
+    }
     save(&mut doc)
 }
 
@@ -162,6 +216,7 @@ fn strip(
     areas: &[Rect],
     fonts: &HashMap<Vec<u8>, PageFont>,
     xobjects: &HashMap<Vec<u8>, (Rect, Matrix)>,
+    images: bool,
 ) -> Vec<Operation> {
     let mut kept = Vec::with_capacity(operations.len());
     let mut saved: Vec<State> = Vec::new();
@@ -258,7 +313,9 @@ fn strip(
                     replaced = Some(Vec::new());
                 }
             }
-            "BI" if touches_any(areas, placed(state.ctm, UNIT)) => replaced = Some(Vec::new()),
+            "BI" if images && touches_any(areas, placed(state.ctm, UNIT)) => {
+                replaced = Some(Vec::new())
+            }
             _ => {}
         }
         match replaced {

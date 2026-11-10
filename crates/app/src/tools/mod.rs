@@ -21,7 +21,7 @@ use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
 
-use godpdf_core::{CharStyle, Color, Font, NewField, Script, StampLabel};
+use godpdf_core::{CharStyle, Color, Font, NewField, Script, StampLabel, ZOrder};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
@@ -53,6 +53,10 @@ actions!(
         FieldTool,
         DeleteSelection,
         Deselect,
+        BringToFront,
+        BringForward,
+        SendBackward,
+        SendToBack,
         ToggleBold,
         ToggleItalic,
         ToggleUnderline
@@ -90,7 +94,7 @@ pub enum Tool {
     Sign,
     /// Chosen from the form panel, not shown in the bar.
     Field,
-    /// Click or drag over comments to remove them.
+    /// Click or drag over comments to remove them, or brush the page content away.
     Eraser,
 }
 
@@ -245,7 +249,7 @@ impl Tool {
             Self::Sign => "Click where your signature goes",
             Self::Field => "Drag the box of the field, or click for one of standard size",
             Self::Hand => "Drag to move around",
-            Self::Eraser => "Click or drag over comments to erase them",
+            Self::Eraser => "Click or drag over comments to erase them, or brush page content away",
             Self::Select => "Click a comment to select it, drag to move it",
         }
     }
@@ -437,6 +441,10 @@ pub struct ToolState {
     pub stamp_date: bool,
     /// The kind of field the field tool adds (picked in the form panel).
     pub field_kind: NewField,
+    /// The eraser brushes the page content away instead of removing comments.
+    pub erase_content: bool,
+    /// Side of the page eraser's brush, in points.
+    pub brush: f32,
     /// The document the viewer shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
     picture_card: Option<quickbar::PictureCard>,
@@ -453,6 +461,8 @@ impl Default for ToolState {
             stamp: StampLabel::Approved,
             stamp_date: false,
             field_kind: NewField::Text,
+            erase_content: false,
+            brush: 12.0,
             active: None,
             picture_card: None,
         }
@@ -520,6 +530,13 @@ pub fn register(cx: &mut App) {
         KeyBinding::new("delete", DeleteSelection, keys),
         KeyBinding::new("backspace", DeleteSelection, keys),
         KeyBinding::new("escape", Deselect, keys),
+        // Shifted brackets arrive as braces on some layouts: both are bound.
+        KeyBinding::new(secondary!("shift-]"), BringToFront, keys),
+        KeyBinding::new(secondary!("}"), BringToFront, keys),
+        KeyBinding::new(secondary!("]"), BringForward, keys),
+        KeyBinding::new(secondary!("["), SendBackward, keys),
+        KeyBinding::new(secondary!("shift-["), SendToBack, keys),
+        KeyBinding::new(secondary!("{"), SendToBack, keys),
         KeyBinding::new(secondary!("b"), ToggleBold, Some(TEXT_BOX)),
         KeyBinding::new(secondary!("i"), ToggleItalic, Some(TEXT_BOX)),
         KeyBinding::new(secondary!("u"), ToggleUnderline, Some(TEXT_BOX)),
@@ -544,6 +561,13 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &FieldTool, cx| set_tool(Tool::Field, cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));
     cx.on_action(|_: &Deselect, cx| with_active(cx, canvas::reset));
+    let reorder = |to: ZOrder| {
+        move |tab: &mut DocTab, cx: &mut Context<DocTab>| canvas::reorder_selected(tab, to, cx)
+    };
+    cx.on_action(move |_: &BringToFront, cx| with_active(cx, reorder(ZOrder::Front)));
+    cx.on_action(move |_: &BringForward, cx| with_active(cx, reorder(ZOrder::Forward)));
+    cx.on_action(move |_: &SendBackward, cx| with_active(cx, reorder(ZOrder::Backward)));
+    cx.on_action(move |_: &SendToBack, cx| with_active(cx, reorder(ZOrder::Back)));
 }
 
 /// The tool bar row under the main tool bar: unused, the quick bar floats over the viewer.
@@ -574,6 +598,16 @@ pub fn viewer_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bracket shortcuts parse (a bad one panics at startup).
+    #[test]
+    fn drawing_order_keys_parse() {
+        KeyBinding::new(secondary!("shift-]"), BringToFront, None);
+        KeyBinding::new(secondary!("}"), BringToFront, None);
+        KeyBinding::new(secondary!("]"), BringForward, None);
+        KeyBinding::new(secondary!("["), SendBackward, None);
+        KeyBinding::new(secondary!("{"), SendToBack, None);
+    }
 
     /// Every tool is on the bar, alone or through the group button of its group.
     #[test]

@@ -71,10 +71,18 @@ around the pointer.
 - Hooks: `page_overlay(tab, page, rect, window, cx)` (called by the viewer for every visible
   page) and `viewer_overlay(tab, window, cx)` (the quick bar, drawn over the viewer's
   top-left corner). `toolbar` stays `None`.
-- Move / resize: nothing is written while dragging. The annotation is drawn as a ghost at
-  the pointer over the page rendered without it (`DocTab::lift` / `lifted`, rendered in the
-  background when the pointer hovers it); the drop is one `replace_annotation` (one undo
-  step) and the ghost stays until the page is rendered again (`DocTab::page_settled`).
+- Move / resize: nothing is written while dragging. The annotation is drawn anew at the
+  pointer (text, shapes, lines, ink, markup, stamps as vectors; pictures from their own
+  pixels, decoded once in the background into `Canvas::picture`) over the page rendered
+  without it (`DocTab::lift` / `lifted`, rendered in the background when the pointer hovers
+  it or it is selected; until then the page as it is shows under the stand-in). Page pixels
+  are never moved, except for notes. The drop is one `replace_annotation` (one undo step)
+  and the ghost stays until the page is rendered again (`DocTab::page_settled`).
+- Right click on the selection: Bring to front / forward, Send backward / to back
+  (`reorder_annotation`; Ctrl+Shift+] / Ctrl+] / Ctrl+[ / Ctrl+Shift+[), Delete.
+- Eraser: "Erase elements" removes the comments it touches; "Erase page content" brushes
+  the page (`ToolState::brush` points wide) and on release `erase_content` removes the
+  text under the path and paints it white (one undo step "Erase").
 - Keys: V H T N D R I E, O L A (ellipse, line, arrow), U K (underline, strikeout), S stamp, X redact pick a tool, Delete / Backspace delete the selection, Esc drops it,
   all in the context `GodPdf && !Input` so they never fire while typing. In a text box
   (context `TextBox`): Ctrl+B / I / U, Ctrl+Enter writes it, Esc cancels.

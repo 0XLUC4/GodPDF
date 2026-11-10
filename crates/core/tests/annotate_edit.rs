@@ -311,3 +311,91 @@ fn free_text_rect_keeps_its_anchor_through_a_round_trip() {
     assert!((placed.rect.y1 - anchor.1).abs() < 0.01);
     assert_eq!(placed.annotation.as_ref(), Some(&annotation));
 }
+
+#[test]
+fn annotations_change_drawing_order() {
+    use godpdf_core::{ZOrder, reorder_annotation};
+    let note = |x: f32| Annotation::Highlight {
+        rect: RECT.translated(x, 0.0),
+        color: BLUE,
+    };
+    let mut pdf = make_pdf(1, None);
+    for x in [0.0, 10.0, 20.0] {
+        pdf = add_annotation(&pdf, 0, &note(x)).unwrap();
+    }
+    let ids = |pdf: &[u8]| -> Vec<String> {
+        annotations(pdf, 0)
+            .unwrap()
+            .into_iter()
+            .map(|placed| placed.id)
+            .collect()
+    };
+    let [a, b, c] = <[String; 3]>::try_from(ids(&pdf)).unwrap();
+    let front = reorder_annotation(&pdf, 0, &a, ZOrder::Front).unwrap();
+    assert_eq!(ids(&front), [b.clone(), c.clone(), a.clone()]);
+    let back = reorder_annotation(&pdf, 0, &c, ZOrder::Back).unwrap();
+    assert_eq!(ids(&back), [c.clone(), a.clone(), b.clone()]);
+    let forward = reorder_annotation(&pdf, 0, &a, ZOrder::Forward).unwrap();
+    assert_eq!(ids(&forward), [b.clone(), a.clone(), c.clone()]);
+    let backward = reorder_annotation(&pdf, 0, &c, ZOrder::Backward).unwrap();
+    assert_eq!(ids(&backward), [a.clone(), c.clone(), b.clone()]);
+    // Already there, or no such annotation.
+    for (id, to) in [
+        (&c, ZOrder::Front),
+        (&c, ZOrder::Forward),
+        (&a, ZOrder::Back),
+    ] {
+        assert!(matches!(
+            reorder_annotation(&pdf, 0, id, to),
+            Err(Error::InvalidArgument(_))
+        ));
+    }
+    assert!(reorder_annotation(&pdf, 0, "nope", ZOrder::Front).is_err());
+}
+
+#[test]
+fn reordering_steps_over_popups() {
+    use godpdf_core::{ZOrder, reorder_annotation};
+    let mut pdf = make_pdf(1, None);
+    for x in [0.0, 10.0] {
+        let highlight = Annotation::Highlight {
+            rect: RECT.translated(x, 0.0),
+            color: BLUE,
+        };
+        pdf = add_annotation(&pdf, 0, &highlight).unwrap();
+    }
+    // A popup between the two highlights.
+    let pdf = edit(&pdf, |doc, pages| {
+        let popup = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Popup" });
+        let annots = doc
+            .get_dictionary(pages[0])
+            .unwrap()
+            .get(b"Annots")
+            .unwrap()
+            .clone();
+        let mut list = match annots {
+            Object::Array(list) => list,
+            Object::Reference(id) => doc.get_object(id).unwrap().as_array().unwrap().clone(),
+            _ => unreachable!(),
+        };
+        list.insert(1, Object::Reference(popup));
+        doc.get_dictionary_mut(pages[0])
+            .unwrap()
+            .set("Annots", Object::Array(list));
+    });
+    let first = annotations(&pdf, 0).unwrap()[0].id.clone();
+    let moved = reorder_annotation(&pdf, 0, &first, ZOrder::Forward).unwrap();
+    let placed = annotations(&moved, 0).unwrap();
+    assert_eq!(placed[2].id, first);
+    assert!(placed[0].annotation.is_none());
+}
+
+#[test]
+fn pictures_give_their_pixels_back() {
+    let rgba = [1, 2, 3, 128, 4, 5, 6, 255];
+    let picture = godpdf_core::Picture::rgba(2, 1, &rgba).unwrap();
+    assert_eq!(picture.to_rgba().as_deref(), Some(&rgba[..]));
+    assert!(picture.jpeg_bytes().is_none());
+    let solid = godpdf_core::Picture::rgba(1, 1, &[9, 8, 7, 255]).unwrap();
+    assert_eq!(solid.to_rgba(), Some(vec![9, 8, 7, 255]));
+}

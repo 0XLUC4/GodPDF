@@ -158,3 +158,76 @@ fn kerning_in_tj_keeps_the_kept_glyphs_in_place() {
         "{left:?}"
     );
 }
+
+/// Whether page 0 paints in grey `level` (0 black, 1 white).
+fn paints_grey(pdf: &[u8], level: f32) -> bool {
+    let doc = Document::load_mem(pdf).unwrap();
+    let page = doc.page_iter().next().unwrap();
+    Content::decode(&doc.get_page_content(page))
+        .unwrap()
+        .operations
+        .iter()
+        .any(|op| op.operator == "g" && op.operands[0].as_float().ok() == Some(level))
+}
+
+#[test]
+fn white_cover_removes_the_text_and_paints_white() {
+    let white = Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+    };
+    let pdf = godpdf_core::redact_with(&make_pdf(1, None), 0, &[WORD], Some(white)).unwrap();
+    assert!(!text(&pdf).contains("Page"));
+    let ops = operators(&pdf);
+    assert!(
+        ops.ends_with(&["g".into(), "re".into(), "f".into()]),
+        "{ops:?}"
+    );
+    assert!(paints_grey(&pdf, 1.0));
+    // No cover: taken out, nothing painted.
+    let bare = godpdf_core::redact_with(&make_pdf(1, None), 0, &[WORD], None).unwrap();
+    assert!(!text(&bare).contains("Page"));
+    assert!(!operators(&bare).iter().any(|op| op == "re"));
+}
+
+#[test]
+fn erasing_page_content_keeps_images_and_comments_under_white() {
+    let pdf = edit(&make_pdf(1, None), |doc, pages| {
+        let image = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+            },
+            vec![0x80],
+        ));
+        let content = b"BT /F1 24 Tf 72 700 Td (Page 1) Tj ET q 50 0 0 50 60 690 cm /Im1 Do Q";
+        let contents = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        let page = doc.get_dictionary_mut(pages[0]).unwrap();
+        page.set("Contents", contents);
+        let fonts = page
+            .get(b"Resources")
+            .and_then(Object::as_dict)
+            .and_then(|resources| resources.get(b"Font"))
+            .cloned()
+            .unwrap_or(Object::Dictionary(dictionary! {}));
+        page.set(
+            "Resources",
+            dictionary! { "Font" => fonts, "XObject" => dictionary! { "Im1" => image } },
+        );
+    });
+    let color = Color {
+        r: 1.0,
+        g: 1.0,
+        b: 0.0,
+    };
+    let pdf = add_annotation(&pdf, 0, &Annotation::Highlight { rect: WORD, color }).unwrap();
+    let erased = godpdf_core::erase_content(&pdf, 0, &[WORD]).unwrap();
+    assert!(!text(&erased).contains("Page"), "{}", text(&erased));
+    assert_eq!(
+        operators(&erased).iter().filter(|op| *op == "Do").count(),
+        1
+    );
+    assert_eq!(annotations(&erased, 0).unwrap().len(), 1);
+    assert!(paints_grey(&erased, 1.0));
+}

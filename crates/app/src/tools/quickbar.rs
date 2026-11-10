@@ -410,6 +410,7 @@ fn style_card(
             }
             None if tool == Tool::Stamp => return Some(stamp_card(palette, cx)),
             None if tool == Tool::Redact => return Some(redact_card(tab, palette, cx)),
+            None if tool == Tool::Eraser => return Some(eraser_card(palette, cx)),
             None => return None,
         },
         Target::Selected(kind, style, formats) => (kind, style, formats),
@@ -662,6 +663,97 @@ fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> Any
             count => format!("{count} areas marked"),
         }))
         .child(actions)
+        .into_any_element()
+}
+
+/// Smallest and largest page eraser brush, and its step, in points.
+const BRUSH_RANGE: (f32, f32, f32) = (4.0, 64.0, 4.0);
+
+/// The eraser's card: what it erases (a two-option toggle), and the brush size for the page.
+fn eraser_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
+    let state = tool_state(cx);
+    let (content, brush) = (state.erase_content, state.brush);
+    let option = |id: &'static str, glyph: &'static str, label: &'static str, on: bool| {
+        let hover = palette.hover;
+        div()
+            .id(id)
+            .h(px(28.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .when(on == content, |row| row.bg(palette.selected))
+            .when(on != content, |row| row.hover(move |style| style.bg(hover)))
+            .child(widgets::with_icon(glyph, label, fonts::BODY, palette.text))
+            .on_click(move |_, _, cx: &mut App| {
+                tool_state(cx).erase_content = on;
+                cx.refresh_windows();
+            })
+    };
+    let toggle = div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(option(
+            "erase-elements",
+            icons::STACK,
+            "Erase elements",
+            false,
+        ))
+        .child(option(
+            "erase-content",
+            icons::ERASER,
+            "Erase page content",
+            true,
+        ));
+    let step = |id: &'static str, glyph: &'static str, tip: &'static str, delta: f32| {
+        let (low, high, _) = BRUSH_RANGE;
+        widgets::tooltip(
+            widgets::icon_widget(id, glyph, widgets::SMALL_ICON_BUTTON, 13.0, true, palette)
+                .on_click(move |_, _, cx: &mut App| {
+                    let state = tool_state(cx);
+                    state.brush = (state.brush + delta).clamp(low, high);
+                    cx.refresh_windows();
+                }),
+            tip,
+        )
+    };
+    let size = div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(div().flex_1().child("Brush"))
+        .child(step(
+            "brush-smaller",
+            icons::MINUS,
+            "Smaller brush",
+            -BRUSH_RANGE.2,
+        ))
+        .child(
+            div()
+                .w(px(36.))
+                .flex()
+                .justify_center()
+                .child(format!("{brush:.0} pt")),
+        )
+        .child(step(
+            "brush-larger",
+            icons::PLUS,
+            "Larger brush",
+            BRUSH_RANGE.2,
+        ));
+    let hint = if content {
+        "Drag over the page: text under the brush is removed, the rest painted white"
+    } else {
+        "Click or drag over comments to erase them"
+    };
+    text_card(palette)
+        .w(px(HINT_CARD_WIDTH))
+        .child(card_title("Eraser"))
+        .child(toggle)
+        .when(content, |card| card.child(size))
+        .child(div().text_color(palette.text_dim).child(hint))
         .into_any_element()
 }
 

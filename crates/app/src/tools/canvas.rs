@@ -5,19 +5,22 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use godpdf_core::{Annotation, PageGeometry, Picture, PlacedAnnotation, Rect};
+use godpdf_core::{
+    Annotation, CharStyle, Font, PageGeometry, Picture, PlacedAnnotation, Rect, StampLabel,
+};
+use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, CursorStyle, Div, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ObjectFit, PathBuilder, Pixels, Point, RenderImage, Window, black, canvas, div, img, point, px,
-    rgb, white,
+    Action, AnyElement, App, Context, CursorStyle, Div, FontWeight, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ObjectFit, PathBuilder, Pixels, Point, RenderImage, Window,
+    black, canvas, div, img, point, px, rgb, white,
 };
 
 use super::geom::{self, DRect};
 use super::{Tool, current_tool, editor, fields, hsla, richtext, sign, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
-use crate::toasts;
+use crate::{icons, toasts};
 
 /// Screen pixels around an annotation that still count as hitting it.
 const HIT_SLOP: f32 = 3.0;
@@ -30,6 +33,8 @@ const PREVIEW_OPACITY: f32 = 0.4;
 const TINY: f32 = 3.0;
 /// Outline of an area marked for redaction.
 const REDACT_RED: u32 = 0xD92D20;
+/// Opacity of the page eraser's brush path.
+const BRUSH_OPACITY: f32 = 0.35;
 
 /// The annotation selected on a page.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +71,11 @@ enum Gesture {
     Pan { last: Point<Pixels> },
     /// Eraser drag; after the first removal the next ones fold into the same undo step.
     Erase { erased: bool },
+    /// Eraser on the page content: the brush path, erased on release.
+    Brush {
+        page: usize,
+        points: Vec<(f32, f32)>,
+    },
 }
 
 /// An annotation shown away from where the page picture has it: while it is moved or
@@ -86,9 +96,10 @@ struct Ghost {
 impl Gesture {
     fn page(&self) -> Option<usize> {
         match self {
-            Self::Draw { page, .. } | Self::Move { page, .. } | Self::Resize { page, .. } => {
-                Some(*page)
-            }
+            Self::Draw { page, .. }
+            | Self::Move { page, .. }
+            | Self::Resize { page, .. }
+            | Self::Brush { page, .. } => Some(*page),
             Self::Pan { .. } | Self::Erase { .. } => None,
         }
     }
@@ -110,6 +121,17 @@ pub struct Canvas {
     pub(super) redactions: Vec<(usize, Rect)>,
     /// Form field boxes and the text field being typed in.
     pub(super) fields: fields::Fields,
+    /// The pixels of the picture last hovered, selected or moved, drawn while it is moved.
+    picture: Option<PictureImage>,
+}
+
+/// A picture annotation decoded once to be drawn at the pointer, image `None` while decoding.
+// shortcut: keyed by id and pixel size, so a picture swapped for another of the same size under
+// the same id would show the old pixels while moved; key on a content hash if that happens.
+struct PictureImage {
+    id: String,
+    size: (u32, u32),
+    image: Option<Arc<RenderImage>>,
 }
 
 /// An annotation of a page as the tools see it.
@@ -287,6 +309,12 @@ fn on_down(
         }
         Tool::Text => editor::open_text(tab, page, point, true, window, cx),
         Tool::Note => editor::open_note(tab, page, point, None, window, cx),
+        Tool::Eraser if tool_state(cx).erase_content => {
+            tab.canvas.gesture = Some(Gesture::Brush {
+                page,
+                points: vec![point],
+            });
+        }
         Tool::Eraser => {
             let erased = erase_at(tab, page, point, false, cx);
             tab.canvas.gesture = Some(Gesture::Erase { erased });
@@ -348,7 +376,7 @@ fn select_down(
             })
         };
         if let Some(corner) = corner {
-            lift(tab, page, &item.id, cx);
+            prepare(tab, page, item, cx);
             tab.canvas.gesture = Some(Gesture::Resize {
                 page,
                 id: item.id.clone(),
@@ -382,7 +410,7 @@ fn select_down(
             cx,
         );
     } else if item.movable() {
-        lift(tab, page, &item.id, cx);
+        prepare(tab, page, item, cx);
         tab.canvas.gesture = Some(Gesture::Move {
             page,
             id: item.id.clone(),
@@ -405,16 +433,92 @@ fn lift_hovered(tab: &mut DocTab, page: usize, position: Point<Pixels>, cx: &mut
     if let Some(index) = geom::hit_test(&rects, point, HIT_SLOP / tab.view.zoom)
         && items[index].movable()
     {
-        lift(tab, page, &items[index].id, cx);
+        prepare(tab, page, &items[index], cx);
+    }
+}
+
+/// Get ready to move `item`: its page without it, and its pixels for a picture.
+fn prepare(tab: &mut DocTab, page: usize, item: &Item, cx: &mut Context<DocTab>) {
+    lift(tab, page, &item.id, cx);
+    if let Some(Annotation::Image { picture, .. }) = &item.annotation {
+        want_picture(tab, &item.id, picture, cx);
     }
 }
 
 /// Have `page` rendered without annotation `id`, unless a dropped annotation is settling: the
 /// page without it is still shown then.
 fn lift(tab: &mut DocTab, page: usize, id: &str, cx: &mut Context<DocTab>) {
+    // A drop whose page is rendered again is over (its page may be off screen by now).
+    if tab
+        .canvas
+        .ghost
+        .as_ref()
+        .is_some_and(|ghost| tab.page_settled(ghost.page))
+    {
+        tab.canvas.ghost = None;
+    }
     if tab.canvas.ghost.is_none() {
         tab.lift(page, id, cx);
     }
+}
+
+/// Have the pixels of picture `id` decoded in the background, once, to be drawn while moved.
+fn want_picture(tab: &mut DocTab, id: &str, picture: &Picture, cx: &mut Context<DocTab>) {
+    let size = (picture.width, picture.height);
+    if let Some(cached) = &tab.canvas.picture
+        && cached.id == id
+        && cached.size == size
+    {
+        return;
+    }
+    if let Some(old) = tab.canvas.picture.take().and_then(|cached| cached.image) {
+        tab.evict(old);
+    }
+    tab.canvas.picture = Some(PictureImage {
+        id: id.to_owned(),
+        size,
+        image: None,
+    });
+    let picture = picture.clone();
+    let decoded = cx
+        .background_executor()
+        .spawn(async move { guarded_pixels(&picture) });
+    let id = id.to_owned();
+    cx.spawn(async move |this, cx| {
+        let decoded = decoded.await;
+        let _ = this.update(cx, |tab, cx| {
+            // Without it the picture is cut out of the page while moved: nothing to say.
+            if let (Ok(image), Some(cached)) = (decoded, tab.canvas.picture.as_mut())
+                && (&cached.id, cached.size) == (&id, size)
+            {
+                cached.image = Some(Arc::new(image));
+                cx.notify();
+            }
+        });
+    })
+    .detach();
+}
+
+/// A picture's own pixels, ready to draw (a decoder panic is an error).
+fn guarded_pixels(picture: &Picture) -> Result<RenderImage, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| picture_pixels(picture)))
+        .unwrap_or_else(|_| Err("cannot decode the picture".to_owned()))
+}
+
+fn picture_pixels(picture: &Picture) -> Result<RenderImage, String> {
+    let rgba = match (picture.to_rgba(), picture.jpeg_bytes()) {
+        (Some(rgba), _) => rgba,
+        (None, Some(jpeg)) => image::load_from_memory(jpeg)
+            .map_err(|err| err.to_string())?
+            .into_rgba8()
+            .into_raw(),
+        (None, None) => return Err("no pixels".to_owned()),
+    };
+    crate::doc::to_render_image(godpdf_render::Bitmap {
+        width: picture.width,
+        height: picture.height,
+        rgba,
+    })
 }
 
 fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Context<DocTab>) {
@@ -482,6 +586,15 @@ fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Conte
             *last = event.position;
         }
         Some(Gesture::Erase { erased }) => erase = Some(*erased),
+        Some(Gesture::Brush { points, .. }) => {
+            let Some(point) = point.map(|p| (p.0.clamp(0.0, size.0), p.1.clamp(0.0, size.1)))
+            else {
+                return;
+            };
+            if points.last() != Some(&point) {
+                points.push(point);
+            }
+        }
         None => return,
     }
     if let Some(delta) = pan {
@@ -503,6 +616,7 @@ fn finish(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     };
     match gesture {
         Gesture::Draw { page, points } => commit_draw(tab, page, &points, cx),
+        Gesture::Brush { page, points } => erase_content(tab, page, &points, cx),
         Gesture::Move { offset, .. } if offset.0.hypot(offset.1) < geom::MIN_MOVE => {}
         Gesture::Move { .. } | Gesture::Resize { .. } => {
             let verb = if matches!(gesture, Gesture::Move { .. }) {
@@ -879,6 +993,46 @@ fn erase_at(
     erased
 }
 
+/// Take out the page content under the brush path `points` (one undo step).
+fn erase_content(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut App) {
+    let Some((geom, displayed)) = page_frame(tab, page) else {
+        return;
+    };
+    let brush = tool_state(cx).brush;
+    let areas: Vec<Rect> = geom::brush_squares(points, brush)
+        .into_iter()
+        .map(|square| square.to_pdf(&geom, displayed))
+        .collect();
+    if areas.is_empty() {
+        return;
+    }
+    let result = tab.apply("Erase", |pdf| godpdf_core::erase_content(pdf, page, &areas));
+    report(result, cx);
+}
+
+/// Change where the selected annotation is drawn among the others of its page (one undo step).
+pub fn reorder_selected(tab: &mut DocTab, to: godpdf_core::ZOrder, cx: &mut Context<DocTab>) {
+    use godpdf_core::ZOrder;
+    let Some(selected) = tab.canvas.selected.clone() else {
+        return;
+    };
+    let label = match to {
+        ZOrder::Front => "Bring to front",
+        ZOrder::Forward => "Bring forward",
+        ZOrder::Backward => "Send backward",
+        ZOrder::Back => "Send to back",
+    };
+    let result = tab.apply(label, |pdf| {
+        godpdf_core::reorder_annotation(pdf, selected.page, &selected.id, to)
+    });
+    match result {
+        // A `#<index>` id names another annotation once moved.
+        Ok(()) if selected.id.starts_with('#') => tab.canvas.selected = None,
+        Ok(()) => {}
+        Err(err) => toasts::info(cx, err.trim_start_matches("invalid argument: ").to_owned()),
+    }
+}
+
 /// An absolutely placed box over `rect` (displayed points) at `zoom`, `grow` pixels larger.
 pub(super) fn boxed(rect: DRect, zoom: f32, grow: f32) -> Div {
     div()
@@ -895,11 +1049,24 @@ fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 
 fn cursor(tool: Tool, gesture: Option<&Gesture>) -> CursorStyle {
     match (tool, gesture) {
-        (_, Some(Gesture::Pan { .. })) => CursorStyle::ClosedHand,
-        (Tool::Hand, _) => CursorStyle::OpenHand,
+        (_, Some(Gesture::Pan { .. } | Gesture::Move { .. })) => grab(true),
+        (_, Some(Gesture::Resize { corner, text, .. })) => corner_cursor(*corner, *text),
+        (Tool::Hand, _) => grab(false),
         (Tool::Text, _) => CursorStyle::IBeam,
         (Tool::Select, _) => CursorStyle::Arrow,
         _ => CursorStyle::Crosshair,
+    }
+}
+
+/// Over what can be moved (`closed` while it is): an open / closed hand. gpui on Windows
+/// draws neither (nor a four-arrow cursor): the pointing hand is the closest it has there.
+fn grab(closed: bool) -> CursorStyle {
+    if cfg!(windows) {
+        CursorStyle::PointingHand
+    } else if closed {
+        CursorStyle::ClosedHand
+    } else {
+        CursorStyle::OpenHand
     }
 }
 
@@ -941,6 +1108,16 @@ pub fn page_overlay(
     {
         tab.canvas.ghost = None;
     }
+    // The selection is likely grabbed next: get it ready, unless what was hovered last is.
+    let selected = tab.canvas.selected.clone().filter(|sel| sel.page == page);
+    if tab.canvas.gesture.is_none()
+        && !tab.lift_current()
+        && let Some(item) = selected
+            .and_then(|sel| items.iter().find(|item| item.id == sel.id))
+            .filter(|item| item.movable())
+    {
+        prepare(tab, page, item, cx);
+    }
     let gesture = tab.canvas.gesture.take();
     let live = gesture
         .as_ref()
@@ -951,7 +1128,8 @@ pub fn page_overlay(
         .as_ref()
         .or(settled.as_ref())
         .filter(|ghost| ghost.page == page);
-    let ghost_layer = ghost.map(|ghost| ghost_elements(tab, ghost, zoom));
+    let scale = window.scale_factor();
+    let ghost_layer = ghost.map(|ghost| ghost_elements(tab, ghost, zoom, scale));
     let ghost_rect = ghost.map(|ghost| (ghost.id.clone(), ghost.dst));
     tab.canvas.ghost = settled;
     let gesture = tab.canvas.gesture.as_ref();
@@ -988,7 +1166,9 @@ pub fn page_overlay(
 
     let hover_grey = with_alpha(black(), 0.45);
     // Hover feedback and cursors come from boxes over each annotation.
-    if gesture.is_none() && matches!(tool, Tool::Select | Tool::Eraser) {
+    // The page eraser brushes the page itself: no comment boxes then.
+    let erasing_comments = tool == Tool::Eraser && !tool_state(cx).erase_content;
+    if gesture.is_none() && (tool == Tool::Select || erasing_comments) {
         let selected_id = tab
             .canvas
             .selected
@@ -1005,7 +1185,7 @@ pub fn page_overlay(
             } else {
                 hover
                     .cursor(if item.movable() {
-                        CursorStyle::OpenHand
+                        grab(false)
                     } else {
                         CursorStyle::PointingHand
                     })
@@ -1026,14 +1206,17 @@ pub fn page_overlay(
             Some((id, rect)) if *id == item.id => *rect,
             _ => item.rect,
         };
+        let palette = crate::theme::Palette::of(cx);
         layer = layer.child(
             boxed(rect, zoom, 2.0)
+                .id("selected-comment")
                 .border_1()
                 .border_dashed()
                 .border_color(black())
                 .when(gesture.is_none() && item.movable(), |outline| {
-                    outline.cursor(CursorStyle::ClosedHand)
-                }),
+                    outline.cursor(grab(false))
+                })
+                .context_menu(move |menu, _, _| selection_menu(menu, &palette)),
         );
         if item.is_text() {
             layer = layer.child(boxed(rect, zoom, 0.0).child(editor::grip(rect.height() * zoom)));
@@ -1064,6 +1247,21 @@ pub fn page_overlay(
     {
         layer = layer.children(draw_preview(tool, points, zoom, cx));
     }
+    if let Some(Gesture::Brush {
+        page: brushed,
+        points,
+    }) = gesture
+        && *brushed == page
+    {
+        let brush = tool_state(cx).brush;
+        // A click is a dot: a path needs two points.
+        let mut path = points.clone();
+        if path.len() == 1 {
+            path.push((path[0].0 + 0.01, path[0].1));
+        }
+        let tint = with_alpha(rgb(REDACT_RED).into(), BRUSH_OPACITY);
+        layer = layer.child(strokes(vec![path], brush, tint, None, zoom));
+    }
     // Over the comments: a click on a form field fills it in.
     if tool == Tool::Select && tab.canvas.editor.is_none() {
         layer = layer.children(fields::render(tab, page, zoom, cx));
@@ -1078,6 +1276,30 @@ pub fn page_overlay(
         layer = layer.children(editor::render(tab, zoom, window, cx));
     }
     Some(layer.into_any_element())
+}
+
+/// Right click on the selection: drawing order and delete.
+fn selection_menu(menu: PopupMenu, palette: &crate::theme::Palette) -> PopupMenu {
+    let entry = |glyph, label, action: fn() -> Box<dyn Action>| {
+        crate::panels::menu_entry(glyph, label, true, palette)
+            .on_click(move |_, window, cx| window.dispatch_action(action(), cx))
+    };
+    menu.item(entry(icons::ARROW_CIRCLE_UP, "Bring to front", || {
+        Box::new(super::BringToFront)
+    }))
+    .item(entry(icons::ARROW_UP, "Bring forward", || {
+        Box::new(super::BringForward)
+    }))
+    .item(entry(icons::ARROW_DOWN, "Send backward", || {
+        Box::new(super::SendBackward)
+    }))
+    .item(entry(icons::STACK_SIMPLE, "Send to back", || {
+        Box::new(super::SendToBack)
+    }))
+    .separator()
+    .item(entry(icons::TRASH, "Delete", || {
+        Box::new(super::DeleteSelection)
+    }))
 }
 
 /// What the drag in progress will draw.
@@ -1158,10 +1380,12 @@ fn shape(
     Some(element)
 }
 
-/// A ghost over its page: the page without the annotation (once rendered), then the
-/// annotation where it is now: text and vector kinds drawn anew, notes, pictures and stamps
-/// as the page picture shows them, cut out and moved / stretched.
-fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement> {
+/// A ghost over its page: the page without the annotation (once rendered; until then the
+/// page as it is, the original showing under the stand-in), then the annotation where it is
+/// now: drawn anew (text, vector kinds, stamps), pictures from their own pixels at whole
+/// device pixels (`scale` per logical one); only notes and pictures not decoded yet (or on a
+/// turned page) are cut out of the page picture.
+fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec<AnyElement> {
     let mut elements = Vec::new();
     if let Some(base) = tab.lifted(ghost.page, &ghost.id) {
         elements.push(
@@ -1180,15 +1404,15 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement>
     let shown = |point: (f32, f32)| crate::geometry::from_pdf(&geom, displayed, point);
     let corners = [(ghost.dst.x0, ghost.dst.y0), (ghost.dst.x1, ghost.dst.y1)];
     let drawn = match &ghost.annotation {
+        // shortcut: a text box of a page turned after it was written shows upright while moved.
         Annotation::FreeText {
             text,
             font_size,
             color,
-            rotation,
             font,
             styles,
             ..
-        } if (geom.rotation - rotation).rem_euclid(360) == 0 => {
+        } => {
             let layout = richtext::Layout::new(text, styles, *font, *font_size, ghost.dst.width());
             let look = richtext::Look {
                 family: editor::font_family(*font),
@@ -1258,12 +1482,83 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32) -> Vec<AnyElement>
                 .collect();
             Some(strokes(lines, *width, hsla(*color), None, zoom))
         }
+        Annotation::Stamp { label, date, .. } => {
+            Some(stamp_element(ghost.dst, *label, date.as_deref(), zoom))
+        }
+        Annotation::Image { .. } if let Some(image) = picture_of(tab, ghost, geom.rotation) => {
+            let snap = |value: f32| (value * zoom * scale).round() / scale;
+            let (left, top) = (snap(ghost.dst.x0), snap(ghost.dst.y0));
+            Some(
+                img(image)
+                    .absolute()
+                    .left(px(left))
+                    .top(px(top))
+                    .w(px(snap(ghost.dst.x1) - left))
+                    .h(px(snap(ghost.dst.y1) - top))
+                    .object_fit(ObjectFit::Fill)
+                    .into_any_element(),
+            )
+        }
         _ => tab
             .cached_page(ghost.page)
             .map(|picture| cut_out(picture, ghost, displayed, zoom)),
     };
     elements.extend(drawn);
     elements
+}
+
+/// The decoded pixels of the picture `ghost` moves, when ready and drawn upright.
+fn picture_of(tab: &DocTab, ghost: &Ghost, rotation: i32) -> Option<Arc<RenderImage>> {
+    let cached = tab.canvas.picture.as_ref()?;
+    (cached.id == ghost.id && rotation.rem_euclid(360) == 0)
+        .then(|| cached.image.clone())
+        .flatten()
+}
+
+/// A stamp drawn as core writes it: a frame `label.color()` and the label (and date) centred.
+fn stamp_element(rect: DRect, label: StampLabel, date: Option<&str>, zoom: f32) -> AnyElement {
+    let (width, height) = (rect.width(), rect.height());
+    let frame = (width.min(height) * 0.06).clamp(0.5, 4.0);
+    let color = hsla(label.color());
+    // Largest size that fits `text` in the width and in 60% of a band `room` high.
+    let fit = |text: &str, bold: bool, room: f32| {
+        let style = CharStyle {
+            bold,
+            ..CharStyle::default()
+        };
+        let per_point: f32 = text
+            .chars()
+            .map(|c| Font::Helvetica.char_width(c, style, 1.0))
+            .sum();
+        (room * 0.6)
+            .min((width - 4.0 * frame) / per_point.max(f32::EPSILON))
+            .max(0.0)
+    };
+    let band = |text: String, bold: bool, room: f32| {
+        div()
+            .h(px(room * zoom))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(fit(&text, bold, room) * zoom))
+            .when(bold, |line| line.font_weight(FontWeight::BOLD))
+            .child(text)
+    };
+    let label_height = if date.is_some() {
+        height * 0.62
+    } else {
+        height
+    };
+    boxed(rect, zoom, 0.0)
+        .border(px(frame * zoom))
+        .border_color(color)
+        .text_color(color)
+        .font_family(editor::font_family(Font::Helvetica))
+        .flex()
+        .flex_col()
+        .child(band(label.text().to_owned(), true, label_height - frame))
+        .children(date.map(|date| band(date.to_owned(), false, height - label_height - frame)))
+        .into_any_element()
 }
 
 /// The part `ghost.src` of the page picture shown at `ghost.dst`.

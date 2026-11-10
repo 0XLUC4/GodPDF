@@ -523,41 +523,58 @@ fn picture_card(
     let mut width = size.x * MM;
     let mut height = size.y * MM;
     card(palette).show(ui, |ui| {
-        ui.set_max_width(150.0);
-        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        ui.label(RichText::new("Picture size").strong());
-        let mut changed = None;
-        ui.horizontal(|ui| {
-            ui.label("Width");
-            if ui.add(mm_field(&mut width)).changed() {
-                changed = Some(true);
+        // The card sits in the bar's horizontal row; stack its content explicitly.
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            ui.label(RichText::new("Picture size").strong());
+            let mut changed_by_width = None;
+            egui::Grid::new("picture-size-grid")
+                .num_columns(2)
+                .spacing(vec2(8.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label("Width");
+                    if ui.add(mm_field(&mut width)).changed() {
+                        changed_by_width = Some(true);
+                    }
+                    ui.end_row();
+                    ui.label("Height");
+                    if ui.add(mm_field(&mut height)).changed() {
+                        changed_by_width = Some(false);
+                    }
+                    ui.end_row();
+                });
+            ui.checkbox(&mut keep, "Keep proportions")
+                .on_hover_text("Changing the width also changes the height, and back");
+            if let Some(by_width) = changed_by_width {
+                let typed = vec2(width, height) / MM;
+                out.resize = Some(if keep {
+                    keep_ratio(size, typed, by_width)
+                } else {
+                    typed
+                });
+            }
+            if ui
+                .button(widgets::with_icon(icon::ARROWS_OUT_SIMPLE, "Original size"))
+                .on_hover_text("96 pixels to the inch")
+                .clicked()
+            {
+                out.resize = Some(natural);
             }
         });
-        ui.horizontal(|ui| {
-            ui.label("Height");
-            if ui.add(mm_field(&mut height)).changed() {
-                changed = Some(false);
-            }
-        });
-        ui.checkbox(&mut keep, "Keep proportions");
-        if let Some(by_width) = changed {
-            let ratio = size.y / size.x.max(0.01);
-            if keep && by_width {
-                height = width * ratio;
-            } else if keep {
-                width = height / ratio.max(0.0001);
-            }
-            out.resize = Some(vec2(width, height) / MM);
-        }
-        if ui
-            .button(widgets::with_icon(icon::ARROWS_OUT_SIMPLE, "Original size"))
-            .on_hover_text("96 pixels to the inch")
-            .clicked()
-        {
-            out.resize = Some(natural);
-        }
     });
     ui.data_mut(|data| data.insert_temp(keep_id, keep));
+}
+
+/// `typed` with the edited side kept and the other one scaled to `old`'s proportions.
+fn keep_ratio(old: egui::Vec2, typed: egui::Vec2, by_width: bool) -> egui::Vec2 {
+    if old.x <= 0.0 || old.y <= 0.0 {
+        return typed;
+    }
+    if by_width {
+        vec2(typed.x, typed.x * old.y / old.x)
+    } else {
+        vec2(typed.y * old.x / old.y, typed.y)
+    }
 }
 
 fn mm_field(value: &mut f32) -> egui::DragValue<'_> {
@@ -643,5 +660,23 @@ pub fn handles(painter: &egui::Painter, rect: Rect) {
             Stroke::new(1.0, Color32::BLACK),
             StrokeKind::Inside,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keep_ratio_scales_the_other_side() {
+        let old = vec2(200.0, 100.0);
+        assert_eq!(keep_ratio(old, vec2(100.0, 100.0), true), vec2(100.0, 50.0));
+        assert_eq!(keep_ratio(old, vec2(200.0, 25.0), false), vec2(50.0, 25.0));
+    }
+
+    #[test]
+    fn keep_ratio_ignores_a_degenerate_picture() {
+        let typed = vec2(30.0, 40.0);
+        assert_eq!(keep_ratio(vec2(0.0, 10.0), typed, true), typed);
     }
 }

@@ -78,15 +78,17 @@ pub fn render(cx: &mut App) -> AnyElement {
             )
             .into_any_element();
     };
-    let (accent, on_accent) = (palette.accent, palette.on_accent);
-    let sign = framed_button(
+    let sign = crate::widgets::accent_button(
         "signature-place",
-        with_icon(icons::SIGNATURE, "Sign the page", fonts::BODY, on_accent),
+        with_icon(
+            icons::SIGNATURE,
+            "Sign the page",
+            fonts::BODY,
+            palette.on_accent,
+        ),
         true,
         &palette,
     )
-    .bg(accent)
-    .hover(move |style| style.bg(accent))
     .on_click(|_, window, cx| place(window, cx));
     div()
         .flex()

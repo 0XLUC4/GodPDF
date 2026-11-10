@@ -25,9 +25,9 @@ All PDF work is in `godpdf-core` (edits, bytes in -> bytes out) and `godpdf-rend
 | `geometry.rs` | Pure math: page `Layout`, visible pages, zoom anchoring, displayed points <-> PDF space. Tested. |
 | `theme.rs` | Palette and visuals (dark / light) as a `Global`; `Palette::of(cx)`; `toggle`; tool colours. |
 | `signature.rs` | The user's signature (strokes one unit wide, tested), kept in `<config>/GodPDF/signature.txt`; the pad dialog is `dialogs/signpad.rs`. |
-| `toasts.rs` | `Global` toast stack: `toasts::error(cx, ..)`, `info`, `success`. |
+| `toasts.rs` | `toasts::error(cx, ..)`: the error bar under the header (latest wins, 6 s); `info` / `success` are no-ops. |
 | `files.rs` | rfd file dialogs, read, atomic write. |
-| `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `dispatch`, `primary_button`. |
+| `widgets.rs` | Shared widgets: `icon`, `with_icon`, `icon_button`, `small_icon_button`, `rail_button`, `tool_row`, `tooltip`, `button`, `framed_button`, `accent_button`, `dispatch`. |
 | `tools/` | Canvas tools: floating quick bar + style / picture cards (`quickbar.rs`), per-page select / move / resize / draw / erase / pan (`canvas.rs`), text box and sticky note typing (`editor.rs`, styled text drawn by `richtext.rs`: per-character bold / italic / underline / sub / superscript, width grip on the right edge), pure geometry (`geom.rs`, tested), form fields clicked on the page and the Field tool (`fields.rs`), the Sign tool (`sign.rs`). |
 | `panels/` | Right panel opened from the rail (`shell/rail.rs`): comments by page (`comments.rs`), page thumbnails with drag reorder, move arrows and a right-click page menu (`thumbs.rs`), bookmarks tree (`bookmarks.rs`), text search with hits marked on the pages (`search.rs`), form answers (`form.rs`), the saved signature (`sign.rs`). |
 | `text/` | Page text (from `textsel.rs`, `lineedit.rs`, `ocr.rs`, `compare.rs`): select with the Select tool and copy (Ctrl+C), "Edit PDF text" mode (click a line, type in place, Enter / click away writes, Esc), Extract text and Compare windows, Recognize text (OCR: Windows.Media.Ocr, ocrs elsewhere). Hooks: `page_underlay` / `page_overlay` (viewer, under / over the tools), `overlay` (app). |

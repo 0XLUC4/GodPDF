@@ -28,18 +28,26 @@ size, color)` for a glyph and a label (glyph, gap of half the size, label).
 | panel | #141414 | #FFFFFF | `panel_fill`, `window_fill`, quick bar card, noninteractive widgets |
 | surface | #1C1C1C | #F5F5F5 | tab row, banner, inactive widget fill (`faint_bg`, `code_bg`) |
 | hover | #262626 | #EFEFEF | hovered widget fill, `open` widget fill |
-| border | #2E2E2E | #E4E4E4 | panel separator lines, widget / window strokes |
+| border | #242424 | #E6E6E6 | hairline separators, field / card / window strokes (never on buttons) |
 | text | #F2F2F2 | #111111 | `override_text_color` |
 | text_dim | #9A9A9A | #666666 | inactive tabs, hints, noninteractive fg; disabled = text_dim at 50 % |
 | accent / accent_text | #F2F2F2 | #111111 | active widget stroke, primary buttons, links, selection stroke |
 | on_accent | #111111 | #FFFFFF | text on accent |
-| selected | #333333 | #E6E6E6 | `selection.bg_fill`, active / pressed widget fill, selected rail button |
+| accent_hover | #D6D6D6 | #333333 | hovered / pressed primary button |
+| button / button_hover | #222222 / #2C2C2C | #F1F1F1 / #E8E8E8 | secondary button fill, hovered |
+| selected | #333333 | #E0E0E0 | `selection.bg_fill`, active / pressed widget fill, selected rail button |
 | canvas | #0A0A0A | #F2F2F2 | viewer behind pages |
+| error | #F87171 | #D92D20 | error text and the error bar |
 
-Visuals: widget radius 7 (`theme::RADIUS`), window radius 12, menu
-radius 9; window shadow offset (0, 10) blur 28 black alpha 110 (dark) / 28 (light); popup
-shadow (0, 6) blur 16 alpha 3/4 of that. Hovered fg stroke 1.5. Spacing: item 8 × 6, button
-padding 10 × 5, menu margin 8, window margin 16, interact height 26.
+Visuals: widget radius 6 (`theme::RADIUS`), window (dialog) radius 12, menu / popup radius 8;
+window shadow offset (0, 10) blur 28 black alpha 110 (dark) / 28 (light); popup shadow (0, 6)
+blur 16 alpha 3/4 of that. Spacing scale 4 / 8 / 12 / 16 / 24; button padding 12 × 6,
+button / field height 28 (`theme::INTERACT_HEIGHT`), larger actions 32.
+
+Polish rules: whole-pixel sizes, paddings and gaps (`with_icon` rounds its gap); icons 16
+(14 in 22 px buttons, 18 / 20 in rail and tool rows); no `rounded_full` on small boxes: a
+radius half a pixel under half the side (`circle_radius` in quickbar); separators are 1 px
+`border` hairlines; secondary text `text_dim`; scrollbar thumbs 6 wide, `text_dim` at 35 %.
 
 Tool colours (`commands.rs`, `theme::{GREEN, ...}`): Organize green #3FB950, Combine purple
 #A371F7, Comment amber #E3A008, Protect / Edit / Help blue #4C8DF6, File / View teal #1FB5A5,
@@ -50,12 +58,20 @@ blue. Update dot blue #2563EB.
 
 | Widget | GPUI | Size |
 |---|---|---|
-| `icon_button` | `widgets::icon_button(id, glyph, tip, palette)` | 28 × 28, glyph 16, no frame until hovered (hover fill, radius 7) |
-| `small_icon_button` | `widgets::small_icon_button` | 22 × 22, glyph 13 |
+| `icon_button` | `widgets::icon_button(id, glyph, tip, palette)` | ghost 28 × 28, glyph 16: transparent, `hover` fill on hover, `selected` pressed, radius 6 |
+| `small_icon_button` | `widgets::small_icon_button` | 22 × 22, glyph 14 |
 | `rail_button` | `widgets::rail_button(id, glyph, tip, selected, enabled, palette)` | 32 × 32, glyph 18, `selected` fill when on |
 | `tool_row` | `widgets::tool_row(id, glyph, tint, label, description, palette)` | full width, 40 high (52 with description), glyph 20 in `tint` centered 20 px in, label 14 at 42 px, description 13 dim; hover fill radius 8 |
 | tooltip | `widgets::tooltip(element, text)` | gpui-component tooltip |
-| frameless button | `widgets::button` | padding 10 × 5, height 26, text 13 |
+| ghost text button | `widgets::button` | transparent, height 28, padding 12, radius 6, text 13; `hover` on hover, `selected` pressed |
+| secondary button | `widgets::framed_button(id, label, enabled, palette)` | `button` fill, **no border**, `button_hover` on hover, `selected` pressed; disabled = dim label, no hover |
+| primary button | `widgets::accent_button(id, label, enabled, palette)` | solid `accent`, `on_accent` text, no border, `accent_hover` on hover / pressed; disabled = 50 % |
+
+Button rules: one primary per dialog / card, first in the row; others secondary; toolbar and
+chrome icons are ghost. No 1 px outline on any button (gpui-component buttons: `ghost()` or
+`secondary()`, never `outline()`); only fields, cards and previews have a border. The custom
+div buttons are not focusable; gpui-component buttons and fields show their focus ring
+(`ring` = `accent_text`).
 | `icon_widget` disabled | `widgets::icon_widget(.., enabled = false, ..)` | glyph in `palette.disabled()`, no hover |
 
 ## Window layout
@@ -99,11 +115,11 @@ is left.
   update is out, tooltip "GodPDF X.Y.Z is available"), `QUESTION` "About GodPDF", `MOON` "Dark
   mode" / `SUN` "Light mode" (28 × 28 icon buttons).
 - Updates popover (`services::updates_button`, gpui-base `Popover`; Esc or a click outside
-  closes it; the Updates command opens it): 6 under the button, right-aligned, 300 wide, fill
-  `panel`, 1 px `border`, radius 12, popup shadow, padding 16. Update out: title 15 "GodPDF
-  X.Y.Z is available", "You have X.Y.Z." dim, the notes' `- ` lines as bullets (max 260 high,
-  scrolls), a full-width 34 high blue (`DOWNLOAD_BLUE`) "Update and restart" (spinner +
-  "Downloading…" meanwhile, errors as toasts) and "Unsaved changes are asked about before the
+  closes it; the Updates command opens it): 6 under the button, right-aligned, 256 wide, fill
+  `panel`, 1 px `border`, radius 10, popup shadow, padding 12, text 12, title 14. Update out: title 15 "GodPDF
+  X.Y.Z is available", "You have X.Y.Z." dim, the notes' `- ` lines as bullets (max 200 high,
+  scrolls), a full-width 32 high blue (`DOWNLOAD_BLUE`) "Update and restart" (spinner +
+  "Downloading…" meanwhile, errors in the error bar) and "Unsaved changes are asked about before the
   app restarts." 11 dim. Otherwise "You're up to date" / "Checking…" / "Could not check for
   updates" with "GodPDF X.Y.Z" (or the error) dim, and a refresh button on the right
   (Lucide `refresh-cw` SVG, spinning while checking: Phosphor glyphs are text and cannot rotate).
@@ -124,7 +140,7 @@ is left.
   (Ctrl+Shift+S)", `FLOPPY_DISK` "Save (Ctrl+S)", `INFO` "Document properties" (disabled
   without a document), 6 px, the search pill, then a spinner "Working…" while a job runs.
 - Search pill: width `available - 40` clamped 140..300, height 32, radius 16, fill `bg`, 1 px
-  `border` (`text_dim` when hovered), `MAGNIFYING_GLASS` 15 dim centered 18 px in, "Find
+  `border` (`text_dim` when hovered), `MAGNIFYING_GLASS` 16 dim 10 px in, "Find
   tools and commands" 14 dim at 34 px (ellipsis), shortcut "Ctrl+K" 12 dim 14 px from the
   right (only when wider than 200). Text cursor; tooltip "Command palette (Ctrl+K)"; click
   opens the palette.
@@ -150,7 +166,7 @@ Rows are `widgets::tool_row`.
 ### Organize grid and Side by side: `src/organize/`
 
 - Grid (`grid.rs`) instead of the viewer while `DocTab::grid.on` (header Organize, the
-  "Organize" row, "Organize pages"). Tool bar: panel fill, margin 16 × 10, framed buttons
+  "Organize" row, "Organize pages"). Tool bar: panel fill, margin 16 × 10, secondary buttons
   28 high (glyph + label, tooltip = description), a separator, Select all / Clear selection,
   "k of n selected" dim. Cards 168 × 218, 14 apart, 12 in from the left, 16 from the top,
   radius 10, `surface` (hover `hover`), 1 px `border` or 2 px `accent` when selected; page
@@ -182,7 +198,7 @@ Rows are `widgets::tool_row`.
   dim, text; current row `surface`); Pages (rows 196, fill 2 px in radius 8, current accent
   at 18 %, page fitted in (row - 32) × 156 centered 84 px down, 2 px accent outline, number
   13, Move up / down `CARET_UP` / `CARET_DOWN` small buttons on hover 10 px from the right);
-  Bookmarks (framed "Add" `BOOKMARK_SIMPLE` + framed `DOTS_THREE_VERTICAL` menu, 6 px, rows
+  Bookmarks (secondary "Add" `BOOKMARK_SIMPLE` + secondary `DOTS_THREE_VERTICAL` menu, 6 px, rows
   24 radius 4, title 14 at 6, number 12.5 dim, indent 18); Search (field + `MAGNIFYING_GLASS`
   button, status label, 4 px, hits as 26 px selectable rows). Menus use Phosphor glyphs
   (`panels::menu_entry`).
@@ -192,10 +208,20 @@ Rows are `widgets::tool_row`.
 
 ### Banner: `src/shell/banner.rs`
 
-Over the canvas only (between the side panels). Fill `surface`,
-margin 16 × 6, separator under it. Glyph 16 (`LOCK` encrypted on save / `INFO` unsaved),
-text 13, right: pill button (fill `bg`, 1 px `text_dim`, radius 14: "Remove password" /
-"Save") and small `X` "Dismiss" (per document and kind).
+Over the canvas only (between the side panels). Fill `bg`, at least 36 high, padding 16 left
+/ 8 right, hairline under it. Glyph 16 dim (`LOCK` encrypted on save / `INFO` unsaved),
+text 13, right: a secondary button ("Remove password" / "Save") and small `X` "Dismiss" (per
+document and kind).
+
+### Notifications: `src/toasts.rs`
+
+No toast stack. `toasts::success` / `info` are no-ops: the result shows on the page, and
+slow work shows the header's "Working…" spinner (`jobs::background`). `toasts::error` must
+never be lost: one error bar (latest wins) in the banner slot, above the banner (above the
+welcome screen without a document): full width, at least 36 high, `error` at 10 % over the
+fill, hairline `error` at 25 % under it, `WARNING_CIRCLE` 16 in `error`, text 13 `text`,
+small `X` "Dismiss"; it goes after 6 s. Warnings that matter (file changed by another
+program while edited here) go through `error`.
 
 ### Welcome: `src/shell/welcome.rs`
 
@@ -239,6 +265,6 @@ Rectangle `SQUARE`, Picture `IMAGE`, Sign `SIGNATURE`, Field `TEXTBOX`, Eraser `
 
 ### Not covered yet
 
-Dialogs (`dialogs.rs`: window radius 12, margin 16, shadow above), toasts (`toasts.rs`:
-radius 10, margin 14 × 10, max width 380, glyph 16 in the accent), command palette, popup
-menus (radius 9, margin 8): they keep gpui-component's look in the app palette and font.
+Dialogs (`dialogs/mod.rs::card`: radius 12, padding 16, popup shadow, 8 between items,
+title 18, button row 8 more above), command palette, popup
+menus (radius 8, margin 8): they keep gpui-component's look in the app palette and font.

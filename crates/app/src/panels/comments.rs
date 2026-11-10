@@ -231,12 +231,12 @@ fn row(
             div()
                 .flex_none()
                 .size(px(28.))
-                .rounded_full()
+                .rounded(px(13.5))
                 .bg(palette.surface)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(widgets::icon(entry.kind.icon(), 15.0, palette.text)),
+                .child(widgets::icon(entry.kind.icon(), 16.0, palette.text)),
         )
         .child(
             div()

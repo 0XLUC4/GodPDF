@@ -229,7 +229,7 @@ impl DocTab {
         let thumb_color = if self.thumb_drag.is_some() {
             palette.text_dim
         } else {
-            palette.border
+            palette.text_dim.opacity(0.35)
         };
         Some(
             div()
@@ -261,7 +261,8 @@ impl DocTab {
                         .right(px(2.))
                         .w(px(SCROLLBAR_WIDTH - 4.))
                         .h(px(height))
-                        .rounded_full()
+                        // Half the 6 px side, less 0.5: see quickbar's `circle_radius`.
+                        .rounded(px(2.5))
                         .bg(thumb_color),
                 ),
         )

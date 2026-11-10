@@ -464,6 +464,5 @@ impl Render for GodPdfApp {
             ))
             .children(text::overlay(active.as_ref(), window, cx))
             .children(services::overlay(window, cx))
-            .children(toasts::render(cx))
     }
 }

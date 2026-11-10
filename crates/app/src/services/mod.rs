@@ -342,7 +342,7 @@ fn preferences(palette: &Palette, cx: &App) -> Vec<AnyElement> {
         dialogs::title(widgets::with_icon(
             icons::GEAR,
             "Preferences",
-            19.,
+            18.,
             palette.text,
         ))
         .into_any_element(),
@@ -371,7 +371,7 @@ fn password(
         .child(dialogs::title(widgets::with_icon(
             icons::LOCK,
             "Password required",
-            19.,
+            18.,
             palette.text,
         )))
         .child(format!("“{}” is encrypted.", locked.name))
@@ -435,7 +435,7 @@ pub fn updates_button(palette: &Palette, cx: &App) -> AnyElement {
                     .top(px(6. - 4.))
                     .right(px(6. - 4.))
                     .size(px(8.))
-                    .rounded_full()
+                    .rounded(px(3.5))
                     .bg(theme::hex(theme::DOWNLOAD_BLUE))
             });
             widgets::icon_button("updates", icons::ARROW_CIRCLE_UP, tip, &palette)
@@ -459,21 +459,21 @@ fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
         })
         .unwrap_or_default();
     let card = div()
-        .w(px(300.))
-        .p(px(16.))
+        .w(px(256.))
+        .p(px(12.))
         .flex()
         .flex_col()
         .gap(px(4.))
         .bg(palette.panel)
         .border_1()
         .border_color(palette.border)
-        .rounded(px(theme::WINDOW_RADIUS))
+        .rounded(px(10.))
         .shadow(widgets::popup_shadow(palette))
-        .text_size(px(fonts::BODY))
+        .text_size(px(12.))
         .text_color(palette.text);
     let title = |text: String| {
         div()
-            .text_size(px(15.))
+            .text_size(px(14.))
             .text_color(palette.text)
             .child(text)
     };
@@ -497,8 +497,8 @@ fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
                 card.child(
                     div()
                         .id("updates-notes")
-                        .mt(px(6.))
-                        .max_h(px(260.))
+                        .mt(px(4.))
+                        .max_h(px(200.))
                         .overflow_y_scroll()
                         .flex()
                         .flex_col()
@@ -507,13 +507,13 @@ fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
                             div()
                                 .flex()
                                 .items_start()
-                                .gap(px(8.))
+                                .gap(px(6.))
                                 .child("•")
                                 .child(div().flex_1().min_w_0().child(item))
                         })),
                 )
             })
-            .child(div().h(px(8.)))
+            .child(div().h(px(4.)))
             .child(update_button(install.clone(), release.url, downloading))
             .when(install.is_some(), |card| {
                 card.child(
@@ -567,7 +567,7 @@ fn update_button(install: Option<String>, page: String, downloading: bool) -> An
     let button = div()
         .id("install-update")
         .w_full()
-        .h(px(34.))
+        .h(px(32.))
         .flex()
         .items_center()
         .justify_center()

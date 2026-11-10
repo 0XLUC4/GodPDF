@@ -1,6 +1,6 @@
-//! Info banner over the canvas: fill `surface`, margin 16 × 6, a
-//! `border` line under it. Glyph 16 + text (13), then on the right a pill button (fill `bg`,
-//! 1 px `text_dim`, radius 14) and a small dismiss cross. Dismissed per document.
+//! Info banner over the canvas: fill `bg`, 36 high, padding 16 / 8, a `border` line under
+//! it. Glyph 16 dim + text (13), then on the right a secondary button and a small dismiss
+//! cross. Dismissed per document.
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, Entity, div, px};
@@ -39,19 +39,7 @@ pub fn render(
         ),
         Banner::Unsaved => (icons::INFO, "This document has unsaved changes.", "Save"),
     };
-    // A fixed `bg` fill, no hover change.
-    let action = div()
-        .id("banner-action")
-        .flex()
-        .items_center()
-        .h(px(theme::INTERACT_HEIGHT))
-        .px(px(theme::BUTTON_PADDING.0))
-        .rounded(px(14.))
-        .bg(palette.bg)
-        .border_1()
-        .border_color(palette.text_dim)
-        .cursor_pointer()
-        .child(label);
+    let action = widgets::framed_button("banner-action", label, true, palette);
     let action = match kind {
         Banner::Encrypted => action.on_click(dispatch(RemovePassword)),
         Banner::Unsaved => action.on_click(dispatch(Save)),
@@ -62,13 +50,15 @@ pub fn render(
             .flex()
             .items_center()
             .gap(px(theme::ITEM_SPACING.0))
-            .px(px(16.))
-            .py(px(6.))
-            .bg(palette.surface)
+            .min_h(px(36.))
+            .pl(px(16.))
+            .pr(px(8.))
+            .py(px(4.))
+            .bg(palette.bg)
             .border_b_1()
             .border_color(palette.border)
             .text_size(px(fonts::BODY))
-            .child(icon(glyph, 16.0, palette.text))
+            .child(icon(glyph, 16.0, palette.text_dim))
             .child(text)
             .child(
                 div()

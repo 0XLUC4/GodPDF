@@ -29,7 +29,7 @@ pub fn icon(glyph: &'static str, size: f32, color: Hsla) -> Div {
         .text_color(color)
 }
 
-/// Glyph then label with a gap (two spaces of the label's font, ~`size`/2).
+/// Glyph then label with a gap of half `size`, rounded to a whole pixel.
 pub fn with_icon(
     glyph: &'static str,
     label: impl Into<SharedString>,
@@ -39,7 +39,7 @@ pub fn with_icon(
     div()
         .flex()
         .items_center()
-        .gap(px(size * 0.5))
+        .gap(px((size * 0.5).round()))
         .text_size(px(size))
         .text_color(color)
         .child(icon(glyph, size, color))
@@ -47,7 +47,7 @@ pub fn with_icon(
 }
 
 /// Attach a hover tooltip: a popup frame (panel fill,
-/// border, radius 9, margin 8, popup shadow) around body text.
+/// border, radius 8, margin 8, popup shadow) around body text.
 pub fn tooltip(element: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
     let text = text.into();
     element.tooltip(move |window, cx| {
@@ -76,13 +76,14 @@ pub fn shadow(y: f32, blur: f32, alpha: f32) -> Vec<BoxShadow> {
     }]
 }
 
-/// Popup shadow: menus, tooltips, toasts, the command palette.
+/// Popup shadow: menus, tooltips, the command palette.
 pub fn popup_shadow(palette: &Palette) -> Vec<BoxShadow> {
     shadow(6.0, 16.0, palette.shadow_alpha * 0.75)
 }
 
-/// Icon widget: square, frameless until hovered (hover fill, radius 7), glyph in the
-/// text colour. Add `.on_click(..)`. `enabled = false` dims it and drops the hover.
+/// Ghost icon widget: square, transparent until hovered (`hover` fill, `selected` while
+/// pressed, radius 6), glyph in the text colour. Add `.on_click(..)`. `enabled = false`
+/// dims it and drops the hover.
 pub fn icon_widget(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -91,7 +92,7 @@ pub fn icon_widget(
     enabled: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let hover = palette.hover;
+    let (hover, pressed) = (palette.hover, palette.selected);
     let color = if enabled {
         palette.text
     } else {
@@ -106,7 +107,10 @@ pub fn icon_widget(
         .justify_center()
         .rounded(px(theme::RADIUS))
         .when(enabled, |button| {
-            button.cursor_pointer().hover(move |style| style.bg(hover))
+            button
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .active(move |style| style.bg(pressed))
         })
         .child(icon(glyph, glyph_size, color))
 }
@@ -124,7 +128,7 @@ pub fn icon_button(
     )
 }
 
-/// Compact 22×22 icon button (13 px glyph) with a tooltip.
+/// Compact 22×22 icon button (14 px glyph) with a tooltip.
 pub fn small_icon_button(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -132,7 +136,7 @@ pub fn small_icon_button(
     palette: &Palette,
 ) -> Stateful<Div> {
     tooltip(
-        icon_widget(id, glyph, SMALL_ICON_BUTTON, 13.0, true, palette),
+        icon_widget(id, glyph, SMALL_ICON_BUTTON, 14.0, true, palette),
         tip,
     )
 }
@@ -197,76 +201,83 @@ pub fn tool_row(
         )
 }
 
-/// A frameless text button: padding 10×5,
-/// height 26, hover fill, radius 7. Add `.on_click(..)`, e.g. [`dispatch`].
+/// A ghost text button: transparent, `hover` fill on hover, `selected` while pressed;
+/// height 28, padding 12, radius 6. Add `.on_click(..)`, e.g. [`dispatch`].
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let hover = palette.hover;
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .px(px(theme::BUTTON_PADDING.0))
-        .h(px(theme::INTERACT_HEIGHT))
-        .rounded(px(theme::RADIUS))
-        .text_size(px(fonts::BODY))
+    let (hover, pressed) = (palette.hover, palette.selected);
+    base_button(id)
         .text_color(palette.text)
         .cursor_pointer()
         .hover(move |style| style.bg(hover))
+        .active(move |style| style.bg(pressed))
         .child(label.into())
 }
 
-/// A framed button: surface fill, 1 px border, radius 7, padding 10×5,
-/// height 26; hover fill. `enabled = false` dims the label and drops the hover.
-pub fn framed_button(
-    id: impl Into<ElementId>,
-    label: impl IntoElement,
-    enabled: bool,
-    palette: &Palette,
-) -> Stateful<Div> {
-    let hover = palette.hover;
+/// Shape shared by the text buttons: height 28, padding 12, radius 6, body text, no border.
+fn base_button(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
-        .gap(px(fonts::BODY * 0.5))
+        .gap(px(6.))
         .px(px(theme::BUTTON_PADDING.0))
         .h(px(theme::INTERACT_HEIGHT))
         .rounded(px(theme::RADIUS))
-        .bg(palette.surface)
-        .border_1()
-        .border_color(palette.border)
         .text_size(px(fonts::BODY))
+        .whitespace_nowrap()
+}
+
+/// A secondary button: subtle `button` fill, no border, `button_hover` on hover,
+/// `selected` while pressed. `enabled = false` dims the label and drops the hover.
+pub fn framed_button(
+    id: impl Into<ElementId>,
+    label: impl IntoElement,
+    enabled: bool,
+    palette: &Palette,
+) -> Stateful<Div> {
+    let (hover, pressed) = (palette.button_hover, palette.selected);
+    base_button(id)
+        .bg(palette.button)
         .text_color(if enabled {
             palette.text
         } else {
             palette.disabled()
         })
         .when(enabled, |button| {
-            button.cursor_pointer().hover(move |style| style.bg(hover))
+            button
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .active(move |style| style.bg(pressed))
         })
         .child(label)
 }
 
-/// The filled button of a dialog's main action: a
-/// [`framed_button`] in the accent colour.
+/// The primary button of a dialog or card: solid accent, `on_accent` text, no border;
+/// `accent_hover` on hover and while pressed. `enabled = false` fades it to half.
 pub fn accent_button(
     id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
+    label: impl IntoElement,
     enabled: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let accent = palette.accent;
-    framed_button(id, label.into(), enabled, palette)
-        .bg(accent)
+    let hover = palette.accent_hover;
+    base_button(id)
+        .bg(palette.accent)
         .text_color(palette.on_accent)
+        .child(label)
         .when(!enabled, |button| button.opacity(0.5))
-        .hover(move |style| style.bg(accent))
+        .when(enabled, |button| {
+            button
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .active(move |style| style.bg(hover))
+        })
 }
 
 /// Click handler that dispatches `action`, so a button runs the same handler as its shortcut.
@@ -274,27 +285,4 @@ pub fn dispatch(
     action: impl Action + Clone,
 ) -> impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut App) + 'static {
     move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)
-}
-
-/// The filled button of a screen's main action.
-#[allow(dead_code)] // dialogs moved to `accent_button`; kept for the welcome screen.
-pub fn primary_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    palette: &Palette,
-) -> Stateful<Div> {
-    let (accent, on_accent) = (palette.accent, palette.on_accent);
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
-        .px(px(18.))
-        .h(px(38.))
-        .rounded(px(9.))
-        .bg(accent)
-        .text_color(on_accent)
-        .cursor_pointer()
-        .hover(|style| style.opacity(0.85))
-        .child(label.into())
 }

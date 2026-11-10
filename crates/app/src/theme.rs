@@ -26,6 +26,11 @@ pub struct Palette {
     pub on_accent: Hsla,
     /// Accent usable as text/link color on this background.
     pub accent_text: Hsla,
+    /// Hovered primary button.
+    pub accent_hover: Hsla,
+    /// Fill of a secondary button (no border), and hovered.
+    pub button: Hsla,
+    pub button_hover: Hsla,
     /// Fill of selected / pressed controls.
     pub selected: Hsla,
     /// Viewer canvas behind pages.
@@ -48,21 +53,21 @@ pub fn hex(color: u32) -> Hsla {
 
 // ---- visuals, same for both palettes.
 
-/// `widgets.*.corner_radius`: buttons, fields, menus entries.
-pub const RADIUS: f32 = 7.0;
+/// Corner radius of buttons, fields, menu entries.
+pub const RADIUS: f32 = 6.0;
 /// `window_corner_radius`: dialogs.
 pub const WINDOW_RADIUS: f32 = 12.0;
-/// `menu_corner_radius`: popups and menus.
-pub const MENU_RADIUS: f32 = 9.0;
+/// Popups and menus.
+pub const MENU_RADIUS: f32 = 8.0;
 /// `spacing.item_spacing` (x, y).
 pub const ITEM_SPACING: (f32, f32) = (8.0, 6.0);
-/// `spacing.button_padding` (x, y).
-pub const BUTTON_PADDING: (f32, f32) = (10.0, 5.0);
+/// Button padding (x, y).
+pub const BUTTON_PADDING: (f32, f32) = (12.0, 6.0);
 /// `spacing.menu_margin` / `window_margin`.
 pub const MENU_MARGIN: f32 = 8.0;
 pub const WINDOW_MARGIN: f32 = 16.0;
-/// `spacing.interact_size.y`: height of a standard button or field.
-pub const INTERACT_HEIGHT: f32 = 26.0;
+/// Height of a standard button or field.
+pub const INTERACT_HEIGHT: f32 = 28.0;
 
 // ---- tool colours, one per family.
 
@@ -83,16 +88,19 @@ impl Palette {
             panel: grey(0x14),
             surface: grey(0x1C),
             hover: grey(0x26),
-            border: grey(0x2E),
+            border: grey(0x24),
             text: grey(0xF2),
             text_dim: grey(0x9A),
             accent: grey(0xF2),
             on_accent: grey(0x11),
             accent_text: grey(0xF2),
+            accent_hover: grey(0xD6),
+            button: grey(0x22),
+            button_hover: grey(0x2C),
             selected: grey(0x33),
             canvas: grey(0x0A),
             success: grey(0xF2),
-            error: grey(0xF2),
+            error: hex(0xF87171),
             shadow_alpha: 110.0 / 255.0,
         }
     }
@@ -104,16 +112,19 @@ impl Palette {
             panel: grey(0xFF),
             surface: grey(0xF5),
             hover: grey(0xEF),
-            border: grey(0xE4),
+            border: grey(0xE6),
             text: grey(0x11),
             text_dim: grey(0x66),
             accent: grey(0x11),
             on_accent: grey(0xFF),
             accent_text: grey(0x11),
-            selected: grey(0xE6),
+            accent_hover: grey(0x33),
+            button: grey(0xF1),
+            button_hover: grey(0xE8),
+            selected: grey(0xE0),
             canvas: grey(0xF2),
             success: grey(0x11),
-            error: grey(0x11),
+            error: hex(0xD92D20),
             shadow_alpha: 28.0 / 255.0,
         }
     }
@@ -162,12 +173,18 @@ fn apply_to_components(cx: &mut App) {
         (c.muted, c.muted_foreground) = (p.surface, p.text_dim);
         (c.ring, c.caret, c.selection) = (p.accent_text, p.text, p.selected);
         (c.list_hover, c.list_active) = (p.hover, p.selected);
-        (c.button, c.button_hover, c.button_active) = (p.surface, p.hover, p.selected);
-        (c.secondary, c.secondary_hover, c.secondary_active) = (p.surface, p.hover, p.selected);
+        (c.button, c.button_hover, c.button_active) = (p.button, p.button_hover, p.selected);
+        (c.secondary, c.secondary_hover, c.secondary_active) =
+            (p.button, p.button_hover, p.selected);
+        (c.button_secondary, c.button_secondary_hover) = (p.button, p.button_hover);
+        c.button_secondary_active = p.selected;
         (c.button_foreground, c.secondary_foreground) = (p.text, p.text);
-        (c.primary, c.primary_hover, c.primary_active) = (p.accent, p.accent, p.accent);
-        (c.button_primary, c.button_primary_hover) = (p.accent, p.accent);
-        c.button_primary_active = p.accent;
+        c.button_secondary_foreground = p.text;
+        (c.primary, c.primary_hover, c.primary_active) = (p.accent, p.accent_hover, p.accent_hover);
+        (c.button_primary, c.button_primary_hover) = (p.accent, p.accent_hover);
+        c.button_primary_active = p.accent_hover;
+        (c.scrollbar, c.scrollbar_thumb) = (gpui::transparent_black(), p.text_dim.opacity(0.35));
+        c.scrollbar_thumb_hover = p.text_dim.opacity(0.6);
         (c.primary_foreground, c.button_primary_foreground) = (p.on_accent, p.on_accent);
         theme.radius = gpui::px(RADIUS);
         theme.radius_lg = gpui::px(MENU_RADIUS);

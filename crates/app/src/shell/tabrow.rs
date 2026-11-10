@@ -72,7 +72,7 @@ pub fn render(
             content()
                 .w_full()
                 .justify_center()
-                .child(icon(icons::HOUSE, 17.0, palette.text)),
+                .child(icon(icons::HOUSE, 16.0, palette.text)),
         )
         .on_click(cx.listener(|app, _, _, cx| {
             if !app.tabs.is_empty() {

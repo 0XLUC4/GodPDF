@@ -196,6 +196,38 @@ pub fn place_picture(
     }
 }
 
+/// `rect`'s inscribed ellipse as a closed polyline of `steps` segments (preview drawing).
+pub fn ellipse_points(rect: DRect, steps: usize) -> Vec<(f32, f32)> {
+    let center = ((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0);
+    let radius = (rect.width() / 2.0, rect.height() / 2.0);
+    (0..=steps)
+        .map(|step| {
+            let angle = step as f32 / steps as f32 * std::f32::consts::TAU;
+            (
+                center.0 + radius.0 * angle.cos(),
+                center.1 + radius.1 * angle.sin(),
+            )
+        })
+        .collect()
+}
+
+/// Ends of the two strokes of an open arrow head at `end`, `length` long, 30° off the line;
+/// `None` for a line of no length.
+pub fn arrow_wings(start: (f32, f32), end: (f32, f32), length: f32) -> Option<[(f32, f32); 2]> {
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    let norm = dx.hypot(dy);
+    if norm < f32::EPSILON {
+        return None;
+    }
+    let (ux, uy) = (dx / norm, dy / norm);
+    let (sin, cos) = std::f32::consts::FRAC_PI_6.sin_cos();
+    let wing = |side: f32| {
+        let (rx, ry) = (ux * cos - side * uy * sin, side * ux * sin + uy * cos);
+        (end.0 - rx * length, end.1 - ry * length)
+    };
+    Some([wing(1.0), wing(-1.0)])
+}
+
 /// A field of the picture property card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PictureField {
@@ -385,6 +417,19 @@ mod tests {
         assert_eq!(moved, rect(72.0, 0.0, 144.0, 36.0));
         // Never below 2 mm.
         assert!(edit_picture(original, PictureField::Width, 0.0, false).width() > 5.6);
+    }
+
+    #[test]
+    fn ellipse_and_arrow_previews() {
+        let points = ellipse_points(rect(0.0, 0.0, 100.0, 50.0), 4);
+        assert_eq!(points.len(), 5);
+        assert!((points[0].0 - 100.0).abs() < 1e-3 && (points[0].1 - 25.0).abs() < 1e-3);
+        assert!((points[1].0 - 50.0).abs() < 1e-3 && (points[1].1 - 50.0).abs() < 1e-3);
+        // Pointing right: both wings behind the tip, one above and one below.
+        let [a, b] = arrow_wings((0.0, 0.0), (10.0, 0.0), 2.0).unwrap();
+        assert!(a.0 < 10.0 && b.0 < 10.0 && a.1 * b.1 < 0.0);
+        assert!(((a.0 - 10.0).hypot(a.1) - 2.0).abs() < 1e-4);
+        assert_eq!(arrow_wings((1.0, 1.0), (1.0, 1.0), 2.0), None);
     }
 
     #[test]

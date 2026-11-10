@@ -2,7 +2,7 @@
 //! next to it the style card of what is being made or is selected (colours, width, font,
 //! formats), or the property card of the selected picture.
 
-use godpdf_core::{Annotation, CharStyle, Color, Font};
+use godpdf_core::{Annotation, CharStyle, Color, Font, StampLabel};
 use gpui::assets::IconName;
 use gpui::component::Sizable;
 use gpui::component::checkbox::Checkbox;
@@ -11,7 +11,7 @@ use gpui::component::tooltip::Tooltip;
 use gpui::prelude::*;
 use gpui::{
     Action, AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, EntityId, FontWeight,
-    SharedString, Stateful, Subscription, Window, div, px,
+    PromptLevel, SharedString, Stateful, Subscription, Window, div, px,
 };
 
 use super::canvas::{self, rewrite};
@@ -22,7 +22,7 @@ use super::{
 };
 use crate::doc::DocTab;
 use crate::theme::Palette;
-use crate::toasts;
+use crate::{toasts, widgets};
 
 /// Distance of the bar from the viewer's top-left corner.
 const INSET: f32 = 16.0;
@@ -239,8 +239,9 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
 fn tool_kind(tool: Tool) -> Option<Kind> {
     match tool {
         Tool::Text => Some(Kind::Text),
-        Tool::Ink | Tool::Rectangle => Some(Kind::Stroke),
-        Tool::Highlight => Some(Kind::Fill),
+        Tool::Ink => Some(Kind::Stroke),
+        shape if shape.is_shape() => Some(Kind::Stroke),
+        Tool::Highlight | Tool::Underline | Tool::StrikeOut => Some(Kind::Fill),
         _ => None,
     }
 }
@@ -324,12 +325,19 @@ pub fn render(
         .gap(px(2.))
         .max_h(px((view_height - 2.0 * INSET).max(BUTTON * 3.0)))
         .overflow_y_scroll();
-    for candidate in Tool::ALL {
+    let shape = tool_state(cx).shape;
+    for candidate in Tool::BAR {
+        // The shapes group button stands for the last shape picked.
+        let (candidate, active) = if candidate.is_shape() {
+            (shape, tool.is_shape())
+        } else {
+            (candidate, candidate == tool)
+        };
         tools = tools.child(with_tooltip(
             icon_button(
                 SharedString::from(format!("tool-{:?}", candidate)),
                 candidate.icon(),
-                candidate == tool,
+                active,
                 true,
                 &palette,
             )
@@ -377,6 +385,8 @@ fn style_card(
             None if matches!(tool, Tool::Note | Tool::Picture) => {
                 return Some(hint_card(tool.hint(), palette));
             }
+            None if tool == Tool::Stamp => return Some(stamp_card(palette, cx)),
+            None if tool == Tool::Redact => return Some(redact_card(tab, palette, cx)),
             None => return None,
         },
         Target::Selected(kind, style, formats) => (kind, style, formats),
@@ -472,15 +482,177 @@ fn style_card(
         }
         Kind::Fill => {}
     }
+    // Drawing a shape: pick which one, Adobe style, in the same card.
+    let shapes = match target(tab, cx) {
+        Target::Tool(tool) if tool.is_shape() => {
+            let mut column = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(2.))
+                .w(px(BUTTON));
+            for shape in Tool::SHAPES {
+                column = column.child(with_tooltip(
+                    icon_button(
+                        SharedString::from(format!("shape-{shape:?}")),
+                        shape.icon(),
+                        shape == tool,
+                        true,
+                        palette,
+                    )
+                    .on_click(dispatch(shape.action())),
+                    shape.tooltip(),
+                ));
+            }
+            Some(column)
+        }
+        _ => None,
+    };
     Some(
         card(palette)
             .flex()
             .items_start()
             .gap(px(4.))
+            .children(shapes)
             .child(colors)
             .when(kind != Kind::Fill, |card| card.child(controls))
             .into_any_element(),
     )
+}
+
+/// Card title row.
+fn card_title(text: &'static str) -> Div {
+    div().text_sm().font_weight(FontWeight::BOLD).child(text)
+}
+
+/// The stamp tool's preset picker: one row per label, in the stamp's colour, and the date.
+fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
+    let state = tool_state(cx);
+    let (current, dated) = (state.stamp, state.stamp_date);
+    let mut list = div().flex().flex_col().gap(px(2.));
+    for label in StampLabel::ALL {
+        let hover = palette.hover;
+        list = list.child(
+            div()
+                .id(SharedString::from(format!("stamp-{label:?}")))
+                .h(px(28.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(hsla(label.color()))
+                .text_color(hsla(label.color()))
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .cursor_pointer()
+                .when(label == current, |row| row.bg(palette.selected))
+                .when(label != current, |row| {
+                    row.hover(move |style| style.bg(hover))
+                })
+                .child(label.text())
+                .on_click(move |_, _, cx: &mut App| {
+                    tool_state(cx).stamp = label;
+                    cx.refresh_windows();
+                }),
+        );
+    }
+    card(palette)
+        .w(px(HINT_CARD_WIDTH))
+        .p(px(10.))
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(card_title("Stamp"))
+        .child(list)
+        .child(
+            Checkbox::new("stamp-date")
+                .label("Add today's date")
+                .checked(dated)
+                .on_click(|checked: &bool, _, cx: &mut App| {
+                    tool_state(cx).stamp_date = *checked;
+                    cx.refresh_windows();
+                }),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(palette.text_dim)
+                .child(Tool::Stamp.hint()),
+        )
+        .into_any_element()
+}
+
+/// The redact tool's card: how many areas are marked, clear them, or apply them for good
+/// after a warning.
+fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
+    let count = tab.canvas.redactions.len();
+    let mut actions = div().flex().flex_col().gap(px(4.));
+    if count > 0 {
+        actions = actions
+            .child(
+                widgets::button("redact-apply", "Apply redactions…", palette)
+                    .justify_center()
+                    .bg(palette.error)
+                    .text_color(gpui::white())
+                    .on_click(
+                        cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)),
+                    ),
+            )
+            .child(
+                widgets::button("redact-clear", "Clear marks", palette)
+                    .justify_center()
+                    .border_1()
+                    .border_color(palette.border)
+                    .on_click(cx.listener(|tab, _: &ClickEvent, _, cx| {
+                        tab.canvas.redactions.clear();
+                        cx.notify();
+                    })),
+            );
+    }
+    card(palette)
+        .w(px(HINT_CARD_WIDTH))
+        .p(px(10.))
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(card_title("Redact"))
+        .child(
+            div()
+                .text_sm()
+                .text_color(palette.text_dim)
+                .child(Tool::Redact.hint()),
+        )
+        .child(div().text_sm().child(match count {
+            0 => "No area marked".to_owned(),
+            1 => "1 area marked".to_owned(),
+            count => format!("{count} areas marked"),
+        }))
+        .child(actions)
+        .into_any_element()
+}
+
+/// Ask before redacting: it cannot be taken back once the file is saved.
+fn confirm_redactions(window: &mut Window, cx: &mut Context<DocTab>) {
+    let answer = window.prompt(
+        PromptLevel::Warning,
+        "Apply redactions?",
+        Some(
+            "The marked areas are blacked out and the text, images and comments under them are \
+             removed. This is permanent once the file is saved.",
+        ),
+        &["Apply redactions", "Cancel"],
+        cx,
+    );
+    cx.spawn(async move |tab, cx| {
+        if let Ok(0) = answer.await {
+            let _ = tab.update(cx, |tab, cx| {
+                canvas::apply_redactions(tab, cx);
+                cx.notify();
+            });
+        }
+    })
+    .detach();
 }
 
 fn same_color(a: Color, b: Color) -> bool {

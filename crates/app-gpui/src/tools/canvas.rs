@@ -4,15 +4,15 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use godpdf_core::{Annotation, PageGeometry, Picture, PlacedAnnotation};
+use godpdf_core::{Annotation, PageGeometry, Picture, PlacedAnnotation, Rect};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, CursorStyle, Div, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent,
-    PathBuilder, Pixels, Point, Window, black, canvas, div, point, px, white,
+    PathBuilder, Pixels, Point, Window, black, canvas, div, point, px, rgb, white,
 };
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, hsla, tool_state};
+use super::{Tool, current_tool, editor, hsla, stamp, tool_state};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::toasts;
@@ -26,6 +26,8 @@ const HANDLE_SIZE: f32 = 7.0;
 const PREVIEW_OPACITY: f32 = 0.4;
 /// Drags with a side shorter than this (points) are clicks.
 const TINY: f32 = 3.0;
+/// Outline of an area marked for redaction.
+const REDACT_RED: u32 = 0xD92D20;
 
 /// The annotation selected on a page.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +86,9 @@ pub struct Canvas {
     pub selected: Option<Selected>,
     gesture: Option<Gesture>,
     pub(super) editor: Option<editor::Editor>,
+    /// Areas marked for redaction (page, PDF space), removed only by "Apply redactions".
+    // shortcut: marks are not remapped when pages are moved or deleted; clear them there once page tools land.
+    pub(super) redactions: Vec<(usize, Rect)>,
 }
 
 /// An annotation of a page as the tools see it.
@@ -265,7 +270,18 @@ fn on_down(
             let erased = erase_at(tab, page, point, false, cx);
             tab.canvas.gesture = Some(Gesture::Erase { erased });
         }
-        Tool::Highlight | Tool::Ink | Tool::Rectangle | Tool::Picture => {
+        Tool::Stamp => place_stamp(tab, page, point, cx),
+        Tool::Redact if unmark_at(tab, page, point) => {}
+        Tool::Highlight
+        | Tool::Underline
+        | Tool::StrikeOut
+        | Tool::Ink
+        | Tool::Rectangle
+        | Tool::Ellipse
+        | Tool::Line
+        | Tool::Arrow
+        | Tool::Redact
+        | Tool::Picture => {
             tab.canvas.gesture = Some(Gesture::Draw {
                 page,
                 points: vec![point],
@@ -469,19 +485,40 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
         return;
     };
     let tiny = (last.0 - first.0).abs().min((last.1 - first.1).abs()) < TINY;
+    let short = (last.0 - first.0).hypot(last.1 - first.1) < TINY;
     let rect = DRect::span(first, last).to_pdf(&geom, displayed);
     let color = style.color;
+    let width = style.width;
+    let line = |arrow| Annotation::Line {
+        start: crate::geometry::to_pdf(&geom, displayed, first),
+        end: crate::geometry::to_pdf(&geom, displayed, last),
+        color,
+        width,
+        arrow,
+    };
     let (label, annotation) = match tool {
-        Tool::Highlight | Tool::Rectangle if tiny => return,
+        Tool::Line | Tool::Arrow if short => return,
+        Tool::Highlight
+        | Tool::Underline
+        | Tool::StrikeOut
+        | Tool::Rectangle
+        | Tool::Ellipse
+        | Tool::Redact
+            if tiny =>
+        {
+            return;
+        }
+        Tool::Redact => {
+            tab.canvas.redactions.push((page, rect));
+            return;
+        }
         Tool::Highlight => ("Highlight", Annotation::Highlight { rect, color }),
-        Tool::Rectangle => (
-            "Rectangle",
-            Annotation::Square {
-                rect,
-                color,
-                width: style.width,
-            },
-        ),
+        Tool::Underline => ("Underline", Annotation::Underline { rect, color }),
+        Tool::StrikeOut => ("Strikethrough", Annotation::StrikeOut { rect, color }),
+        Tool::Rectangle => ("Rectangle", Annotation::Square { rect, color, width }),
+        Tool::Ellipse => ("Ellipse", Annotation::Circle { rect, color, width }),
+        Tool::Line => ("Line", line(false)),
+        Tool::Arrow => ("Arrow", line(true)),
         Tool::Ink if points.len() >= 2 => {
             let stroke = points
                 .iter()
@@ -492,7 +529,7 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
                 Annotation::Ink {
                     strokes: vec![stroke],
                     color,
-                    width: style.width,
+                    width,
                 },
             )
         }
@@ -565,6 +602,99 @@ fn place_picture(
     );
 }
 
+/// Put the stamp picked in the style card centred on `point`, then select it to be moved or
+/// resized.
+fn place_stamp(tab: &mut DocTab, page: usize, point: (f32, f32), cx: &mut Context<DocTab>) {
+    let Some((geom, displayed)) = page_frame(tab, page) else {
+        return;
+    };
+    let state = tool_state(cx);
+    let (label, dated) = (state.stamp, state.stamp_date);
+    let rect = stamp::stamp_rect(point, displayed, dated).to_pdf(&geom, displayed);
+    let annotation = Annotation::Stamp {
+        rect,
+        label,
+        date: dated.then(stamp::today),
+    };
+    let result = tab.apply("Stamp", |pdf| {
+        godpdf_core::add_annotation(pdf, page, &annotation)
+    });
+    if let Err(err) = result {
+        toasts::error(cx, err);
+        return;
+    }
+    if let Some(placed) = annotations(tab, page, cx).last() {
+        tab.canvas.selected = Some(Selected {
+            page,
+            id: placed.id.clone(),
+        });
+    }
+    // As after a picture: the stamp is ready to be moved or resized.
+    tool_state(cx).tool = Tool::Select;
+    cx.refresh_windows();
+}
+
+/// The redaction marks of `page` in displayed points, with their index in `redactions`.
+fn marks(tab: &mut DocTab, page: usize) -> Vec<(usize, DRect)> {
+    let Some((geom, displayed)) = page_frame(tab, page) else {
+        return Vec::new();
+    };
+    tab.canvas
+        .redactions
+        .iter()
+        .enumerate()
+        .filter(|(_, (on, _))| *on == page)
+        .map(|(index, (_, rect))| (index, DRect::from_pdf(&geom, displayed, rect)))
+        .collect()
+}
+
+/// Drop the redaction mark under `point`; true when there was one.
+fn unmark_at(tab: &mut DocTab, page: usize, point: (f32, f32)) -> bool {
+    let marks = marks(tab, page);
+    let rects: Vec<DRect> = marks.iter().map(|(_, rect)| *rect).collect();
+    let Some(hit) = geom::hit_test(&rects, point, HIT_SLOP / tab.view.zoom) else {
+        return false;
+    };
+    tab.canvas.redactions.remove(marks[hit].0);
+    true
+}
+
+/// Black out every marked area for good (core `redact`), as one undo step.
+pub(super) fn apply_redactions(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+    let mut pages: Vec<usize> = tab
+        .canvas
+        .redactions
+        .iter()
+        .map(|(page, _)| *page)
+        .collect();
+    pages.sort_unstable();
+    pages.dedup();
+    if pages.is_empty() {
+        return;
+    }
+    let marks = tab.canvas.redactions.clone();
+    let result = tab.apply("Redact", |pdf| {
+        let mut bytes = pdf.to_vec();
+        for page in pages {
+            let areas: Vec<Rect> = marks
+                .iter()
+                .filter(|(on, _)| *on == page)
+                .map(|(_, rect)| *rect)
+                .collect();
+            bytes = godpdf_core::redact(&bytes, page, &areas)?;
+        }
+        Ok(bytes)
+    });
+    match result {
+        Ok(()) => {
+            tab.canvas.redactions.clear();
+            tab.canvas.selected = None;
+            toasts::success(cx, format!("{} area(s) redacted", marks.len()));
+        }
+        Err(err) => toasts::error(cx, format!("Cannot redact: {err}")),
+    }
+}
+
 /// Size of a picture's pixels at 96 per inch, in points.
 pub(super) fn natural_size(picture: &Picture) -> (f32, f32) {
     (
@@ -595,6 +725,9 @@ fn erase_at(
     amend: bool,
     cx: &mut Context<DocTab>,
 ) -> bool {
+    if unmark_at(tab, page, point) {
+        return false;
+    }
     let Some(items) = items(tab, page, cx) else {
         return false;
     };
@@ -667,6 +800,7 @@ pub fn page_overlay(
     {
         tab.canvas.selected = None;
     }
+    let redaction_marks = marks(tab, page);
     let gesture = tab.canvas.gesture.as_ref();
     let mut layer = div()
         .absolute()
@@ -687,6 +821,16 @@ pub fn page_overlay(
             MouseButton::Left,
             cx.listener(|tab, _, _, cx| finish(tab, cx)),
         );
+
+    let red: Hsla = rgb(REDACT_RED).into();
+    for (_, mark) in redaction_marks {
+        layer = layer.child(
+            boxed(mark, zoom, 0.0)
+                .bg(with_alpha(red, 0.12))
+                .border_2()
+                .border_color(red),
+        );
+    }
 
     let hover_grey = with_alpha(black(), 0.45);
     // Hover feedback and cursors come from boxes over each annotation.
@@ -791,43 +935,84 @@ fn draw_preview(tool: Tool, points: &[(f32, f32)], zoom: f32, cx: &App) -> Optio
         Tool::Highlight => boxed(rect, zoom, 0.0)
             .bg(with_alpha(color, PREVIEW_OPACITY))
             .into_any_element(),
+        // A bar along the bottom or through the middle of the dragged box.
+        Tool::Underline | Tool::StrikeOut => {
+            let bar = (rect.height() * 0.08).max(1.0);
+            let y = if tool == Tool::Underline {
+                rect.y1 - bar
+            } else {
+                (rect.y0 + rect.y1 - bar) / 2.0
+            };
+            boxed(
+                DRect {
+                    y0: y,
+                    y1: y + bar,
+                    ..rect
+                },
+                zoom,
+                0.0,
+            )
+            .bg(color)
+            .into_any_element()
+        }
         Tool::Rectangle => boxed(rect, zoom, 0.0)
             .border(px(style.width * zoom))
             .border_color(color)
+            .into_any_element(),
+        Tool::Redact => boxed(rect, zoom, 0.0)
+            .border_2()
+            .border_color(rgb(REDACT_RED))
             .into_any_element(),
         Tool::Picture => boxed(rect, zoom, 0.0)
             .border_1()
             .border_dashed()
             .border_color(black())
             .into_any_element(),
-        Tool::Ink => {
-            let points = points.to_vec();
-            let width = style.width * zoom;
-            canvas(
-                |_, _, _| {},
-                move |bounds, _, window, _| {
-                    let mut path = PathBuilder::stroke(px(width));
-                    for (index, &(x, y)) in points.iter().enumerate() {
-                        let at = bounds.origin + point(px(x * zoom), px(y * zoom));
-                        if index == 0 {
-                            path.move_to(at);
-                        } else {
-                            path.line_to(at);
-                        }
-                    }
-                    // A single point makes no path: nothing to show yet.
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, color);
-                    }
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .into_any_element()
+        Tool::Ellipse => strokes(
+            vec![geom::ellipse_points(rect, 64)],
+            style.width,
+            color,
+            zoom,
+        ),
+        Tool::Line => strokes(vec![vec![first, last]], style.width, color, zoom),
+        Tool::Arrow => {
+            let mut lines = vec![vec![first, last]];
+            if let Some([a, b]) = geom::arrow_wings(first, last, (style.width * 4.0).max(8.0)) {
+                lines.push(vec![a, last, b]);
+            }
+            strokes(lines, style.width, color, zoom)
         }
+        Tool::Ink => strokes(vec![points.to_vec()], style.width, color, zoom),
         _ => return None,
     };
     Some(element)
+}
+
+/// Polylines (displayed points) stroked `width` points wide, over the whole page.
+fn strokes(lines: Vec<Vec<(f32, f32)>>, width: f32, color: Hsla, zoom: f32) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let mut path = PathBuilder::stroke(px(width * zoom));
+            for line in &lines {
+                for (index, &(x, y)) in line.iter().enumerate() {
+                    let at = bounds.origin + point(px(x * zoom), px(y * zoom));
+                    if index == 0 {
+                        path.move_to(at);
+                    } else {
+                        path.line_to(at);
+                    }
+                }
+            }
+            // A single point makes no path: nothing to show yet.
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
 }

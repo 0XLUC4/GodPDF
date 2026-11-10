@@ -64,7 +64,7 @@ around the pointer.
 - Hooks: `page_overlay(tab, page, rect, window, cx)` (called by the viewer for every visible
   page) and `viewer_overlay(tab, window, cx)` (the quick bar, drawn over the viewer's
   top-left corner). `toolbar` stays `None`.
-- Keys: V H T N D R I E pick a tool, Delete / Backspace delete the selection, Esc drops it,
+- Keys: V H T N D R I E, O L A (ellipse, line, arrow), U K (underline, strikeout), S stamp, X redact pick a tool, Delete / Backspace delete the selection, Esc drops it,
   all in the context `GodPdf && !Input` so they never fire while typing. In a text box
   (context `TextBox`): Ctrl+B / I / U, Ctrl+Enter writes it, Esc cancels.
 

@@ -10,13 +10,14 @@ mod canvas;
 mod editor;
 mod geom;
 mod quickbar;
+mod stamp;
 
 use gpui::assets::IconName;
 use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
 
-use godpdf_core::{CharStyle, Color, Font};
+use godpdf_core::{CharStyle, Color, Font, StampLabel};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
@@ -33,6 +34,13 @@ actions!(
         HighlightTool,
         InkTool,
         RectangleTool,
+        EllipseTool,
+        LineTool,
+        ArrowTool,
+        UnderlineTool,
+        StrikeOutTool,
+        StampTool,
+        RedactTool,
         PictureTool,
         EraserTool,
         DeleteSelection,
@@ -61,23 +69,43 @@ pub enum Tool {
     Highlight,
     Ink,
     Rectangle,
+    Ellipse,
+    Line,
+    Arrow,
+    Underline,
+    StrikeOut,
+    Stamp,
+    /// Mark areas to redact; nothing is removed until "Apply redactions".
+    Redact,
     Picture,
     /// Click or drag over comments to remove them.
     Eraser,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 9] = [
+    /// The quick bar, top to bottom. `Rectangle` stands for the whole shapes group: its button
+    /// shows the last shape picked, the style card picks another.
+    pub const BAR: [Tool; 13] = [
         Tool::Select,
         Tool::Hand,
         Tool::Text,
         Tool::Note,
         Tool::Highlight,
+        Tool::Underline,
+        Tool::StrikeOut,
         Tool::Ink,
         Tool::Rectangle,
+        Tool::Stamp,
         Tool::Picture,
+        Tool::Redact,
         Tool::Eraser,
     ];
+    /// The shapes group.
+    pub const SHAPES: [Tool; 4] = [Tool::Rectangle, Tool::Ellipse, Tool::Line, Tool::Arrow];
+
+    pub fn is_shape(self) -> bool {
+        Self::SHAPES.contains(&self)
+    }
 
     fn icon(self) -> IconName {
         match self {
@@ -88,6 +116,13 @@ impl Tool {
             Self::Highlight => IconName::Highlighter,
             Self::Ink => IconName::Pencil,
             Self::Rectangle => IconName::Square,
+            Self::Ellipse => IconName::Circle,
+            Self::Line => IconName::Minus,
+            Self::Arrow => IconName::MoveUpRight,
+            Self::Underline => IconName::Underline,
+            Self::StrikeOut => IconName::Strikethrough,
+            Self::Stamp => IconName::Stamp,
+            Self::Redact => IconName::EyeOff,
             Self::Picture => IconName::Image,
             Self::Eraser => IconName::Eraser,
         }
@@ -102,6 +137,13 @@ impl Tool {
             Self::Highlight => "Highlight",
             Self::Ink => "Draw",
             Self::Rectangle => "Rectangle",
+            Self::Ellipse => "Ellipse",
+            Self::Line => "Line",
+            Self::Arrow => "Arrow",
+            Self::Underline => "Underline",
+            Self::StrikeOut => "Strikethrough",
+            Self::Stamp => "Stamp",
+            Self::Redact => "Redact",
             Self::Picture => "Picture",
             Self::Eraser => "Eraser",
         }
@@ -116,6 +158,13 @@ impl Tool {
             Self::Note => Some("N"),
             Self::Ink => Some("D"),
             Self::Rectangle => Some("R"),
+            Self::Ellipse => Some("O"),
+            Self::Line => Some("L"),
+            Self::Arrow => Some("A"),
+            Self::Underline => Some("U"),
+            Self::StrikeOut => Some("K"),
+            Self::Stamp => Some("S"),
+            Self::Redact => Some("X"),
             Self::Picture => Some("I"),
             Self::Eraser => Some("E"),
             Self::Highlight => None,
@@ -131,6 +180,13 @@ impl Tool {
             Self::Highlight => Box::new(HighlightTool),
             Self::Ink => Box::new(InkTool),
             Self::Rectangle => Box::new(RectangleTool),
+            Self::Ellipse => Box::new(EllipseTool),
+            Self::Line => Box::new(LineTool),
+            Self::Arrow => Box::new(ArrowTool),
+            Self::Underline => Box::new(UnderlineTool),
+            Self::StrikeOut => Box::new(StrikeOutTool),
+            Self::Stamp => Box::new(StampTool),
+            Self::Redact => Box::new(RedactTool),
             Self::Picture => Box::new(PictureTool),
             Self::Eraser => Box::new(EraserTool),
         }
@@ -152,6 +208,13 @@ impl Tool {
             Self::Highlight => "Drag over the area to highlight",
             Self::Ink => "Draw freehand on the page",
             Self::Rectangle => "Drag to draw a rectangle",
+            Self::Ellipse => "Drag to draw an ellipse",
+            Self::Line => "Drag to draw a line",
+            Self::Arrow => "Drag to draw an arrow",
+            Self::Underline => "Drag over the text to underline",
+            Self::StrikeOut => "Drag over the text to strike through",
+            Self::Stamp => "Pick a stamp, then click where it goes",
+            Self::Redact => "Drag over what to remove; click a mark to drop it",
             Self::Hand => "Drag to move around",
             Self::Eraser => "Click or drag over comments to erase them",
             Self::Select => "Click a comment to select it, drag to move it",
@@ -202,7 +265,10 @@ pub struct Styles {
     pub text: Style,
     pub highlight: Style,
     pub ink: Style,
-    pub rectangle: Style,
+    /// Every shape of the shapes group.
+    pub shape: Style,
+    pub underline: Style,
+    pub strike_out: Style,
 }
 
 impl Default for Styles {
@@ -217,7 +283,9 @@ impl Default for Styles {
             text: style(SWATCHES[0].0),
             highlight: style(SWATCHES[4].0),
             ink: style(SWATCHES[0].0),
-            rectangle: style(SWATCHES[0].0),
+            shape: style(SWATCHES[0].0),
+            underline: style(SWATCHES[3].0),
+            strike_out: style(SWATCHES[2].0),
         }
     }
 }
@@ -228,7 +296,9 @@ impl Styles {
         match tool {
             Tool::Highlight => &mut self.highlight,
             Tool::Ink => &mut self.ink,
-            Tool::Rectangle => &mut self.rectangle,
+            Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Arrow => &mut self.shape,
+            Tool::Underline => &mut self.underline,
+            Tool::StrikeOut => &mut self.strike_out,
             _ => &mut self.text,
         }
     }
@@ -237,7 +307,9 @@ impl Styles {
         match tool {
             Tool::Highlight => self.highlight,
             Tool::Ink => self.ink,
-            Tool::Rectangle => self.rectangle,
+            Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Arrow => self.shape,
+            Tool::Underline => self.underline,
+            Tool::StrikeOut => self.strike_out,
             _ => self.text,
         }
     }
@@ -301,6 +373,11 @@ pub struct ToolState {
     pub styles: Styles,
     /// Picture card: width and height change together.
     pub keep_ratio: bool,
+    /// The shape the shapes group button picks.
+    pub shape: Tool,
+    /// The stamp the stamp tool places, and whether it gets today's date.
+    pub stamp: StampLabel,
+    pub stamp_date: bool,
     /// The document the viewer shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
     picture_card: Option<quickbar::PictureCard>,
@@ -312,6 +389,9 @@ impl Default for ToolState {
             tool: Tool::Select,
             styles: Styles::default(),
             keep_ratio: true,
+            shape: Tool::Rectangle,
+            stamp: StampLabel::Approved,
+            stamp_date: false,
             active: None,
             picture_card: None,
         }
@@ -346,7 +426,11 @@ fn with_active(cx: &mut App, update: impl FnOnce(&mut DocTab, &mut Context<DocTa
 
 fn set_tool(tool: Tool, cx: &mut App) {
     with_active(cx, canvas::reset);
-    tool_state(cx).tool = tool;
+    let state = tool_state(cx);
+    state.tool = tool;
+    if tool.is_shape() {
+        state.shape = tool;
+    }
     cx.refresh_windows();
 }
 
@@ -361,6 +445,13 @@ pub fn register(cx: &mut App) {
         KeyBinding::new("n", NoteTool, keys),
         KeyBinding::new("d", InkTool, keys),
         KeyBinding::new("r", RectangleTool, keys),
+        KeyBinding::new("o", EllipseTool, keys),
+        KeyBinding::new("l", LineTool, keys),
+        KeyBinding::new("a", ArrowTool, keys),
+        KeyBinding::new("u", UnderlineTool, keys),
+        KeyBinding::new("k", StrikeOutTool, keys),
+        KeyBinding::new("s", StampTool, keys),
+        KeyBinding::new("x", RedactTool, keys),
         KeyBinding::new("i", PictureTool, keys),
         KeyBinding::new("e", EraserTool, keys),
         KeyBinding::new("delete", DeleteSelection, keys),
@@ -377,6 +468,13 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &HighlightTool, cx| set_tool(Tool::Highlight, cx));
     cx.on_action(|_: &InkTool, cx| set_tool(Tool::Ink, cx));
     cx.on_action(|_: &RectangleTool, cx| set_tool(Tool::Rectangle, cx));
+    cx.on_action(|_: &EllipseTool, cx| set_tool(Tool::Ellipse, cx));
+    cx.on_action(|_: &LineTool, cx| set_tool(Tool::Line, cx));
+    cx.on_action(|_: &ArrowTool, cx| set_tool(Tool::Arrow, cx));
+    cx.on_action(|_: &UnderlineTool, cx| set_tool(Tool::Underline, cx));
+    cx.on_action(|_: &StrikeOutTool, cx| set_tool(Tool::StrikeOut, cx));
+    cx.on_action(|_: &StampTool, cx| set_tool(Tool::Stamp, cx));
+    cx.on_action(|_: &RedactTool, cx| set_tool(Tool::Redact, cx));
     cx.on_action(|_: &PictureTool, cx| set_tool(Tool::Picture, cx));
     cx.on_action(|_: &EraserTool, cx| set_tool(Tool::Eraser, cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));

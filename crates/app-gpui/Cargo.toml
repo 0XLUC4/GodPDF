@@ -18,3 +18,13 @@ gpui = { package = "gpui-kit", version = "0.9.1" }
 rfd = "0.17"
 # Same version gpui uses, to build its page bitmaps (`image::Frame`) and decode pictures.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Text recognition (same as crates/app): the recognizer of Windows there, a downloaded model elsewhere.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Security_Cryptography", "Storage_Streams", "Globalization"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ocrs = "0.13"
+rten = "0.26"
+anyhow = "1"
+ureq = "3"

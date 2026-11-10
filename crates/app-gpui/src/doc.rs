@@ -68,6 +68,8 @@ pub struct DocTab {
     pub canvas: crate::tools::Canvas,
     /// Sidebar state of this document: thumbnails, search hits, bookmark being renamed.
     pub panels: crate::panels::TabPanels,
+    /// Page text: positions, selection, line being edited.
+    pub text: crate::text::TabText,
 }
 
 impl DocTab {
@@ -86,6 +88,7 @@ impl DocTab {
             thumb_drag: None,
             canvas: Default::default(),
             panels: Default::default(),
+            text: Default::default(),
             view: ViewState {
                 zoom: 1.0,
                 scroll: (0.0, 0.0),

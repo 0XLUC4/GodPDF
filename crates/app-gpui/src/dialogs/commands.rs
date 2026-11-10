@@ -5,7 +5,7 @@
 use gpui::Action;
 
 use super::*;
-use crate::{app, tools};
+use crate::{app, text, tools};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
@@ -194,6 +194,12 @@ pub static COMMANDS: &[Command] = &[
     })
     .without_doc(),
     command(
+        "Compare with…",
+        Combine,
+        "The text and the look of two PDFs, page by page",
+        || Box::new(text::CompareWith),
+    ),
+    command(
         "Select",
         Comment,
         "Select, move and resize comments",
@@ -258,10 +264,25 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(RemoveHiddenData),
     ),
     command(
+        "Recognize text (OCR)",
+        Document,
+        "Make scanned pages searchable: their words become text",
+        || Box::new(text::RecognizeText),
+    ),
+    command(
         "Properties…",
         Document,
         "Edit title, author, keywords",
         || Box::new(Properties),
+    ),
+    command("Extract text", Document, "Copy all text out", || {
+        Box::new(text::ExtractText)
+    }),
+    command(
+        "Edit PDF text",
+        Document,
+        "Click a line of the page to change its words",
+        || Box::new(text::EditText),
     ),
     command(
         "Add watermark…",

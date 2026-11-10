@@ -29,6 +29,7 @@ mod icons;
 mod panels;
 mod shell;
 mod signature;
+mod text;
 #[allow(dead_code)]
 mod theme;
 mod toasts;

@@ -3,6 +3,8 @@
 //! file and restarts on the new one.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui::{App, Global};
@@ -58,8 +60,28 @@ pub enum State {
 pub enum Install {
     #[default]
     Idle,
-    Downloading,
+    Downloading(Arc<Progress>),
 }
+
+/// How much of the update is downloaded, written by the download thread.
+#[derive(Default)]
+pub struct Progress {
+    done: AtomicU64,
+    /// 0 while the size is not known.
+    total: AtomicU64,
+}
+
+impl Progress {
+    /// The part downloaded, 0 to 1; `None` while the size is not known.
+    pub fn fraction(&self) -> Option<f32> {
+        let total = self.total.load(Ordering::Relaxed);
+        let done = self.done.load(Ordering::Relaxed);
+        (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0) as f32)
+    }
+}
+
+/// How often the card is drawn again while downloading.
+const PROGRESS_REFRESH: Duration = Duration::from_millis(100);
 
 #[derive(Default)]
 pub struct Updates {
@@ -118,13 +140,33 @@ pub fn install(url: String, cx: &mut App) {
         quit(cx);
         return;
     }
-    if matches!(updates.install, Install::Downloading) {
+    if matches!(updates.install, Install::Downloading(_)) {
         return;
     }
-    updates.install = Install::Downloading;
-    let replaced = cx
-        .background_executor()
-        .spawn(async move { replace_program(&url) });
+    let progress = Arc::new(Progress::default());
+    updates.install = Install::Downloading(Arc::clone(&progress));
+    let replaced = cx.background_executor().spawn({
+        let progress = Arc::clone(&progress);
+        async move { replace_program(&url, &progress) }
+    });
+    // Draw the bar again as it fills, until the download is over.
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(PROGRESS_REFRESH).await;
+            let downloading = cx.update(|cx| {
+                let install = get(cx).map(|updates| &updates.install);
+                let busy = matches!(install, Some(Install::Downloading(_)));
+                if busy {
+                    cx.refresh_windows();
+                }
+                busy
+            });
+            if !downloading {
+                break;
+            }
+        }
+    })
+    .detach();
     cx.spawn(async move |cx| {
         let result = replaced.await;
         cx.update(|cx| {
@@ -201,7 +243,7 @@ pub fn remove_old_program() {
 }
 
 /// Download beside the program, then rename: the running file becomes `.old.exe`.
-fn replace_program(url: &str) -> Result<PathBuf, String> {
+fn replace_program(url: &str, progress: &Progress) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|err| format!("Cannot find GodPDF: {err}"))?;
     let new = exe.with_extension("new.exe");
     let old = old_program(&exe);
@@ -210,9 +252,19 @@ fn replace_program(url: &str) -> Result<PathBuf, String> {
         .header("User-Agent", user_agent())
         .call()
         .map_err(|err| format!("Cannot download the update: {err}"))?;
+    let total = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok()?.parse().ok())
+        .unwrap_or(0);
+    progress.total.store(total, Ordering::Relaxed);
     let mut file =
         std::fs::File::create(&new).map_err(|err| format!("Cannot write the update: {err}"))?;
-    let written = std::io::copy(&mut response.body_mut().as_reader(), &mut file)
+    let mut counted = Counted {
+        inner: response.body_mut().as_reader(),
+        progress,
+    };
+    let written = std::io::copy(&mut counted, &mut file)
         .map_err(|err| format!("Download interrupted: {err}"));
     drop(file);
     match written {
@@ -237,6 +289,20 @@ fn replace_program(url: &str) -> Result<PathBuf, String> {
         return Err(format!("Cannot replace GodPDF: {err}"));
     }
     Ok(exe)
+}
+
+/// A reader that adds what it reads to `progress`.
+struct Counted<'a, R> {
+    inner: R,
+    progress: &'a Progress,
+}
+
+impl<R: std::io::Read> std::io::Read for Counted<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.progress.done.fetch_add(read as u64, Ordering::Relaxed);
+        Ok(read)
+    }
 }
 
 fn parse(body: &str) -> Result<Vec<Release>, String> {

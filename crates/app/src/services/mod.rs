@@ -467,7 +467,10 @@ fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
     let current = env!("CARGO_PKG_VERSION");
     let (state, downloading) = updates::get(cx)
         .map(|updates| {
-            let downloading = matches!(updates.install, Install::Downloading);
+            let downloading = match &updates.install {
+                Install::Downloading(progress) => Some(progress.fraction()),
+                Install::Idle => None,
+            };
             (updates.state.clone(), downloading)
         })
         .unwrap_or_default();
@@ -527,7 +530,12 @@ fn updates_card(palette: &Palette, cx: &App) -> AnyElement {
                 )
             })
             .child(div().h(px(4.)))
-            .child(update_button(install.clone(), release.url, downloading))
+            .child(update_button(
+                install.clone(),
+                release.url,
+                downloading.is_some(),
+            ))
+            .children(downloading.map(|fraction| progress_bar(fraction, palette)))
             .when(install.is_some(), |card| {
                 card.child(
                     div()
@@ -589,10 +597,7 @@ fn update_button(install: Option<String>, page: String, downloading: bool) -> An
         .bg(theme::hex(theme::DOWNLOAD_BLUE))
         .text_color(white);
     let button = match install {
-        Some(_) if downloading => button
-            .opacity(0.6)
-            .child(Spinner::new().with_size(Size::Small).color(white))
-            .child("Downloading…"),
+        Some(_) if downloading => button.opacity(0.6).child("Downloading…"),
         Some(asset) => button
             .cursor_pointer()
             .hover(|style| style.opacity(0.9))
@@ -615,6 +620,41 @@ fn update_button(install: Option<String>, page: String, downloading: bool) -> An
         }
     };
     button.into_any_element()
+}
+
+/// Under "Downloading…": a 4 px bar filled to `fraction`, with the percentage. Empty while
+/// the size of the download is not known yet.
+fn progress_bar(fraction: Option<f32>, palette: &Palette) -> AnyElement {
+    let part = fraction.unwrap_or(0.0);
+    div()
+        .pt(px(6.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            div()
+                .flex_1()
+                .h(px(4.))
+                .rounded(px(2.))
+                .bg(palette.hover)
+                .child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(part))
+                        .rounded(px(2.))
+                        .bg(theme::hex(theme::DOWNLOAD_BLUE)),
+                ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(32.))
+                .text_right()
+                .text_size(px(11.))
+                .text_color(palette.text_dim)
+                .child(format!("{:.0} %", part * 100.0)),
+        )
+        .into_any_element()
 }
 
 /// Check again; the arrow spins while checking.

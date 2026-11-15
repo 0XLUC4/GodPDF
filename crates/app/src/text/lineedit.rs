@@ -19,6 +19,9 @@ use crate::theme::{self, Palette};
 use crate::tools::{Format, ToggleBold, ToggleItalic, ToggleUnderline};
 use crate::{geometry, icons, toasts, widgets};
 
+/// Line height of the field, in ems of the text: room for accents and descenders.
+const FIELD_LINE: f32 = 1.3;
+
 /// Frame of the line being changed (rgb 25 63 EB).
 const FRAME_BLUE: u32 = 0x2563EB;
 
@@ -369,7 +372,9 @@ pub fn render(
         .unwrap_or(gpui::black());
     let letters = line.marked.chars().count() as f32;
     let width = ((x1 - x0) * zoom).max((letters * 0.55 + 1.0) * font_px);
-    let height = ((y1 - y0) * zoom).max(font_px * 1.25);
+    // One line of the font, ascenders to descenders: the field never cuts its letters.
+    let line_px = font_px * FIELD_LINE;
+    let height = ((y1 - y0) * zoom).max(line_px);
     let top = (y0 + y1) / 2.0 * zoom - height / 2.0;
     let keep_focus = |_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut gpui::App| {
         window.prevent_default();
@@ -412,6 +417,12 @@ pub fn render(
             Input::new(&line.input)
                 .appearance(false)
                 .w_full()
+                // The input's own sizes (a 20 px line, 32 px high, 12 px in) are for UI
+                // text: at the size of the page they would cut big letters and shift them.
+                .h(px(line_px))
+                .px(px(0.0))
+                .py(px(0.0))
+                .line_height(px(line_px))
                 .text_size(px(font_px))
                 .font_family(font_family(line.font))
                 .text_color(color)

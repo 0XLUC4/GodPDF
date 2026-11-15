@@ -10,7 +10,7 @@ use gpui::component::input::{Escape, Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, FontWeight, Hsla, MouseButton, Rgba, SharedString, Subscription,
-    Window, div, px, rgb, white,
+    Window, div, px, rgb,
 };
 
 use super::sel;
@@ -44,6 +44,8 @@ pub struct LineEdit {
     font: Font,
     size: f32,
     colors: Vec<Hsla>,
+    /// The page colour around the run: the field's, so light text on a dark band shows.
+    backdrop: Hsla,
     _events: Subscription,
 }
 
@@ -114,6 +116,69 @@ pub(crate) fn reconcile<T: Copy + Default>(
     marks.truncate(prefix);
     marks.extend(std::iter::repeat_n(mark, new.len() - prefix - suffix));
     marks.extend(kept);
+}
+
+/// The colour the page has around `band` (left, top, right, bottom, in pixels of a `width` x
+/// `height` BGRA bitmap): the most common one on a ring 2 to 4 pixels outside it. White when
+/// the ring is off the bitmap.
+pub(crate) fn backdrop(bgra: &[u8], width: usize, height: usize, band: [f32; 4]) -> [u8; 3] {
+    let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
+    let mut count = |x: f32, y: f32| {
+        let (x, y) = (x.round(), y.round());
+        if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
+            return;
+        }
+        let at = (y as usize * width + x as usize) * 4;
+        if let Some(&[b, g, r, _]) = bgra.get(at..at + 4).and_then(|px| px.as_array()) {
+            *counts.entry([r, g, b]).or_default() += 1;
+        }
+    };
+    let [x0, y0, x1, y1] = band;
+    for out in [2.0, 3.0, 4.0] {
+        let steps = ((x1 - x0) / 2.0).ceil().max(1.0) as usize;
+        for step in 0..=steps {
+            let x = x0 + (x1 - x0) * step as f32 / steps as f32;
+            count(x, y0 - out);
+            count(x, y1 + out);
+        }
+        let steps = ((y1 - y0) / 2.0).ceil().max(1.0) as usize;
+        for step in 0..=steps {
+            let y = y0 + (y1 - y0) * step as f32 / steps as f32;
+            count(x0 - out, y);
+            count(x1 + out, y);
+        }
+    }
+    // Ties go to the lightest, so a page cut evenly stays as it was (white first).
+    counts
+        .into_iter()
+        .max_by_key(|(color, count)| (*count, color.iter().map(|&c| u32::from(c)).sum::<u32>()))
+        .map_or([255; 3], |(color, _)| color)
+}
+
+/// The colour of the page around `band` (displayed points) as last rendered.
+fn page_backdrop(tab: &DocTab, page: usize, band: [f32; 4]) -> Hsla {
+    let white = Rgba {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let color = (|| {
+        let image = tab.cached_page(page)?;
+        let &(page_width, _) = tab.page_sizes.get(page)?;
+        let pixels = image.size(0);
+        let (width, height) = (pixels.width.0 as usize, pixels.height.0 as usize);
+        let scale = width as f32 / page_width.max(1.0);
+        let [r, g, b] = backdrop(image.as_bytes(0)?, width, height, band.map(|v| v * scale));
+        let channel = |value: u8| f32::from(value) / 255.0;
+        Some(Rgba {
+            r: channel(r),
+            g: channel(g),
+            b: channel(b),
+            a: 1.0,
+        })
+    })();
+    color.unwrap_or(white).into()
 }
 
 fn font_family(font: Font) -> &'static str {
@@ -221,6 +286,7 @@ pub fn open(
         font: look.as_ref().map_or(Font::Times, |look| look.font),
         size: look.as_ref().map_or(band[3] - band[1], |look| look.size),
         colors,
+        backdrop: page_backdrop(tab, page, band),
         _events,
     });
 }
@@ -320,7 +386,7 @@ pub fn render(
         .px(px(2.0))
         .flex()
         .items_center()
-        .bg(white())
+        .bg(line.backdrop)
         .rounded(px(2.0))
         .border_1()
         .border_color(rgb(FRAME_BLUE))
@@ -417,7 +483,40 @@ pub fn line_at(chars: &[godpdf_render::TextChar], point: (f32, f32)) -> Option<[
 
 #[cfg(test)]
 mod tests {
-    use super::reconcile;
+    use super::{backdrop, reconcile};
+
+    /// A `width` x `height` BGRA bitmap of `paper`, with `ink` from `from` to `to` (pixels).
+    fn bitmap(width: usize, height: usize, paper: [u8; 3], ink: ([u8; 3], [usize; 4])) -> Vec<u8> {
+        let (color, [x0, y0, x1, y1]) = ink;
+        let mut bgra = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = if (x0..x1).contains(&x) && (y0..y1).contains(&y) {
+                    color
+                } else {
+                    paper
+                };
+                bgra.extend([b, g, r, 255]);
+            }
+        }
+        bgra
+    }
+
+    #[test]
+    fn the_field_takes_the_colour_around_the_run() {
+        let navy = [0x16, 0x21, 0x3E];
+        // White text on a dark band: the band is around the run, the page white further out.
+        let bgra = bitmap(100, 60, [255; 3], (navy, [10, 10, 90, 50]));
+        assert_eq!(backdrop(&bgra, 100, 60, [20.0, 20.0, 80.0, 40.0]), navy);
+        // Black text on a white page.
+        let bgra = bitmap(100, 60, [255; 3], ([0; 3], [20, 20, 80, 40]));
+        assert_eq!(backdrop(&bgra, 100, 60, [20.0, 20.0, 80.0, 40.0]), [255; 3]);
+        // Off the bitmap: white.
+        assert_eq!(
+            backdrop(&bgra, 100, 60, [200.0, 200.0, 300.0, 300.0]),
+            [255; 3]
+        );
+    }
 
     #[test]
     fn marks_follow_the_words() {

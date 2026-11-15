@@ -8,10 +8,10 @@ use gpui::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Div, MouseButton, SharedString, Stateful, WeakEntity,
-    Window, div, px,
+    Window, WindowControlArea, div, px, rgb, white,
 };
 
-use super::{ReopenTab, TAB_HEIGHT};
+use super::{CUSTOM_TITLE_BAR, ReopenTab, TAB_HEIGHT};
 use crate::app::{GodPdfApp, Open, ToggleTheme};
 use crate::theme::Palette;
 use crate::widgets::{self, ICON_BUTTON, SMALL_ICON_BUTTON, dispatch, icon};
@@ -126,7 +126,6 @@ pub fn render(
         (icons::MOON, "Dark mode")
     };
     let right = div()
-        .ml_auto()
         .flex_none()
         .flex()
         .items_center()
@@ -154,14 +153,81 @@ pub fn render(
         .h(px(TAB_HEIGHT + 4.))
         .pt(px(4.))
         .pl(px(8. + 2.))
-        .pr(px(8.))
+        .when(!CUSTOM_TITLE_BAR, |row| row.pr(px(8.)))
         .bg(palette.surface)
         .text_size(px(fonts::BODY))
         .child(home)
         .child(tabs)
         .child(div().flex_none().w(px(6. - 2.)))
         .child(open)
+        // The free room between "+ Open" and the buttons moves the window.
+        .child(
+            div()
+                .id("title-drag")
+                .flex_1()
+                .min_w(px(DRAG_MIN))
+                .h_full()
+                .when(CUSTOM_TITLE_BAR, |area| {
+                    area.window_control_area(WindowControlArea::Drag)
+                }),
+        )
         .child(right)
+        .when(CUSTOM_TITLE_BAR, |row| {
+            row.child(window_buttons(window, palette))
+        })
+        .into_any_element()
+}
+
+/// Narrowest room kept to drag the window by, between "+ Open" and the buttons.
+const DRAG_MIN: f32 = 24.0;
+/// One window button (minimize, maximize, close): width, and its glyph.
+const WINDOW_BUTTON: f32 = 44.0;
+const WINDOW_GLYPH: f32 = 15.0;
+/// Close button hovered: the red of Windows, white glyph.
+const CLOSE_RED: u32 = 0xC42B1C;
+
+/// Minimize, maximize / restore and close, flush with the top right corner. Windows itself
+/// runs them (the areas answer its hit test), so they act like the system buttons.
+fn window_buttons(window: &Window, palette: &Palette) -> AnyElement {
+    let maximize = if window.is_maximized() {
+        icons::COPY
+    } else {
+        icons::SQUARE
+    };
+    let button = |id: &'static str, glyph: &'static str, area: WindowControlArea| {
+        let close = area == WindowControlArea::Close;
+        let hover = if close {
+            rgb(CLOSE_RED).into()
+        } else {
+            palette.hover
+        };
+        let glyph_color = palette.text;
+        div()
+            .id(id)
+            .group(id)
+            .flex_none()
+            .w(px(WINDOW_BUTTON))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .window_control_area(area)
+            .hover(move |style| style.bg(hover))
+            .child(icon(glyph, WINDOW_GLYPH, glyph_color).when(close, |glyph| {
+                glyph.group_hover(id, |style| style.text_color(white()))
+            }))
+    };
+    // Up to the very top: the row's 4 px over the tabs is theirs too.
+    div()
+        .flex_none()
+        .flex()
+        .self_start()
+        .h(px(TAB_HEIGHT + 4.))
+        .mt(px(-4.))
+        .ml(px(8.))
+        .child(button("window-min", icons::MINUS, WindowControlArea::Min))
+        .child(button("window-max", maximize, WindowControlArea::Max))
+        .child(button("window-close", icons::X, WindowControlArea::Close))
         .into_any_element()
 }
 
@@ -174,7 +240,13 @@ const OPEN_WIDTH: f32 = 78.0;
 /// (12 + 16 + 8 + 14 + 8 + 22 + 8). Clamped to 40..=`TAB_TEXT_MAX`.
 fn tab_text_max(viewport: f32, count: usize) -> f32 {
     let available = viewport - 16.0 - 2.0 - 40.0 - 2.0;
-    let reserved = 4.0 + 2.0 + OPEN_WIDTH + 2.0 + 3.0 * ICON_BUTTON + 2.0 * 2.0;
+    let title_bar = if CUSTOM_TITLE_BAR {
+        // The drag room and the window buttons, less the right margin they replace.
+        2.0 + DRAG_MIN + 2.0 + 8.0 + 3.0 * WINDOW_BUTTON - 8.0
+    } else {
+        0.0
+    };
+    let reserved = 4.0 + 2.0 + OPEN_WIDTH + 2.0 + 3.0 * ICON_BUTTON + 2.0 * 2.0 + title_bar;
     let chrome = 12.0 + 16.0 + 8.0 + 14.0 + 8.0 + SMALL_ICON_BUTTON + 8.0;
     let per_tab = (available - reserved) / count.max(1) as f32 - 2.0;
     (per_tab - chrome).clamp(40.0, TAB_TEXT_MAX)

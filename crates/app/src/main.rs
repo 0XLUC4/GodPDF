@@ -42,7 +42,7 @@ mod tools;
 mod viewer;
 mod widgets;
 
-use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
 pub const APP_NAME: &str = "GodPDF";
 
@@ -68,6 +68,12 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 window_min_size: Some(size(px(min_width), px(min_height))),
+                // On Windows the tab row is the title bar, with its own window buttons.
+                titlebar: Some(TitlebarOptions {
+                    title: Some(APP_NAME.into()),
+                    appears_transparent: shell::CUSTOM_TITLE_BAR,
+                    traffic_light_position: None,
+                }),
                 ..Default::default()
             };
             let opened = gpui::open_window(options, cx, |window, cx| {

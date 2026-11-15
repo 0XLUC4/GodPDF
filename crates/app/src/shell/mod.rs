@@ -1,7 +1,8 @@
 //! Window chrome around the document. See DESIGN.md for
 //! every measurement. One file per region:
 //!
-//! - `tabrow.rs`: home button, document tabs, "+ Open", updates / about / theme.
+//! - `tabrow.rs`: home button, document tabs, "+ Open", updates / about / theme, and on
+//!   Windows the title bar: drag area and minimize / maximize / close.
 //! - `header.rs`: Menu, mode tabs, search pill, properties / save / export / print.
 //! - `leftpanel.rs`: the tools panel ("All tools", ... ) left of the canvas.
 //! - `rail.rs`: right icon rail (views, page box, zoom). The panel it opens is `panels::right`.
@@ -41,6 +42,9 @@ pub fn register(cx: &mut App) {
 
 /// Height of the document tab row.
 pub const TAB_HEIGHT: f32 = 38.0;
+/// The system title bar is hidden and the tab row stands for it (drag, double click,
+/// minimize / maximize / close buttons). Windows only: elsewhere the system one stays.
+pub const CUSTOM_TITLE_BAR: bool = cfg!(windows);
 /// Height of the header row (menu, mode tabs, search).
 pub const HEADER_HEIGHT: f32 = 46.0;
 

@@ -1,7 +1,9 @@
 //! Changing the words of one run of text (a cell of a table, a phrase) where the page draws
 //! them. Only the characters that changed are written again: every other glyph keeps its
-//! operator, code, font, colour and place. New characters are written in the font of the
-//! glyphs around them when it has them, else in the standard font closest to it.
+//! operator, code, font and colour. The letters of the run after the change move with it, as
+//! in a text field; everything outside the run stays where it was. New characters are written
+//! in the font of the glyphs around them when it has them, else in the standard font closest
+//! to it.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -22,6 +24,8 @@ use crate::{Error, Result};
 const SLACK: f32 = 1.5;
 /// A gap wider than this, in ems, reads as a space the PDF does not write (as the viewer).
 const IMPLIED_SPACE: f32 = 0.25;
+/// Pen shifts closer than this, in points, are the same.
+const SAME_PLACE: f32 = 0.001;
 
 /// What a font's codes are as Unicode, and back.
 pub(crate) struct Unicode {
@@ -116,6 +120,8 @@ struct Shown {
     size: f32,
     char_spacing: f32,
     word_spacing: f32,
+    /// Points on the page per unit of text space along the line (matrix and scaling).
+    scale: f32,
 }
 
 /// One glyph a page draws.
@@ -222,6 +228,7 @@ fn scan(
                     line = next_line(line, state.leading);
                     text = line;
                 }
+                let drawn = then(text, state.ctm);
                 shows.insert(
                     index,
                     Shown {
@@ -229,9 +236,9 @@ fn scan(
                         size: state.size,
                         char_spacing: state.char_spacing,
                         word_spacing: state.word_spacing,
+                        scale: drawn[0] * state.scaling,
                     },
                 );
-                let drawn = then(text, state.ctm);
                 let skew = drawn[1].abs().max(drawn[2].abs());
                 let upright = drawn[0] > 0.0 && drawn[3] > 0.0 && skew <= 0.02 * drawn[0];
                 let font = fonts.get(&state.font);
@@ -375,8 +382,8 @@ pub fn run_text(pdf: &[u8], page: usize, area: Rect) -> Result<Vec<(char, f32)>>
 
 /// Have the run `page` draws in `area` say `text` (as [`run_text`] spells it, changed).
 /// Only what changed is written again, where it was, in the colour and font of the glyphs
-/// around it (a standard font for letters that font has not); every other glyph keeps its
-/// place, even when the new words are longer or shorter.
+/// around it (a standard font for letters that font has not). The rest of the run moves by
+/// how much longer or shorter the new words are; glyphs outside the run keep their place.
 pub fn replace_run(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<Vec<u8>> {
     let mut run = Run::read(pdf, page, area)?;
     let old: Vec<char> = run.letters.iter().map(|letter| letter.letter).collect();
@@ -422,35 +429,71 @@ pub fn replace_run(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<Ve
         return Err(Error::InvalidArgument("nothing to edit here".into()));
     };
 
-    let mut changed: Vec<usize> = removed.iter().map(|&glyph| run.glyphs[glyph].op).collect();
-    changed.push(run.glyphs[anchor.0].op);
-    changed.sort_unstable();
-    changed.dedup();
+    // The glyphs of the run after the change move by `shift`: as much as the new letters
+    // are wider than those taken out.
+    let after_edit: HashSet<usize> = (hi..old.len())
+        .filter_map(glyph_of)
+        .filter(|glyph| !removed.contains(glyph))
+        .collect();
+    let taken: f32 = removed
+        .iter()
+        .map(|&glyph| {
+            let glyph = &run.glyphs[glyph];
+            glyph.advance * run.shows[&glyph.op].scale
+        })
+        .sum();
+    let shift = width_of(&run, run.glyphs[anchor.0].op, &inserted) - taken;
+    let mut changed: HashSet<usize> = removed.iter().map(|&glyph| run.glyphs[glyph].op).collect();
+    changed.insert(run.glyphs[anchor.0].op);
+    // How far each show's glyphs belong from where the page had them (several: rebuild it).
+    let mut belong: HashMap<usize, Vec<f32>> = HashMap::new();
+    for (at, glyph) in run.glyphs.iter().enumerate() {
+        let moved = if after_edit.contains(&at) { shift } else { 0.0 };
+        let all = belong.entry(glyph.op).or_default();
+        if !all.contains(&moved) {
+            all.push(moved);
+        }
+    }
+    let in_place = |op: usize, moved_by: f32| {
+        belong
+            .get(&op)
+            .map_or(&[0.0][..], Vec::as_slice)
+            .iter()
+            .all(|moved| (moved - moved_by).abs() < SAME_PLACE)
+    };
     let edit = Edit {
         removed: &removed,
         anchor,
         inserted: &inserted,
+        after_edit: &after_edit,
+        shift,
     };
     let mut faces: HashMap<Face, String> = HashMap::new();
-    let mut rebuilt: HashMap<usize, Vec<Operation>> = HashMap::new();
-    for op in changed {
-        let (mut operations, fallbacks) = rebuild(&run, op, &edit);
-        let shown = &run.shows[&op];
+    let originals = std::mem::take(&mut run.operations);
+    let mut operations = Vec::with_capacity(originals.len() + 8);
+    // How far the pen is from where the page had it, in points; a new line starts it again.
+    let mut moved_by = 0.0;
+    for (index, operation) in originals.iter().enumerate() {
+        let new_line = ["BT", "Td", "TD", "Tm", "T*", "'", "\""];
+        if new_line.contains(&operation.operator.as_str()) {
+            moved_by = 0.0;
+        }
+        let shows = run.shows.contains_key(&index);
+        if !shows || (!changed.contains(&index) && in_place(index, moved_by)) {
+            operations.push(operation.clone());
+            continue;
+        }
+        let (mut rebuilt, fallbacks, end) = rebuild(&run, operation, index, &edit, moved_by);
+        moved_by = end;
+        let shown = &run.shows[&index];
         let face = run
             .fonts
             .get(&shown.font)
             .map(|font| font.face)
             .unwrap_or_default();
         let look = (face, shown.font.clone(), shown.size);
-        fall_back(&mut run, &mut faces, &mut operations, fallbacks, look)?;
-        rebuilt.insert(op, operations);
-    }
-    let mut operations = Vec::with_capacity(run.operations.len() + 8);
-    for (index, operation) in std::mem::take(&mut run.operations).into_iter().enumerate() {
-        match rebuilt.remove(&index) {
-            Some(new) => operations.extend(new),
-            None => operations.push(operation),
-        }
+        fall_back(&mut run, &mut faces, &mut rebuilt, fallbacks, look)?;
+        operations.extend(rebuilt);
     }
     // A stream of its own: the old one may be shared with other pages.
     let bytes = Content { operations }.encode()?;
@@ -461,12 +504,38 @@ pub fn replace_run(pdf: &[u8], page: usize, area: Rect, text: &str) -> Result<Ve
     save(&mut run.doc)
 }
 
-/// What changes in a run: the glyphs taken out, and the letters written at `anchor` (a glyph,
-/// and whether they go in its place / before it rather than after it).
+/// What changes in a run: the glyphs taken out, the letters written at `anchor` (a glyph,
+/// and whether they go in its place / before it rather than after it), and the glyphs after
+/// them, moved by `shift` points.
 struct Edit<'a> {
     removed: &'a HashSet<usize>,
     anchor: (usize, bool),
     inserted: &'a str,
+    after_edit: &'a HashSet<usize>,
+    shift: f32,
+}
+
+/// How wide `letters` are, in points on the page, written by the show operator `op`.
+fn width_of(run: &Run, op: usize, letters: &str) -> f32 {
+    let shown = &run.shows[&op];
+    let empty = HashSet::new();
+    let used = run.used.get(&shown.font).unwrap_or(&empty);
+    let mut scratch = Writer {
+        operations: Vec::new(),
+        items: Vec::new(),
+    };
+    let font = run.fonts.get(&shown.font);
+    let format = StringFormat::Literal;
+    let advance = insert(
+        shown,
+        font,
+        used,
+        letters,
+        format,
+        &mut scratch,
+        &mut Vec::new(),
+    );
+    advance * shown.scale
 }
 
 /// A `TJ` being written: its strings and gaps, and the operators before it.
@@ -499,11 +568,19 @@ impl Writer {
     }
 }
 
-/// The show operator `op` of `run` with `edit` made: its other glyphs and gaps as they were,
-/// each glyph taken out a gap as wide, the new letters drawn over their width then the pen
-/// moved back. Also the letters its font has not, each with the operator they go before.
-fn rebuild(run: &Run, op: usize, edit: &Edit) -> (Vec<Operation>, Vec<(String, usize)>) {
-    let operation = &run.operations[op];
+/// The show `operation` (index `op`) of `run` with `edit` made, its pen starting `moved_by`
+/// points from where the page had it: its other glyphs and gaps as they were, the glyphs
+/// taken out gone, the new letters where they go, and a gap wherever a glyph would otherwise
+/// not be where it belongs (moved by `edit.shift` after the change, in place elsewhere).
+/// Also the letters its font has not, each with the operator they go before, and how far
+/// the pen is moved at its end.
+fn rebuild(
+    run: &Run,
+    operation: &Operation,
+    op: usize,
+    edit: &Edit,
+    mut moved_by: f32,
+) -> (Vec<Operation>, Vec<(String, usize)>, f32) {
     let shown = &run.shows[&op];
     let font = run.fonts.get(&shown.font);
     let empty = HashSet::new();
@@ -534,7 +611,7 @@ fn rebuild(run: &Run, op: usize, edit: &Edit) -> (Vec<Operation>, Vec<(String, u
         .collect();
     let mut fallbacks = Vec::new();
     let mut write_new = |writer: &mut Writer, format: StringFormat| {
-        insert(
+        let advance = insert(
             shown,
             font,
             used,
@@ -543,6 +620,7 @@ fn rebuild(run: &Run, op: usize, edit: &Edit) -> (Vec<Operation>, Vec<(String, u
             writer,
             &mut fallbacks,
         );
+        advance * shown.scale
     };
     for (item, shown_item) in items(operation).iter().enumerate() {
         let Object::String(bytes, format) = shown_item else {
@@ -558,20 +636,34 @@ fn rebuild(run: &Run, op: usize, edit: &Edit) -> (Vec<Operation>, Vec<(String, u
             let glyph = glyphs.get(&(item, at)).copied();
             let anchored = glyph == Some(edit.anchor.0);
             if anchored && edit.anchor.1 {
-                write_new(&mut writer, *format);
+                moved_by += write_new(&mut writer, *format);
             }
-            match glyph.filter(|glyph| edit.removed.contains(glyph)) {
-                Some(glyph) => writer.gap(run.glyphs[glyph].advance, shown.size),
-                None => writer.code(code, *format),
+            match glyph {
+                Some(glyph) if edit.removed.contains(&glyph) => {
+                    moved_by -= run.glyphs[glyph].advance * shown.scale;
+                }
+                _ => {
+                    // A glyph the scan did not place (not upright) stays where the pen is.
+                    let belongs = match glyph {
+                        Some(glyph) if edit.after_edit.contains(&glyph) => edit.shift,
+                        Some(_) => 0.0,
+                        None => moved_by,
+                    };
+                    if (belongs - moved_by).abs() >= SAME_PLACE && shown.scale != 0.0 {
+                        writer.gap((belongs - moved_by) / shown.scale, shown.size);
+                        moved_by = belongs;
+                    }
+                    writer.code(code, *format);
+                }
             }
             if anchored && !edit.anchor.1 {
-                write_new(&mut writer, *format);
+                moved_by += write_new(&mut writer, *format);
             }
             at += length;
         }
     }
     writer.flush();
-    (writer.operations, fallbacks)
+    (writer.operations, fallbacks, moved_by)
 }
 
 /// Put in `operations` (of a show in font `font` at `size`) the letters that font has not,
@@ -612,9 +704,9 @@ fn fall_back(
     Ok(())
 }
 
-/// Write `letters` at the pen of `writer` in the font of `shown`, then move the pen back
-/// over them. Those the font has not are left to `fallbacks`: the letters, and the operator
-/// they go before.
+/// Write `letters` at the pen of `writer` in the font of `shown`; how far they move the pen,
+/// in text space. Those the font has not are left to `fallbacks`: the letters, and the
+/// operator they go before.
 fn insert(
     shown: &Shown,
     font: Option<&PageFont>,
@@ -623,7 +715,7 @@ fn insert(
     format: StringFormat,
     writer: &mut Writer,
     fallbacks: &mut Vec<(String, usize)>,
-) {
+) -> f32 {
     let spacing = |letter: char| {
         shown.char_spacing
             + if letter == ' ' {
@@ -665,5 +757,5 @@ fn insert(
         writer.flush();
         fallbacks.push((missing, writer.operations.len()));
     }
-    writer.gap(-advance, shown.size);
+    advance
 }

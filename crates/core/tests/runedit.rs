@@ -178,6 +178,101 @@ fn text(pdf: &[u8], x: f32) -> String {
         .collect()
 }
 
+fn close(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() < 0.01,
+        "{actual} is not {expected}"
+    );
+}
+
+/// The same letters at the same places (to a thousandth of a point).
+fn same_places(actual: &[(char, f32)], expected: &[(char, f32)]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?} / {expected:?}");
+    for (got, want) in actual.iter().zip(expected) {
+        assert_eq!(got.0, want.0);
+        assert!((got.1 - want.1).abs() < 0.001, "{actual:?} / {expected:?}");
+    }
+}
+
+/// A one-page PDF drawing `operations` with Helvetica as F1.
+fn page_of(operations: Vec<Operation>) -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let helvetica = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let content = Content { operations }.encode().unwrap();
+    let content = doc.add_object(Stream::new(dictionary! {}, content));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => helvetica } },
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+/// Each letter of `pdf` in `area` and the middle x of its glyph.
+fn places(pdf: &[u8], area: Rect) -> Vec<(char, f32)> {
+    run_text(pdf, 0, area).unwrap()
+}
+
+fn text_in(pdf: &[u8], area: Rect) -> String {
+    places(pdf, area).iter().map(|place| place.0).collect()
+}
+
+/// From `x0` to `x1`, around a baseline at `y`.
+fn area(x0: f32, x1: f32, y: f32) -> Rect {
+    Rect {
+        x0,
+        y0: y - 3.0,
+        x1,
+        y1: y + 9.0,
+    }
+}
+
+/// Two cells of a table row in one `TJ`, the second pushed right by a wide gap, as browsers
+/// write them: "49 500" at 72 and "TVA" about 100 points further.
+fn one_show_row() -> Vec<u8> {
+    page_of(vec![
+        op("BT", vec![]),
+        font("F1"),
+        op("Td", numbers(&[72.0, 700.0])),
+        op(
+            "TJ",
+            vec![Object::Array(vec![
+                bytes(b"49 500"),
+                Object::Real(-6000.0),
+                bytes(b"TVA"),
+            ])],
+        ),
+        op("ET", vec![]),
+    ])
+}
+
+const FIRST: Rect = Rect {
+    x0: 70.0,
+    y0: 697.0,
+    x1: 110.0,
+    y1: 709.0,
+};
+const SECOND: Rect = Rect {
+    x0: 160.0,
+    y0: 697.0,
+    x1: 240.0,
+    y1: 709.0,
+};
+
 /// The page `after` is `before` with operation `at` replaced: all others are the same.
 fn only_changed(before: &[(String, Vec<Object>)], after: &[(String, Vec<Object>)], at: usize) {
     let tail = before.len() - at - 1;
@@ -212,12 +307,13 @@ fn a_word_changed_leaves_everything_else_as_it_was() {
     let Object::Array(items) = &new[0].1[0] else {
         panic!("{new:?}")
     };
-    assert_eq!(items[0], bytes(b"bids"));
+    assert_eq!(items, &[bytes(b"bids ")]);
     assert_eq!(text(&out, 200.0), "bids [bɪd]");
-    // The sound after it keeps its place (and its red, its font: the same operators).
+    // The sound after it moves right by the "s" (Times 389 / 1000 em at 11), its operators
+    // (red, its font) untouched.
     let moved = run_text(&out, 0, cell(200.0)).unwrap();
     let bracket = |letters: &[(char, f32)]| letters.iter().find(|(l, _)| *l == '[').unwrap().1;
-    assert!((bracket(&places) - bracket(&moved)).abs() < 0.001);
+    close(bracket(&moved) - bracket(&places), 0.389 * 11.0);
     for x in [72.0, 300.0, 400.0] {
         assert_eq!(text(&out, x), text(&pdf, x));
     }
@@ -270,10 +366,13 @@ fn letters_taken_out_leave_the_rest_in_place() {
     let out = replace_run(&pdf, 0, cell(300.0), "b [bɪd]").unwrap();
     let after = run_text(&out, 0, cell(300.0)).unwrap();
     let spelled: String = after.iter().map(|(letter, _)| letter).collect();
-    // A gap is left where "id" was: the space and the sound stay where they were.
+    // The space and the sound close up over "id" (Times i 278 + d 500, at 11).
     assert_eq!(spelled, "b [bɪd]");
     let last = |letters: &[(char, f32)]| letters.last().unwrap().1;
-    assert!((last(&before) - last(&after)).abs() < 0.001);
+    close(last(&before) - last(&after), 0.778 * 11.0);
+    // The next cell has its own place.
+    let next = run_text(&out, 0, cell(400.0)).unwrap();
+    same_places(&next, &run_text(&pdf, 0, cell(400.0)).unwrap());
 }
 
 #[test]
@@ -281,4 +380,102 @@ fn nothing_changed_writes_nothing() {
     let pdf = row();
     let out = replace_run(&pdf, 0, cell(200.0), "bid [bɪd]").unwrap();
     assert_eq!(drawn(&out), drawn(&pdf));
+}
+
+#[test]
+fn typing_in_a_cell_moves_its_letters_but_not_the_next_cell() {
+    let pdf = one_show_row();
+    let tva = places(&pdf, SECOND);
+    let before = places(&pdf, FIRST);
+    // A digit typed in the middle: "49 1500".
+    let out = replace_run(&pdf, 0, FIRST, "49 1500").unwrap();
+    let after = places(&out, area(70.0, 120.0, 700.0));
+    assert_eq!(text_in(&out, area(70.0, 120.0, 700.0)), "49 1500");
+    // The letters before it stay, those after move by one digit (Helvetica 556 at 11).
+    close(after[2].1, before[2].1);
+    close(after[6].1 - before[5].1, 0.556 * 11.0);
+    same_places(&places(&out, SECOND), &tva);
+}
+
+#[test]
+fn shortening_a_cell_closes_it_up_but_leaves_the_next_cell() {
+    let pdf = one_show_row();
+    let tva = places(&pdf, SECOND);
+    let before = places(&pdf, FIRST);
+    let out = replace_run(&pdf, 0, FIRST, "9 500").unwrap();
+    let after = places(&out, FIRST);
+    assert_eq!(text_in(&out, FIRST), "9 500");
+    // "4" taken out at the start: everything after it moves left by one digit.
+    close(before[1].1 - after[0].1, 0.556 * 11.0);
+    close(before[5].1 - after[4].1, 0.556 * 11.0);
+    same_places(&places(&out, SECOND), &tva);
+}
+
+#[test]
+fn a_whole_cell_rewritten_or_emptied_keeps_the_next_cell() {
+    let pdf = one_show_row();
+    let tva = places(&pdf, SECOND);
+    let out = replace_run(&pdf, 0, FIRST, "1 234 567").unwrap();
+    assert_eq!(text_in(&out, area(70.0, 130.0, 700.0)), "1 234 567");
+    same_places(&places(&out, SECOND), &tva);
+    let out = replace_run(&pdf, 0, FIRST, "").unwrap();
+    assert!(run_text(&out, 0, FIRST).is_err());
+    same_places(&places(&out, SECOND), &tva);
+}
+
+#[test]
+fn a_scaled_line_moves_by_the_scaled_width() {
+    // Text drawn twice its size by the matrix, in two shows: "ab" then "cd".
+    let pdf = page_of(vec![
+        op("BT", vec![]),
+        font("F1"),
+        op("Tm", numbers(&[2.0, 0.0, 0.0, 2.0, 72.0, 600.0])),
+        op("Tj", vec![bytes(b"ab")]),
+        op("Tj", vec![bytes(b"cd")]),
+        op("ET", vec![]),
+    ]);
+    let line = Rect {
+        x0: 70.0,
+        y0: 595.0,
+        x1: 200.0,
+        y1: 625.0,
+    };
+    let before = places(&pdf, line);
+    let out = replace_run(&pdf, 0, line, "aabcd").unwrap();
+    let after = places(&out, line);
+    assert_eq!(text_in(&out, line), "aabcd");
+    // Helvetica "a" is 556 / 1000 em, at 11, twice: every letter after it moves as much.
+    for at in 1..4 {
+        close(after[at + 1].1 - before[at].1, 2.0 * 0.556 * 11.0);
+    }
+}
+
+#[test]
+fn the_next_line_does_not_move() {
+    // The second line starts with T*: what is typed on the first one leaves it.
+    let pdf = page_of(vec![
+        op("BT", vec![]),
+        font("F1"),
+        op("TL", numbers(&[14.0])),
+        op("Td", numbers(&[72.0, 700.0])),
+        op("Tj", vec![bytes(b"first")]),
+        op("T*", vec![]),
+        op("Tj", vec![bytes(b"second")]),
+        op("ET", vec![]),
+    ]);
+    let first = area(70.0, 200.0, 700.0);
+    let next = area(70.0, 200.0, 686.0);
+    let below = places(&pdf, next);
+    let out = replace_run(&pdf, 0, first, "the first").unwrap();
+    assert_eq!(text_in(&out, first), "the first");
+    same_places(&places(&out, next), &below);
+}
+
+#[test]
+fn text_after_the_run_in_the_same_show_keeps_its_place_when_typing_at_the_end() {
+    let pdf = one_show_row();
+    let tva = places(&pdf, SECOND);
+    let out = replace_run(&pdf, 0, FIRST, "49 500 €").unwrap();
+    assert_eq!(text_in(&out, area(70.0, 125.0, 700.0)), "49 500 €");
+    same_places(&places(&out, SECOND), &tva);
 }

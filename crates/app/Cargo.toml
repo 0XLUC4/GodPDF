@@ -29,7 +29,7 @@ winresource = "0.1"
 
 # Text recognition: the recognizer of Windows there, a downloaded model elsewhere.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Security_Cryptography", "Storage_Streams", "Globalization", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Graphics_Imaging", "Media_Ocr", "Security_Cryptography", "Storage_Streams", "Globalization", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry", "Win32_UI_Shell"] }
 
 [target.'cfg(not(windows))'.dependencies]
 ocrs = "0.13"

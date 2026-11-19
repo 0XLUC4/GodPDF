@@ -2124,6 +2124,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "godpdf-thumbs"
+version = "2.1.1"
+dependencies = [
+ "godpdf-render",
+ "lopdf",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+]
+
+[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

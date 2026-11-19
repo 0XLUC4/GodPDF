@@ -6,6 +6,8 @@
 //! Dialogs work as in `dialogs/`: an action records the dialog as pending in the
 //! [`Services`] global; [`overlay`] (it has the window) builds and focuses it.
 
+#[cfg(windows)]
+pub mod association;
 pub mod jobs;
 pub mod settings;
 pub mod updates;
@@ -104,6 +106,8 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
         crate::panels::close(cx);
     }
     updates::remove_old_program();
+    #[cfg(windows)]
+    std::thread::spawn(association::register);
     updates::check(cx);
     watch::start(cx);
     // Also while running, so a crash or a forced shutdown keeps the recent files.
@@ -366,6 +370,17 @@ fn preferences(palette: &Palette, cx: &App) -> Vec<AnyElement> {
             .child("Theme")
             .child(choice("pref-dark", icons::MOON, "Dark", dark))
             .child(choice("pref-light", icons::SUN, "Light", !dark))
+            .into_any_element(),
+        #[cfg(windows)]
+        div()
+            .flex()
+            .items_center()
+            .gap(px(theme::ITEM_SPACING.0))
+            .child("Default PDF app")
+            .child(
+                framed_button("pref-default-app", "Set GodPDF…", true, palette)
+                    .on_click(|_, _, cx| cx.open_url(association::DEFAULT_APPS_PAGE)),
+            )
             .into_any_element(),
         close_row("Done", palette),
     ]

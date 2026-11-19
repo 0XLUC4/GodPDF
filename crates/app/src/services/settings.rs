@@ -167,7 +167,7 @@ fn parse(text: &str) -> Settings {
 }
 
 /// eframe `storage_dir(APP_NAME)`, created when missing.
-fn dir() -> Option<PathBuf> {
+pub(super) fn dir() -> Option<PathBuf> {
     let env = |name: &str| std::env::var_os(name).map(PathBuf::from);
     let dir = if cfg!(windows) {
         env("APPDATA")?.join(crate::APP_NAME).join("data")

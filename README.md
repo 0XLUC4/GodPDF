@@ -96,6 +96,7 @@ macOS needs Xcode, which GPUI uses to compile its Metal shaders.
 | `crates/core` (`godpdf-core`) | PDF editing on raw bytes with `lopdf`, undo and redo |
 | `crates/render` (`godpdf-render`) | Page rendering with `hayro` |
 | `crates/app` (`godpdf`) | Desktop app built with [GPUI](https://gpui.rs) |
+| `crates/thumbs` (`godpdf-thumbs`) | Windows Explorer thumbnails of PDF files (shell extension DLL, embedded in the app) |
 
 ## License
 

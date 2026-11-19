@@ -47,7 +47,7 @@ jobs:
           dir="$APP-linux-x64"
           mkdir "$dir"
           cp "target/release/$BIN" "$dir/"
-          cp assets/logo.png "$dir/$BIN.png"
+          cp assets/app-icon.png "$dir/$BIN.png"
           cat > "$dir/$BIN.desktop" <<EOF
           [Desktop Entry]
           Type=Application
@@ -81,8 +81,8 @@ jobs:
             "target/aarch64-apple-darwin/release/$BIN" "target/x86_64-apple-darwin/release/$BIN"
           mkdir icon.iconset
           for size in 16 32 128 256 512; do
-            sips -z $size $size assets/logo.png --out "icon.iconset/icon_${size}x${size}.png"
-            sips -z $((size * 2)) $((size * 2)) assets/logo.png --out "icon.iconset/icon_${size}x${size}@2x.png"
+            sips -z $size $size assets/app-icon.png --out "icon.iconset/icon_${size}x${size}.png"
+            sips -z $((size * 2)) $((size * 2)) assets/app-icon.png --out "icon.iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns icon.iconset -o "$app/Contents/Resources/$BIN.icns"
           cat > "$app/Contents/Info.plist" <<EOF

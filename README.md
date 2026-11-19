@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="128" alt="GodPDF logo">
+  <img src="assets/app-icon.png" width="128" alt="GodPDF logo">
 </p>
 
 <h1 align="center">GodPDF</h1>

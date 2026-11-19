@@ -23,7 +23,7 @@ use crate::{icons, widgets};
 pub static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(
         ImageFormat::Png,
-        include_bytes!("../../../../assets/logo.png").to_vec(),
+        include_bytes!("../../../../assets/app-icon.png").to_vec(),
     ))
 });
 

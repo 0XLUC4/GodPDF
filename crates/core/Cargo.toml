@@ -16,5 +16,17 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # Export to Word: the .docx zip is deflated by hand.
 flate2 = "1"
 
+# Certificate signatures: CMS SignedData, X.509, keys from .pfx/.p12 (pure Rust).
+cms = "=0.3.0-rc.2"
+der = { version = "0.8", features = ["alloc", "oid"] }
+x509-cert = "0.3"
+rsa = { version = "0.10", features = ["pkcs1v15"] }
+p256 = { version = "0.14", features = ["ecdsa"] }
+sha2 = "0.11"
+p12-keystore = "0.4"
+
 [dev-dependencies]
 roxmltree = "0.21"
+# Self-signed test certificates and keys.
+x509-cert = { version = "0.3", features = ["builder"] }
+getrandom = { version = "0.4", features = ["sys_rng"] }

@@ -750,7 +750,8 @@ mod tests {
         use Tool::*;
         let all = [
             Select, Hand, Text, Note, Highlight, Ink, Rectangle, Ellipse, Line, Arrow, Underline,
-            StrikeOut, Stamp, Redact, Picture, Sign, Field, Eraser,
+            StrikeOut, Stamp, Redact, Picture, Sign, Field, Eraser, Link, Polygon, PolyLine, Cloud,
+            Distance, Perimeter, Area,
         ];
         let actions: Vec<&str> = crate::dialogs::COMMANDS
             .iter()
@@ -762,7 +763,8 @@ mod tests {
                 // Picked through "Sign…", once a signature is drawn.
                 Sign => false,
                 Select | Hand | Text | Note | Highlight | Ink | Rectangle | Ellipse | Line
-                | Arrow | Underline | StrikeOut | Stamp | Redact | Picture | Field | Eraser => true,
+                | Arrow | Underline | StrikeOut | Stamp | Redact | Picture | Field | Eraser
+                | Link | Polygon | PolyLine | Cloud | Distance | Perimeter | Area => true,
             };
             assert!(
                 !listed || actions.contains(&tool.action().name()),

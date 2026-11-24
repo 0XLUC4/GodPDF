@@ -115,6 +115,8 @@ pub enum Kind {
     Split,
     Encrypt,
     Properties,
+    /// Sign a copy with the key of a .pfx/.p12 file.
+    CertSign,
     /// A form field over `rect` (PDF space) of `page`.
     NewField {
         page: usize,
@@ -181,6 +183,11 @@ impl Kind {
             ),
             Self::Bates => ("Bates numbering", "A unique number on every page"),
             Self::CustomStamp => ("Custom stamp", "The stamp tool places it with a click"),
+            Self::CertSign => (
+                "Sign with certificate",
+                "Signs a copy saved as a new file. Any later edit of that file invalidates the \
+                 signature. The signature is invisible: place a drawn one first to show it.",
+            ),
         }
     }
 
@@ -205,6 +212,7 @@ impl Kind {
             Self::HeaderFooter => ("Add header & footer", None),
             Self::Bates => ("Number pages", None),
             Self::CustomStamp => ("Use stamp", None),
+            Self::CertSign => ("Sign and save as…", None),
         }
     }
 }
@@ -216,6 +224,11 @@ pub fn build(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<Form, String> {
+    let certificate = if kind == Kind::CertSign {
+        super::certsign::picked(cx)
+    } else {
+        String::new()
+    };
     let tools = cx.try_global::<crate::tools::ToolState>();
     let field_kind = tools.map_or(0, |tools| match tools.field_kind {
         core::NewField::Text => 0,
@@ -316,6 +329,7 @@ pub fn build(
             form::choice("Editing", ALLOW, 0),
             form::choice("Comments & forms", ALLOW, 0),
         ],
+        Kind::CertSign => super::certsign::fields(certificate, window, cx),
         Kind::NewField { .. } => vec![
             form::choice("Kind", FIELD_KINDS, field_kind),
             text("Name", "Field", ""),
@@ -575,6 +589,7 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             toasts::success(cx, "Password set: the file is encrypted when you save");
             Ok(())
         }
+        Kind::CertSign => super::certsign::confirm(form, &tab, cx),
         Kind::NewField { page, rect } => {
             let options: Vec<String> = form
                 .text(OPTIONS, cx)

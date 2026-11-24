@@ -598,6 +598,8 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Encrypt with password…" => (icons::LOCK, ""),
         "Remove password" => (icons::LOCK_OPEN, ""),
         "Remove hidden data" => (icons::BROOM, ""),
+        "Sign with certificate…" => (icons::SIGNATURE, ""),
+        "Signatures…" => (icons::CHECK_CIRCLE, ""),
         "Properties…" => (icons::INFO, ""),
         "Add watermark…" => (icons::STAMP, ""),
         "Remove all links" => (icons::LINK_BREAK, ""),

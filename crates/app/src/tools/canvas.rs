@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use godpdf_core::{
-    Annotation, CharStyle, Color, Font, MeasureKind, PageGeometry, Picture, PlacedAnnotation,
-    Rect, StampLabel,
+    Annotation, CharStyle, Color, Font, MeasureKind, PageGeometry, Picture, PlacedAnnotation, Rect,
+    StampLabel,
 };
 use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;

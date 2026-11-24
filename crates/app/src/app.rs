@@ -180,6 +180,7 @@ impl GodPdfApp {
         }
         // Tool bar shows the zoom and page of the active tab: redraw when it changes.
         cx.observe(&tab, |_, _, cx| cx.notify()).detach();
+        dialogs::check_signatures(&tab, cx);
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
         self.shell.home = false;

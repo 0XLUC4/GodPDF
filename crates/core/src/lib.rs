@@ -27,6 +27,7 @@ mod retype;
 mod runedit;
 mod security;
 mod session;
+mod signature;
 mod stamp;
 mod text;
 mod textlayer;
@@ -72,6 +73,7 @@ pub use retype::{LineLook, line_look, replace_styled, replace_text};
 pub use runedit::{replace_run, run_text};
 pub use security::{Permissions, decrypt, encrypt, encrypt_with, is_encrypted, permissions};
 pub use session::Session;
+pub use signature::{SignOptions, SignatureInfo, SignatureStatus, Signer, sign, signatures};
 pub use stamp::{
     Bates, HeaderFooter, PageNumbers, PictureWatermark, Place, Watermark, header_footer,
     number_pages, picture_watermark, remove_links, watermark,

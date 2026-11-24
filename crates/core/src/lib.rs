@@ -16,6 +16,7 @@ mod forms;
 mod helvetica;
 mod info;
 mod layout;
+mod links;
 mod organize;
 mod pdf;
 mod redact;
@@ -52,6 +53,7 @@ pub use info::{
     read_metadata, write_metadata,
 };
 pub use layout::{booklet, crop_pages, halve_pages, join_pages, pages_per_sheet, resize_pages};
+pub use links::{Link, LinkTarget, add_link, is_web_uri, links};
 pub use organize::{
     blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, interleave, merge,
     reorder_pages, rotate_pages, split_at, split_every,

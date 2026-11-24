@@ -598,6 +598,11 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Edit PDF text" => (icons::TEXT_AA, ""),
         "About GodPDF" => (icons::QUESTION, ""),
         "Updates" => (icons::ARROW_CIRCLE_UP, ""),
+        "Single page" => (icons::ROWS, ""),
+        "Two pages" => (icons::COLUMNS, ""),
+        "Two pages with cover" => (icons::BOOK_OPEN, ""),
+        "Presentation" => (icons::CORNERS_OUT, "F5"),
+        "Link" => (icons::LINK_SIMPLE, ""),
         _ => (icons::FILE, ""),
     }
 }

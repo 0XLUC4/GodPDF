@@ -34,6 +34,8 @@ actions!(godpdf, [ToggleToolsPanel, FitPage, ReopenTab]);
 
 /// Most recent files kept.
 pub const MAX_RECENT: usize = 8;
+/// Files whose last page read is kept.
+pub const MAX_LAST_PAGES: usize = 200;
 
 /// Ctrl+Shift+T reopens the last closed tab.
 pub fn register(cx: &mut App) {
@@ -110,6 +112,8 @@ pub struct Shell {
     pub recent: Vec<PathBuf>,
     /// Width of the tools panel (resizable 220..=420, 280 at first).
     pub tools_width: f32,
+    /// The page read last in each file (0-based), files opened last first.
+    pub last_pages: Vec<(PathBuf, usize)>,
 }
 
 impl Default for Shell {
@@ -123,6 +127,7 @@ impl Default for Shell {
             closed: Vec::new(),
             recent: Vec::new(),
             tools_width: 280.0,
+            last_pages: Vec::new(),
         }
     }
 }
@@ -133,6 +138,30 @@ impl Shell {
         self.recent.retain(|recent| recent != path);
         self.recent.insert(0, path.to_path_buf());
         self.recent.truncate(MAX_RECENT);
+    }
+
+    /// The page read last in the file `path`, being opened again: it comes first.
+    pub fn reopened_page(&mut self, path: &std::path::Path) -> Option<usize> {
+        let index = self
+            .last_pages
+            .iter()
+            .position(|(known, _)| known == path)?;
+        let entry = self.last_pages.remove(index);
+        let page = entry.1;
+        self.last_pages.insert(0, entry);
+        Some(page)
+    }
+
+    /// Note that `page` of the file `path` is being read. A file not known yet comes first,
+    /// the oldest one beyond [`MAX_LAST_PAGES`] is forgotten.
+    pub fn remember_page(&mut self, path: &std::path::Path, page: usize) {
+        match self.last_pages.iter_mut().find(|(known, _)| known == path) {
+            Some(known) => known.1 = page,
+            None => {
+                self.last_pages.insert(0, (path.to_path_buf(), page));
+                self.last_pages.truncate(MAX_LAST_PAGES);
+            }
+        }
     }
 }
 
@@ -272,5 +301,24 @@ mod tests {
         assert_eq!(fit_panels(640.0, Some(280.0), Some(320.0)), (false, false));
         assert_eq!(fit_panels(640.0, None, Some(220.0)), (true, true));
         assert_eq!(fit_panels(700.0, None, Some(320.0)), (true, false));
+    }
+
+    #[test]
+    fn last_pages_are_kept_per_file_within_bounds() {
+        let mut shell = super::Shell::default();
+        let path = |index: usize| std::path::PathBuf::from(format!("/{index}.pdf"));
+        shell.remember_page(&path(0), 4);
+        shell.remember_page(&path(0), 7);
+        shell.remember_page(&path(1), 1);
+        assert_eq!(shell.reopened_page(&path(0)), Some(7));
+        assert_eq!(shell.last_pages[0].0, path(0));
+        assert_eq!(shell.reopened_page(&path(2)), None);
+        for index in 2..=super::MAX_LAST_PAGES {
+            shell.remember_page(&path(index), index);
+        }
+        // The oldest is forgotten: page 1 was read before the file 0 was opened again.
+        assert_eq!(shell.last_pages.len(), super::MAX_LAST_PAGES);
+        assert_eq!(shell.reopened_page(&path(1)), None);
+        assert_eq!(shell.reopened_page(&path(0)), Some(7));
     }
 }

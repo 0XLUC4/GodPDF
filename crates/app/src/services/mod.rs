@@ -101,6 +101,7 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
     let remembered = settings::load();
     app.shell.show_tools = remembered.tools_panel;
     app.shell.recent = remembered.recent;
+    app.shell.last_pages = remembered.last_pages;
     crate::tools::set_recent_colors(remembered.recent_colors, cx);
     if !remembered.sidebar {
         crate::panels::close(cx);
@@ -129,7 +130,13 @@ pub fn start(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
 }
 
 /// Note what is shown, to be written soon. Called by the root view every frame.
-pub fn track(app: &GodPdfApp, window: &Window, cx: &App) {
+pub fn track(app: &mut GodPdfApp, window: &Window, cx: &App) {
+    for tab in &app.tabs {
+        let doc = tab.read(cx);
+        if let Some(path) = &doc.session.path {
+            app.shell.remember_page(path, doc.view.current_page);
+        }
+    }
     let (bounds, maximized) = match window.window_bounds() {
         gpui::WindowBounds::Windowed(bounds) => (bounds, false),
         gpui::WindowBounds::Maximized(bounds) => (bounds, true),
@@ -143,6 +150,7 @@ pub fn track(app: &GodPdfApp, window: &Window, cx: &App) {
         size: Some((bounds.size.width.into(), bounds.size.height.into())),
         maximized,
         recent_colors: crate::tools::recent_colors(cx),
+        last_pages: app.shell.last_pages.clone(),
     });
 }
 

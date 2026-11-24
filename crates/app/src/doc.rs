@@ -117,6 +117,10 @@ pub struct ViewState {
     /// Fit width once the viewer size is known.
     pub fit_pending: bool,
     pub current_page: usize,
+    /// One page per row, or two side by side.
+    pub spread: geometry::Spread,
+    /// Full-screen presentation of one page at a time, while on.
+    pub presenting: Option<crate::viewer::Presentation>,
 }
 
 pub struct DocTab {
@@ -190,6 +194,8 @@ impl DocTab {
                 bounds: Bounds::default(),
                 fit_pending: true,
                 current_page: 0,
+                spread: geometry::Spread::Single,
+                presenting: None,
             },
         };
         tab.reload();
@@ -376,14 +382,15 @@ impl DocTab {
 
     /// Page layout at the current zoom and viewer width.
     pub fn layout(&self) -> Layout {
-        Layout::new(
+        Layout::with_spread(
             &self.page_sizes,
             self.view.zoom,
             f32::from(self.view.bounds.size.width),
+            self.view.spread,
         )
     }
 
-    fn view_size(&self) -> (f32, f32) {
+    pub(crate) fn view_size(&self) -> (f32, f32) {
         let size = self.view.bounds.size;
         (f32::from(size.width), f32::from(size.height))
     }
@@ -427,17 +434,18 @@ impl DocTab {
         let width = f32::from(self.view.bounds.size.width);
         if width > 0.0 && !self.page_sizes.is_empty() {
             let page = self.view.current_page;
-            self.set_zoom(geometry::fit_width_zoom(&self.page_sizes, width), None);
+            let zoom = geometry::fit_width_zoom(&self.page_sizes, width, self.view.spread);
+            self.set_zoom(zoom, None);
             self.scroll_to_page(page);
         }
     }
 
-    /// Zoom so the current page fits whole in the view, and show it.
+    /// Zoom so the current page (its row of pages) fits whole in the view, and show it.
     pub fn fit_page(&mut self) {
         let size = self.view_size();
         let page = self.view.current_page;
-        if let Some(&(width, height)) = self.page_sizes.get(page) {
-            let zoom = geometry::fit_page_zoom((width, height), size);
+        if let Some(row) = geometry::row_size(&self.page_sizes, self.view.spread, page) {
+            let zoom = geometry::fit_page_zoom(row, size);
             self.set_zoom(zoom, None);
             self.scroll_to_page(page);
         }

@@ -130,6 +130,27 @@ pub static COMMANDS: &[Command] = &[
         "Two PDFs, or two places of one, next to each other",
         || Box::new(organize::SplitView),
     ),
+    command("Single page", View, "One page under the other", || {
+        Box::new(crate::viewer::SinglePageView)
+    }),
+    command(
+        "Two pages",
+        View,
+        "Pages side by side, as an open book",
+        || Box::new(crate::viewer::TwoPageView),
+    ),
+    command(
+        "Two pages with cover",
+        View,
+        "Pages side by side, the first one alone",
+        || Box::new(crate::viewer::CoverView),
+    ),
+    command(
+        "Presentation",
+        View,
+        "Full screen, one page at a time: arrows to turn, Esc to leave",
+        || Box::new(crate::viewer::Present),
+    ),
     command("Toggle sidebar", View, "", || {
         Box::new(crate::panels::ToggleSidebar)
     }),
@@ -301,6 +322,12 @@ pub static COMMANDS: &[Command] = &[
         Comment,
         "Add a text box or a check box to fill in",
         || Box::new(tools::FieldTool),
+    ),
+    command(
+        "Link",
+        Comment,
+        "Draw a box that leads to a page or a web address",
+        || Box::new(tools::LinkTool),
     ),
     command(
         "Eraser",

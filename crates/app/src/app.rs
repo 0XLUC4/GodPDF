@@ -57,6 +57,7 @@ pub fn register(cx: &mut App) {
         KeyBinding::new(secondary!("q"), Quit, None),
     ]);
     shell::register(cx);
+    crate::viewer::register(cx);
     tools::register(cx);
     crate::signature::register(cx);
     panels::register(cx);
@@ -161,9 +162,19 @@ impl GodPdfApp {
         } else {
             bytes
         };
+        let last_page = path
+            .as_deref()
+            .and_then(|path| self.shell.reopened_page(path));
         let mut session = Session::new(name, bytes);
         session.path = path;
-        let tab = cx.new(|_| DocTab::new(session));
+        let tab = cx.new(|_| {
+            let mut tab = DocTab::new(session);
+            // Reopened at the page read last, shown once the viewer has its size.
+            if let Some(page) = last_page {
+                tab.view.current_page = page.min(tab.page_count().saturating_sub(1));
+            }
+            tab
+        });
         if let Some(err) = tab.read(cx).render_error.clone() {
             toasts::error(cx, format!("Cannot display this PDF: {err}"));
         }
@@ -442,6 +453,9 @@ impl Render for GodPdfApp {
         services::track(self, window, cx);
         crate::doc::free_released(window, cx);
         let active = self.active_tab().cloned();
+        let presenting = active
+            .clone()
+            .filter(|tab| tab.read(cx).view.presenting.is_some());
         let hover = palette.hover;
         div()
             .relative()
@@ -479,6 +493,7 @@ impl Render for GodPdfApp {
             .on_action(cx.listener(Self::toggle_tools_panel))
             .on_action(cx.listener(Self::reopen_tab))
             .on_action(|_: &ToggleTheme, _, cx| theme::toggle(cx))
+            .map(|root| crate::viewer::on_actions(root, cx))
             .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {
                     app.open_path(path, cx);
@@ -487,7 +502,11 @@ impl Render for GodPdfApp {
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(hover))
             .text_size(px(fonts::BODY))
             .children(tools::toolbar(window, cx))
-            .child(shell::render(self, active.as_ref(), window, cx))
+            // A presentation fills the window alone.
+            .child(match presenting {
+                Some(tab) => tab.into_any_element(),
+                None => shell::render(self, active.as_ref(), window, cx),
+            })
             .children(organize::overlay(active.as_ref(), window, cx))
             .children(dialogs::overlay(
                 cx.weak_entity(),

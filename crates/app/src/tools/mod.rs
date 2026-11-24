@@ -10,6 +10,7 @@ mod canvas;
 mod editor;
 mod fields;
 mod geom;
+mod links;
 mod picker;
 pub mod pointer;
 mod quickbar;
@@ -65,7 +66,8 @@ actions!(
         SendToBack,
         ToggleBold,
         ToggleItalic,
-        ToggleUnderline
+        ToggleUnderline,
+        LinkTool
     ]
 );
 
@@ -102,13 +104,15 @@ pub enum Tool {
     Field,
     /// Click or drag over comments to remove them, or brush the page content away.
     Eraser,
+    /// Draw a box leading to a page or a web address.
+    Link,
 }
 
 impl Tool {
     /// The quick bar, top to bottom: the drawing tools, plus stamp and redact before the
     /// eraser. `Highlight` and `Rectangle` stand for their groups ([`Tool::group`]): the
     /// button shows the last tool picked in it, the style card picks another.
-    pub const BAR: [Tool; 11] = [
+    pub const BAR: [Tool; 12] = [
         Tool::Select,
         Tool::Hand,
         Tool::Text,
@@ -117,6 +121,7 @@ impl Tool {
         Tool::Ink,
         Tool::Rectangle,
         Tool::Picture,
+        Tool::Link,
         Tool::Stamp,
         Tool::Redact,
         Tool::Eraser,
@@ -158,6 +163,7 @@ impl Tool {
             Self::Sign => icons::SIGNATURE,
             Self::Field => icons::TEXTBOX,
             Self::Eraser => icons::ERASER,
+            Self::Link => icons::LINK_SIMPLE,
         }
     }
 
@@ -181,6 +187,7 @@ impl Tool {
             Self::Sign => "Sign",
             Self::Field => "Form field",
             Self::Eraser => "Eraser",
+            Self::Link => "Link",
         }
     }
 
@@ -202,7 +209,7 @@ impl Tool {
             Self::Redact => Some("X"),
             Self::Picture => Some("I"),
             Self::Eraser => Some("E"),
-            Self::Highlight | Self::Sign | Self::Field => None,
+            Self::Highlight | Self::Sign | Self::Field | Self::Link => None,
         }
     }
 
@@ -226,6 +233,7 @@ impl Tool {
             Self::Sign => Box::new(SignTool),
             Self::Field => Box::new(FieldTool),
             Self::Eraser => Box::new(EraserTool),
+            Self::Link => Box::new(LinkTool),
         }
     }
 
@@ -560,6 +568,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &EraserTool, cx| set_tool(Tool::Eraser, cx));
     cx.on_action(|_: &SignTool, cx| set_tool(Tool::Sign, cx));
     cx.on_action(|_: &FieldTool, cx| set_tool(Tool::Field, cx));
+    cx.on_action(|_: &LinkTool, cx| set_tool(Tool::Link, cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));
     // Esc closes the topmost floating card first: the colour picker.
     cx.on_action(|_: &Deselect, cx| {

@@ -74,7 +74,7 @@ The command palette (`Ctrl+K`) finds every tool by name.
 
 ## Share a PDF
 
-Open a PDF and choose **Share → Share current PDF**. Copy the invitation code and send it to one person you trust. They can paste it under **Share → Join** in GodPDF. The session displays the other computer's name.
+Open a PDF and click **Share**: a popup shows a 6-digit code. Give it to one person you trust. On the GodPDF home screen they click **Join** and type the code. The session displays the other computer's name.
 
 You start with editing control. The other person sees changes as you make them. Choose **Pass editing control** to let them edit and follow their changes instead. Use **End session** to disconnect. Each person can save their current copy locally.
 

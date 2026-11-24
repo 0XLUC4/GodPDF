@@ -2424,7 +2424,6 @@ name = "godpdf"
 version = "2.3.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "getrandom 0.4.3",
  "godpdf-core",
  "godpdf-render",
@@ -2435,8 +2434,8 @@ dependencies = [
  "ocrs",
  "rfd",
  "rten",
- "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "ureq",
  "windows 0.62.2",

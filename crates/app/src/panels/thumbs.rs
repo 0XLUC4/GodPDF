@@ -18,8 +18,13 @@ use crate::theme::Palette;
 use crate::{files, icons, toasts, widgets};
 
 const ROW_HEIGHT: f32 = 196.;
-/// Thumbnails rendering at once.
-const MAX_IN_FLIGHT: usize = 4;
+/// Thumbnails rendering at once: one per core, 2 to 8, so the Organize grid fills fast.
+fn max_in_flight() -> usize {
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CORES.get_or_init(|| {
+        std::thread::available_parallelism().map_or(4, |cores| cores.get().clamp(2, 8))
+    })
+}
 /// Thumbnails kept beyond the visible rows, on each side.
 const KEEP_AROUND: usize = 10;
 
@@ -78,7 +83,9 @@ pub fn render(tab: &Entity<DocTab>, room: f32, window: &mut Window, cx: &mut App
         let max_px = (BOX.0.max(BOX.1) * window.scale_factor()).round() as u32;
         let weak = entity.downgrade();
         entity.update(cx, |tab, cx| {
-            trim(tab, rows.clone(), PANEL);
+            if !measuring(&rows) {
+                trim(tab, rows.clone(), PANEL);
+            }
             rows.map(|page| {
                 let image = thumbnail(tab, page, max_px, cx, PANEL);
                 let current = page == tab.view.current_page;
@@ -401,6 +408,15 @@ impl Thumbs {
     }
 }
 
+/// Pages never dropped: `uniform_list` renders its first row every frame to measure it.
+const KEEP_FIRST: usize = 16;
+
+/// Whether a `uniform_list` callback renders `rows` only to measure the first row. Trimming
+/// to that range would drop the visible thumbnails each frame, then render them again.
+pub fn measuring(rows: &std::ops::Range<usize>) -> bool {
+    rows.start == 0 && rows.end == 1
+}
+
 /// Drop thumbnails far from the visible `rows`, and forget everything on a page count change.
 pub fn trim(tab: &mut DocTab, rows: std::ops::Range<usize>, pick: Pick) {
     let generation = tab.generation();
@@ -416,7 +432,7 @@ pub fn trim(tab: &mut DocTab, rows: std::ops::Range<usize>, pick: Pick) {
         .images
         .keys()
         .copied()
-        .filter(|page| !keep.contains(page) || thumbs.count != count)
+        .filter(|&page| (!keep.contains(&page) && page >= KEEP_FIRST) || thumbs.count != count)
         .collect();
     for page in far {
         if let Some((image, _)) = thumbs.images.remove(&page) {
@@ -443,7 +459,7 @@ pub fn thumbnail(
         .is_some_and(|(_, made)| *made == generation);
     if !fresh
         && !thumbs.failed.contains(&page)
-        && thumbs.in_flight.len() < MAX_IN_FLIGHT
+        && thumbs.in_flight.len() < max_in_flight()
         && let Some(doc) = renderer
         && thumbs.in_flight.insert(page)
     {

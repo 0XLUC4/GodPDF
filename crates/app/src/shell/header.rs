@@ -141,7 +141,7 @@ pub fn render(
                 .child(
                     Button::new("share-pdf")
                         .ghost()
-                        .child("Share")
+                        .child(crate::collaboration::button_label(app))
                         .on_click(cx.listener(|app, _, window, cx| {
                             crate::collaboration::toggle(app, window, cx);
                         })),

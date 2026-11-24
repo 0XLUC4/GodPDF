@@ -130,12 +130,21 @@ fn measure(tab: &Entity<DocTab>) -> impl IntoElement {
     canvas(
         move |bounds, _, cx| {
             let width = f32::from(bounds.size.width);
-            let _ = tab.update(cx, |tab, cx| {
-                if (tab.grid.width - width).abs() > 0.5 {
+            let changed = tab
+                .update(cx, |tab, _| {
+                    let changed = (tab.grid.width - width).abs() > 0.5;
                     tab.grid.width = width;
-                    cx.notify();
-                }
-            });
+                    changed
+                })
+                .unwrap_or(false);
+            // A notify sent while the frame is drawn is lost: send it once drawing ends, or
+            // the grid stays empty until the mouse moves.
+            if changed {
+                let tab = tab.clone();
+                cx.defer(move |cx| {
+                    let _ = tab.update(cx, |_, cx| cx.notify());
+                });
+            }
         },
         |_, _, _, _| {},
     )
@@ -213,8 +222,13 @@ fn cards(tab: &Entity<DocTab>, count: usize, per_row: usize, palette: &Palette) 
             let max_px = (THUMB_BOX.0.max(THUMB_BOX.1) * window.scale_factor()).round() as u32;
             let weak = entity.downgrade();
             entity.update(cx, |tab, cx| {
-                let pages = rows.start * per_row..(rows.end * per_row).min(count);
-                panels::trim(tab, pages, PICK);
+                if !panels::measuring(&rows) {
+                    panels::trim(
+                        tab,
+                        rows.start * per_row..(rows.end * per_row).min(count),
+                        PICK,
+                    );
+                }
                 rows.map(|row| {
                     let first = row * per_row;
                     let cards = (first..(first + per_row).min(count))
@@ -242,8 +256,8 @@ struct DraggedCard {
     page: usize,
 }
 
-/// A page card: 168 × 218, radius 10, surface fill (hover fill when hovered), 1 px border or
-/// 2 px accent when selected; the page fitted in 144 × 180 at 12 from the top, white; its
+/// A page card: 168 × 218, radius 10, no fill or frame (hover fill when hovered), a 2 px
+/// accent outline when selected; the page fitted in 144 × 180 at 12 from the top, white; its
 /// number (13) 14 above the bottom; earlier / later arrows in the bottom corners.
 fn card(
     weak: &WeakEntity<DocTab>,
@@ -302,11 +316,8 @@ fn card(
         .w(px(CARD.0))
         .h(px(CARD.1))
         .rounded(px(10.))
-        .bg(palette.surface)
         .hover(move |style| style.bg(hover))
-        .border_1()
-        .border_color(palette.border)
-        // Selection: a 2 px outline over the hairline, drawn on top so nothing inside moves.
+        // Selection: a 2 px outline, drawn on top so nothing inside moves.
         .when(selected, |card| {
             card.child(
                 div()
@@ -376,7 +387,8 @@ fn thumb(image: Option<Arc<RenderImage>>, size: (f32, f32), palette: &Palette) -
     let scale = (THUMB_BOX.0 / size.0.max(1.)).min(THUMB_BOX.1 / size.1.max(1.));
     let (width, height) = ((size.0 * scale).round(), (size.1 * scale).round());
     match image {
-        Some(image) => div().bg(white()).child(
+        // A soft shadow, not a frame, sets the page apart from the background.
+        Some(image) => div().bg(white()).shadow_sm().child(
             img(image)
                 .w(px(width))
                 .h(px(height))

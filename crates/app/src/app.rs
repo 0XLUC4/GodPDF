@@ -496,6 +496,7 @@ impl Render for GodPdfApp {
                 cx,
             ))
             .children(text::overlay(active.as_ref(), cx))
+            .children(crate::collaboration::overlay(self, window, cx))
             .children(services::overlay(window, cx))
             // Painted after every page: hide or show the system pointer as they asked.
             .child(canvas(|_, _, _| {}, |_, _, _, _| tools::pointer::apply()).absolute())

@@ -12,7 +12,7 @@ mod sign;
 mod thumbs;
 
 pub use crate::find::Find;
-pub use thumbs::{Pick, Thumbs, thumbnail, trim};
+pub use thumbs::{Pick, Thumbs, measuring, thumbnail, trim};
 
 use gpui::prelude::*;
 use gpui::{

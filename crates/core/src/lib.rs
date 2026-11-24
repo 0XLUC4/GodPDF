@@ -10,14 +10,17 @@ mod bookmarks;
 mod clean;
 mod compare;
 mod create;
+mod docx;
 mod error;
 mod fonts;
 mod forms;
 mod helvetica;
+mod images;
 mod info;
 mod layout;
 mod organize;
 mod pdf;
+mod pdfa;
 mod redact;
 mod retype;
 mod runedit;
@@ -36,10 +39,12 @@ pub use annotate::{
 pub use attach::{Attachment, add_attachment, attachments, remove_attachment};
 pub use bookmarks::{contents_page, write_outline};
 pub use clean::{
-    Tint, compress, flatten_annotations, remove_comments, remove_hidden_data, tint_pages,
+    Tint, compress, compress_with, flatten_annotations, remove_comments, remove_hidden_data,
+    tint_pages,
 };
 pub use compare::{PageDiff, compare_text};
 pub use create::{jpeg_document, rgb_document, text_document};
+pub use docx::export_docx;
 pub use error::{Error, Result};
 pub use fonts::{CharStyle, Font, Script, style_at};
 pub use forms::{
@@ -47,6 +52,7 @@ pub use forms::{
     fill_form, form_fields,
 };
 pub use helvetica::line_width as helvetica_line_width;
+pub use images::ImageOptions;
 pub use info::{
     Metadata, OutlineItem, PageGeometry, outline, page_count, page_geometries, page_geometry,
     read_metadata, write_metadata,
@@ -56,6 +62,7 @@ pub use organize::{
     blank_document, delete_pages, extract_pages, insert_blank_page, insert_pdf, interleave, merge,
     reorder_pages, rotate_pages, split_at, split_every,
 };
+pub use pdfa::{PdfA, convert_to_pdfa};
 pub use redact::{erase_content, redact, redact_with};
 pub use retype::{LineLook, line_look, replace_styled, replace_text};
 pub use runedit::{replace_run, run_text};

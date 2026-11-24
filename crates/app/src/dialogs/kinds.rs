@@ -7,7 +7,7 @@ use godpdf_core::{self as core, Color, Metadata, PageNumbers, Place, Tint, Water
 use gpui::{App, Entity, Window};
 
 use super::form::{self, Form};
-use super::{Passwords, active_app, output, plain, ranges, state};
+use super::{Passwords, active_app, convert, output, plain, ranges, state};
 use crate::doc::{DocTab, guarded};
 use crate::toasts;
 
@@ -82,6 +82,10 @@ const PAPERS: [(&str, (f32, f32)); 5] = [
 
 const PER_SHEET: [usize; 6] = [2, 4, 6, 8, 9, 16];
 const DPI: [u32; 3] = [72, 150, 300];
+/// Sharpness pictures are scaled down to by Compress; `None` keeps them.
+const PICTURE_DPI: [Option<u32>; 4] = [None, Some(72), Some(150), Some(300)];
+/// JPEG quality of the pictures Compress writes: low, medium, high.
+const JPEG_QUALITY: [u8; 3] = [50, 75, 90];
 const META_LABELS: [&str; 6] = [
     "Title", "Author", "Subject", "Keywords", "Creator", "Producer",
 ];
@@ -106,6 +110,10 @@ pub enum Kind {
         page: usize,
         rect: core::Rect,
     },
+    Compress,
+    /// The PDF/A copy is made: it shows its warnings and asks where to save it.
+    PdfA,
+    Word,
 }
 
 impl Kind {
@@ -132,6 +140,18 @@ impl Kind {
             Self::Encrypt => ("Encrypt with password", "Applied when you save (AES-256)."),
             Self::Properties => ("Document properties", ""),
             Self::NewField { .. } => ("New form field", ""),
+            Self::Compress => (
+                "Compress",
+                "A smaller file that shows the same. Lighter pictures lose detail.",
+            ),
+            Self::PdfA => (
+                "Save as PDF/A",
+                "PDF/A-2b (best effort): an archival copy, without scripts or attached files.",
+            ),
+            Self::Word => (
+                "Export to Word",
+                "The text of each page in a .docx document. Layout and fonts are not kept.",
+            ),
         }
     }
 
@@ -149,6 +169,9 @@ impl Kind {
             Self::Split => ("Save to folder…", Some("Open in new tabs")),
             Self::Encrypt => ("Encrypt on save", None),
             Self::NewField { .. } => ("Add field", None),
+            Self::Compress => ("Compress", None),
+            Self::PdfA => ("Save as…", None),
+            Self::Word => ("Export…", None),
         }
     }
 }
@@ -250,6 +273,18 @@ pub fn build(
             ),
             text("Name", "Field", ""),
         ],
+        Kind::Compress => vec![
+            form::choice(
+                "Pictures",
+                PICTURE_DPI.map(|dpi| {
+                    dpi.map_or("Keep as they are".to_owned(), |dpi| format!("{dpi} dpi"))
+                }),
+                2,
+            ),
+            form::choice("JPEG quality", ["Low", "Medium", "High"], 1),
+        ],
+        Kind::PdfA => Vec::new(),
+        Kind::Word => vec![form::choice("Pictures", ["Include", "Leave out"], 0)],
         Kind::Properties => {
             let meta = bytes_meta.unwrap_or_else(|| Ok(Metadata::default()))?;
             let values = [
@@ -271,7 +306,9 @@ pub fn build(
         kind,
         tab: tab.downgrade(),
         fields,
-        error: None,
+        error: (kind == Kind::PdfA)
+            .then(|| convert::pdfa_warnings(cx))
+            .flatten(),
     })
 }
 
@@ -457,6 +494,22 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             apply(&tab, "Add form field", done, cx, |pdf| {
                 core::add_form_field(pdf, page, rect, kind, &name)
             })
+        }
+        Kind::Compress => {
+            let images = PICTURE_DPI[form.choice("Pictures")].map(|dpi| core::ImageOptions {
+                dpi,
+                quality: JPEG_QUALITY[form.choice("JPEG quality")],
+            });
+            super::compress(images, cx);
+            Ok(())
+        }
+        Kind::PdfA => convert::save_pdfa(cx),
+        Kind::Word => {
+            let pictures = form.choice("Pictures") == 0;
+            let doc = tab.read(cx);
+            let (bytes, title) = (doc.session.bytes().to_vec(), doc.title().to_owned());
+            convert::export_word(bytes, pictures, &title, cx);
+            Ok(())
         }
         Kind::Properties => {
             let [title, author, subject, keywords, creator, producer] = META_LABELS.map(|label| {

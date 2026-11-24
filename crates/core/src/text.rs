@@ -46,7 +46,7 @@ pub fn search(pdf: &[u8], query: &str) -> Result<Vec<SearchHit>> {
 }
 
 /// Text chunks lopdf could decode; undecodable parts are skipped.
-fn page_text(doc: &Document, page: usize) -> String {
+pub(crate) fn page_text(doc: &Document, page: usize) -> String {
     let Ok(number) = u32::try_from(page + 1) else {
         return String::new();
     };

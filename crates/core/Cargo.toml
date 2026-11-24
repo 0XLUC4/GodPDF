@@ -11,4 +11,10 @@ lopdf = { workspace = true, features = ["rayon", "chrono-clock"] }
 thiserror.workspace = true
 # Random key for AES-256 encryption and unique annotation ids.
 getrandom = "0.4"
+# Compress: pictures decoded, scaled down and written as JPEG; PNG pictures in Word exports.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Export to Word: the .docx zip is deflated by hand.
+flate2 = "1"
 
+[dev-dependencies]
+roxmltree = "0.21"

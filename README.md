@@ -72,6 +72,9 @@ New versions arrive through the Updates button, which downloads the update and r
 - Export the whole text as a .txt file
 - Recognize the text of scans (OCR), compare two PDFs
 - Attached files, document properties, undo and redo
+- Compress with lighter pictures: scaled down to 72, 150 or 300 dpi and saved as JPEG
+- Save as PDF/A-2b (best effort), with a list of what could not be guaranteed
+- Export to Word (.docx): the text of each page, and its pictures
 
 The command palette (`Ctrl+K`) finds every tool by name.
 

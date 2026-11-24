@@ -19,15 +19,18 @@ use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Entity, EntityId, FocusHandle, Focusable, Global, Hsla, KeyBinding,
-    MouseButton, Subscription, WeakEntity, Window, actions, div, px,
+    MouseButton, PromptLevel, Subscription, WeakEntity, Window, actions, div, px,
 };
 
 use crate::doc::DocTab;
 use crate::theme::{self, Palette};
-use crate::{icons, widgets};
+use crate::{icons, toasts, widgets};
 use matching::{Options, bands, reveal_delta, scan_order, step};
 
-actions!(godpdf, [Find, FindNext, FindPrevious, FindClose]);
+actions!(
+    godpdf,
+    [Find, FindNext, FindPrevious, FindClose, RedactMatches]
+);
 
 /// Wait after a key before searching, so fast typing searches once.
 const DEBOUNCE: Duration = Duration::from_millis(120);
@@ -96,6 +99,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &Find, cx| open(cx));
     cx.on_action(|_: &FindNext, cx| next(true, cx));
     cx.on_action(|_: &FindPrevious, cx| next(false, cx));
+    cx.on_action(|_: &RedactMatches, cx| redact_matches(cx));
 }
 
 /// The bar is open on the document in front (for the rail button).
@@ -498,6 +502,10 @@ pub fn viewer_overlay(
             )
             .child(small("find-next", icons::CARET_DOWN, "Next (Enter)").on_click(step_to(true)))
             .child(
+                small("find-redact", icons::EYE_SLASH, "Redact all matches…")
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(RedactMatches), cx)),
+            )
+            .child(
                 small("find-close", icons::X, "Close (Esc)").on_click(cx.listener(
                     |tab, _: &gpui::ClickEvent, window, cx| {
                         close(tab, window, cx);
@@ -507,4 +515,102 @@ pub fn viewer_overlay(
             )
             .into_any_element(),
     )
+}
+
+/// Trimmed off both ends of a match's boxes before redacting, in points: glyph widths
+/// differ a little between the renderer and the redaction, and a neighbour must not go.
+const REDACT_TRIM: f32 = 0.1;
+
+/// "Redact all matches": ask with their count, then redact every match of the bar (match
+/// case and whole word as set) as one undo step, covered as the redaction tool's card says.
+fn redact_matches(cx: &mut App) {
+    let Some(tab) = bar(cx).viewing.clone().and_then(|weak| weak.upgrade()) else {
+        toasts::note(cx, "Open a PDF first");
+        return;
+    };
+    let find = &tab.read(cx).panels.find;
+    let (typed, searching, count) = (
+        find.open && !find.query.trim().is_empty(),
+        find.searching,
+        find.matches.len(),
+    );
+    if !typed {
+        open(cx);
+        toasts::note(cx, "Type what to redact, then “Redact all matches”");
+        return;
+    }
+    if searching {
+        toasts::note(cx, "Still searching: try again in a moment");
+        return;
+    }
+    if count == 0 {
+        toasts::note(cx, "No matches to redact");
+        return;
+    }
+    let Some(window) = cx.active_window() else {
+        return;
+    };
+    let detail = format!(
+        "{count} match(es) and what lies under them are removed from the pages, then \
+         covered as chosen in the Redact tool. This is permanent once the file is saved."
+    );
+    let answer = window.update(cx, |_, window, cx| {
+        window.prompt(
+            PromptLevel::Warning,
+            "Redact all matches?",
+            Some(&detail),
+            &["Redact", "Cancel"],
+            cx,
+        )
+    });
+    let Ok(answer) = answer else {
+        return;
+    };
+    let tab = tab.downgrade();
+    cx.spawn(async move |cx| {
+        if let Ok(0) = answer.await {
+            let _ = tab.update(cx, |tab, cx| {
+                redact_found(tab, cx);
+                cx.notify();
+            });
+        }
+    })
+    .detach();
+}
+
+/// Redact the matches found, unless the document changed since they were.
+fn redact_found(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+    let find = &tab.panels.find;
+    if find.generation != tab.generation() || find.searching {
+        toasts::note(
+            cx,
+            "The document changed meanwhile: “Redact all matches” again",
+        );
+        return;
+    }
+    let count = find.matches.len();
+    let bands: Vec<(usize, [f32; 4])> = find
+        .matches
+        .iter()
+        .flat_map(|found| found.bands.iter().map(|band| (found.page, *band)))
+        .collect();
+    let mut areas = Vec::with_capacity(bands.len());
+    for (page, [x0, y0, x1, y1]) in bands {
+        let displayed = tab.page_sizes.get(page).copied();
+        let (Some(displayed), Ok(geom)) = (displayed, tab.page_geom(page)) else {
+            toasts::error(
+                cx,
+                format!("Cannot redact: page {} cannot be read", page + 1),
+            );
+            return;
+        };
+        let (from, to) = ((x0 + REDACT_TRIM, y0), (x1 - REDACT_TRIM, y1));
+        let rect = crate::geometry::to_pdf_rect(&geom, displayed, from, to);
+        areas.push((page, rect));
+    }
+    let cover = crate::tools::redact_cover(cx);
+    match crate::tools::redact_areas(tab, "Redact all matches", &areas, cover) {
+        Ok(()) => toasts::note(cx, format!("{count} match(es) redacted")),
+        Err(err) => toasts::error(cx, format!("Cannot redact: {err}")),
+    }
 }

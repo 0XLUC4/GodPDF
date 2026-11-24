@@ -106,6 +106,12 @@ pub static COMMANDS: &[Command] = &[
         "Each page as a PNG or JPEG picture",
         || Box::new(ExportImages),
     ),
+    command(
+        "Export as text…",
+        File,
+        "The text of every page in a .txt file",
+        || Box::new(ExportText),
+    ),
     command("Close tab", File, "", || Box::new(app::CloseTab)),
     command(
         "Reopen closed tab",
@@ -284,6 +290,33 @@ pub static COMMANDS: &[Command] = &[
         Box::new(tools::RectangleTool)
     }),
     command("Ink", Comment, "Draw freehand", || Box::new(tools::InkTool)),
+    command("Ellipse", Comment, "Circle an area", || {
+        Box::new(tools::EllipseTool)
+    }),
+    command("Line", Comment, "Draw a straight line", || {
+        Box::new(tools::LineTool)
+    }),
+    command("Arrow", Comment, "Point at something", || {
+        Box::new(tools::ArrowTool)
+    }),
+    command("Underline", Comment, "Underline passages", || {
+        Box::new(tools::UnderlineTool)
+    }),
+    command("Strikethrough", Comment, "Strike out passages", || {
+        Box::new(tools::StrikeOutTool)
+    }),
+    command(
+        "Stamp",
+        Comment,
+        "Approved, Draft, Confidential, Rejected, Final",
+        || Box::new(tools::StampTool),
+    ),
+    command(
+        "Redact",
+        Comment,
+        "Mark areas, then remove what they show for good",
+        || Box::new(tools::RedactTool),
+    ),
     command(
         "Picture",
         Comment,
@@ -385,6 +418,12 @@ pub static COMMANDS: &[Command] = &[
         Document,
         "Find words in the document, marked on the pages",
         || Box::new(crate::panels::Find),
+    ),
+    command(
+        "Redact all matches",
+        Document,
+        "Remove every match of the search for good",
+        || Box::new(crate::find::RedactMatches),
     ),
     command(
         "Bookmark this page",

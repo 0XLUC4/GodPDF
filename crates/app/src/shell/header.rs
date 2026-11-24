@@ -326,6 +326,7 @@ impl MenuState {
                     "Print…",
                     "Extract pages…",
                     "Export as images…",
+                    "Export as text…",
                 ] {
                     menu = command(menu, label, has_doc, cx);
                 }
@@ -598,6 +599,15 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Edit PDF text" => (icons::TEXT_AA, ""),
         "About GodPDF" => (icons::QUESTION, ""),
         "Updates" => (icons::ARROW_CIRCLE_UP, ""),
+        "Export as text…" => (icons::TEXT_ALIGN_LEFT, ""),
+        "Ellipse" => (icons::CIRCLE, "O"),
+        "Line" => (icons::LINE_SEGMENT, "L"),
+        "Arrow" => (icons::ARROW_UP_RIGHT, "A"),
+        "Underline" => (icons::TEXT_UNDERLINE, "U"),
+        "Strikethrough" => (icons::TEXT_STRIKETHROUGH, "K"),
+        "Stamp" => (icons::STAMP, "S"),
+        "Redact" => (icons::EYE_SLASH, "X"),
+        "Redact all matches" => (icons::EYE_SLASH, ""),
         _ => (icons::FILE, ""),
     }
 }

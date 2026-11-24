@@ -345,6 +345,18 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(RemovePassword),
     ),
     command(
+        "Sign with certificate…",
+        Protect,
+        "Sign a copy with a .pfx or .p12 certificate",
+        || Box::new(SignWithCertificate),
+    ),
+    command(
+        "Signatures…",
+        Protect,
+        "Check the certificate signatures of the document",
+        || Box::new(Signatures),
+    ),
+    command(
         "Remove hidden data",
         Protect,
         "Properties, scripts and attached files go",

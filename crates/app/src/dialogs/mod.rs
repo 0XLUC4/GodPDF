@@ -6,6 +6,7 @@
 //! `DocTab::apply` (one undo step). Errors keep the dialog open, saying why, or are toasts.
 
 mod attach;
+mod certsign;
 mod commands;
 mod form;
 mod kinds;
@@ -30,6 +31,7 @@ use crate::app::GodPdfApp;
 use crate::doc::{DocTab, guarded};
 use crate::theme::Palette;
 use crate::toasts;
+pub use certsign::check_on_open as check_signatures;
 pub use commands::{COMMANDS, Group};
 use form::Form;
 use kinds::Kind;
@@ -75,7 +77,9 @@ actions!(
         DialogConfirm,
         DialogCancel,
         PaletteUp,
-        PaletteDown
+        PaletteDown,
+        SignWithCertificate,
+        Signatures
     ]
 );
 
@@ -97,6 +101,7 @@ pub enum Open {
     Merge(Merge),
     Signature(signpad::Pad),
     Attach(attach::Attach),
+    Signatures(certsign::List),
 }
 
 #[derive(Default)]
@@ -165,6 +170,8 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &Properties, cx| open_form(Kind::Properties, cx));
     cx.on_action(|_: &MergeFiles, cx| open_merge(cx));
     cx.on_action(|_: &AttachedFiles, cx| attach::open(cx));
+    cx.on_action(|_: &SignWithCertificate, cx| certsign::start(cx));
+    cx.on_action(|_: &Signatures, cx| certsign::show(cx));
     cx.on_action(|_: &RemovePassword, cx| remove_password(cx));
     cx.on_action(|_: &Print, cx| print_active(cx));
     cx.on_action(|_: &Compress, cx| compress(cx));
@@ -338,6 +345,7 @@ pub fn overlay(
         Open::Merge(merge) => merge::render(merge, &colors),
         Open::Signature(pad) => signpad::render(pad, &colors),
         Open::Attach(attach) => attach::render(attach, &colors),
+        Open::Signatures(list) => certsign::render(list, &colors),
     };
     Some(
         div()
@@ -469,7 +477,7 @@ fn build(pending: Pending, tab: Option<&Entity<DocTab>>, window: &mut Window, cx
     let input = match &open {
         Open::Palette(palette) => Some(palette.query.clone()),
         Open::Form(form) => form.first_input(),
-        Open::Merge(_) | Open::Signature(_) | Open::Attach(_) => None,
+        Open::Merge(_) | Open::Signature(_) | Open::Attach(_) | Open::Signatures(_) => None,
     };
     let focused = window.focused(cx);
     let dialogs = state(cx);
@@ -499,7 +507,7 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
     let result = match &open {
         Open::Form(form) => kinds::confirm(form, secondary, cx),
         Open::Merge(merge) => merge::confirm(merge, cx),
-        Open::Palette(_) | Open::Attach(_) => Ok(()),
+        Open::Palette(_) | Open::Attach(_) | Open::Signatures(_) => Ok(()),
         Open::Signature(pad) => signpad::confirm_pad(pad, window, cx),
     };
     match (result, &mut open) {
@@ -515,7 +523,9 @@ fn confirm(secondary: bool, window: &mut Window, cx: &mut App) {
             state(cx).open = Some(open);
             window.refresh();
         }
-        (Err(error), Open::Palette(_) | Open::Attach(_)) => toasts::error(cx, error),
+        (Err(error), Open::Palette(_) | Open::Attach(_) | Open::Signatures(_)) => {
+            toasts::error(cx, error)
+        }
     }
 }
 

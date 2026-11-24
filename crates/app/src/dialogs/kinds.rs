@@ -101,6 +101,8 @@ pub enum Kind {
     Split,
     Encrypt,
     Properties,
+    /// Sign a copy with the key of a .pfx/.p12 file.
+    CertSign,
     /// A form field over `rect` (PDF space) of `page`.
     NewField {
         page: usize,
@@ -132,6 +134,11 @@ impl Kind {
             Self::Encrypt => ("Encrypt with password", "Applied when you save (AES-256)."),
             Self::Properties => ("Document properties", ""),
             Self::NewField { .. } => ("New form field", ""),
+            Self::CertSign => (
+                "Sign with certificate",
+                "Signs a copy saved as a new file. Any later edit of that file invalidates the \
+                 signature. The signature is invisible: place a drawn one first to show it.",
+            ),
         }
     }
 
@@ -149,6 +156,7 @@ impl Kind {
             Self::Split => ("Save to folder…", Some("Open in new tabs")),
             Self::Encrypt => ("Encrypt on save", None),
             Self::NewField { .. } => ("Add field", None),
+            Self::CertSign => ("Sign and save as…", None),
         }
     }
 }
@@ -160,6 +168,11 @@ pub fn build(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<Form, String> {
+    let certificate = if kind == Kind::CertSign {
+        super::certsign::picked(cx)
+    } else {
+        String::new()
+    };
     let field_kind = cx
         .try_global::<crate::tools::ToolState>()
         .map_or(core::NewField::Text, |tools| tools.field_kind);
@@ -242,6 +255,7 @@ pub fn build(
             form::password("Confirm", "", window, cx),
             form::password("Owner password", "optional", window, cx),
         ],
+        Kind::CertSign => super::certsign::fields(certificate, window, cx),
         Kind::NewField { .. } => vec![
             form::choice(
                 "Kind",
@@ -446,6 +460,7 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             toasts::success(cx, "Password set: the file is encrypted when you save");
             Ok(())
         }
+        Kind::CertSign => super::certsign::confirm(form, &tab, cx),
         Kind::NewField { page, rect } => {
             let kind = if form.choice("Kind") == 1 {
                 core::NewField::CheckBox

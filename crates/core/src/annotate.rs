@@ -1424,7 +1424,7 @@ fn unique_name(annot_id: ObjectId) -> String {
 }
 
 /// Current UTC time as a PDF date string.
-fn pdf_date() -> Option<String> {
+pub(crate) fn pdf_date() -> Option<String> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?

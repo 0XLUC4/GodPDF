@@ -2446,8 +2446,11 @@ dependencies = [
 name = "godpdf-core"
 version = "2.3.0"
 dependencies = [
+ "flate2",
  "getrandom 0.4.3",
+ "image",
  "lopdf",
+ "roxmltree 0.21.2",
  "thiserror 2.0.21",
 ]
 

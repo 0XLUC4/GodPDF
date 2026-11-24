@@ -106,6 +106,18 @@ pub static COMMANDS: &[Command] = &[
         "Each page as a PNG or JPEG picture",
         || Box::new(ExportImages),
     ),
+    command(
+        "Export to Word…",
+        File,
+        "The text and pictures of each page in a .docx document",
+        || Box::new(ExportWord),
+    ),
+    command(
+        "Save as PDF/A…",
+        File,
+        "An archival copy (PDF/A-2b, best effort)",
+        || Box::new(SaveAsPdfA),
+    ),
     command("Close tab", File, "", || Box::new(app::CloseTab)),
     command(
         "Reopen closed tab",
@@ -431,7 +443,7 @@ pub static COMMANDS: &[Command] = &[
     command(
         "Compress",
         Document,
-        "A smaller file that shows the same",
+        "A smaller file that shows the same, with lighter pictures if you like",
         || Box::new(Compress),
     ),
     command("About GodPDF", Help, "", || {

@@ -326,6 +326,8 @@ impl MenuState {
                     "Print…",
                     "Extract pages…",
                     "Export as images…",
+                    "Export to Word…",
+                    "Save as PDF/A…",
                 ] {
                     menu = command(menu, label, has_doc, cx);
                 }
@@ -527,6 +529,8 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Save As…" => (icons::FLOPPY_DISK_BACK, "Ctrl+Shift+S"),
         "Print…" => (icons::PRINTER, "Ctrl+P"),
         "Export as images…" => (icons::FILE_IMAGE, ""),
+        "Export to Word…" => (icons::TEXT_ALIGN_LEFT, ""),
+        "Save as PDF/A…" => (icons::SHIELD_CHECK, ""),
         "Close tab" => (icons::X, "Ctrl+W"),
         "Quit" => (icons::SIGN_OUT, ""),
         "Toggle dark mode" => (icons::CIRCLE_HALF, ""),

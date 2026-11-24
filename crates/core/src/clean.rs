@@ -8,7 +8,7 @@ use lopdf::{Document, Object, ObjectId, SaveOptions, dictionary};
 use crate::annotate::{annots_entries, num, rgb, set_annots};
 use crate::pdf::{deref, dict_entry, load, page_ids, save};
 use crate::stamp::{View, targets, wrap};
-use crate::{Color, Error, Result};
+use crate::{Color, Error, ImageOptions, Result};
 
 /// A colour change of whole pages.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -255,7 +255,16 @@ fn runs_something(doc: &Document, annot: &Object) -> bool {
 /// Make the file smaller without changing what it shows: unused and duplicated objects
 /// go, every stream is compressed, small objects are packed together.
 pub fn compress(pdf: &[u8]) -> Result<Vec<u8>> {
+    compress_with(pdf, None)
+}
+
+/// [`compress`], and with `images` the pictures are also scaled down and written as JPEG
+/// (see [`ImageOptions`]): smaller still, but they lose detail.
+pub fn compress_with(pdf: &[u8], images: Option<ImageOptions>) -> Result<Vec<u8>> {
     let mut doc = load(pdf)?;
+    if let Some(options) = images {
+        crate::images::downsample(&mut doc, options);
+    }
     deduplicate_streams(&mut doc);
     doc.prune_objects();
     doc.compress();

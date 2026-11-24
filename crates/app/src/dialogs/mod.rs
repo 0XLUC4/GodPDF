@@ -7,6 +7,7 @@
 
 mod attach;
 mod commands;
+mod convert;
 mod form;
 mod kinds;
 mod merge;
@@ -75,7 +76,9 @@ actions!(
         DialogConfirm,
         DialogCancel,
         PaletteUp,
-        PaletteDown
+        PaletteDown,
+        SaveAsPdfA,
+        ExportWord
     ]
 );
 
@@ -167,7 +170,9 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &AttachedFiles, cx| attach::open(cx));
     cx.on_action(|_: &RemovePassword, cx| remove_password(cx));
     cx.on_action(|_: &Print, cx| print_active(cx));
-    cx.on_action(|_: &Compress, cx| compress(cx));
+    cx.on_action(|_: &Compress, cx| open_form(Kind::Compress, cx));
+    cx.on_action(|_: &SaveAsPdfA, cx| convert::pdfa(cx));
+    cx.on_action(|_: &ExportWord, cx| open_form(Kind::Word, cx));
     cx.on_action(|_: &RotateLeft, cx| rotate_current(-90, cx));
     cx.on_action(|_: &RotateRight, cx| rotate_current(90, cx));
     cx.on_action(|_: &RotateAll, cx| {
@@ -620,13 +625,15 @@ fn rotate_current(degrees: i32, cx: &mut App) {
     }
 }
 
-fn compress(cx: &mut App) {
+/// Compress the document in front; with `images`, its pictures are made lighter too.
+fn compress(images: Option<core::ImageOptions>, cx: &mut App) {
     let Some(tab) = active_tab(cx) else {
         toasts::info(cx, "Open a PDF first");
         return;
     };
     let before = tab.read(cx).session.bytes().len();
-    edit_active_later(cx, "Compress", core::compress, move |tab, cx| {
+    let edit = move |pdf: &[u8]| core::compress_with(pdf, images);
+    edit_active_later(cx, "Compress", edit, move |tab, cx| {
         let after = tab.read(cx).session.bytes().len();
         let saved = 100.0 - after as f64 * 100.0 / before.max(1) as f64;
         toasts::note(

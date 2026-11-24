@@ -430,6 +430,11 @@ pub fn new_field(page: usize, rect: core::Rect, cx: &mut App) {
     open_form(Kind::NewField { page, rect }, cx);
 }
 
+/// Ask where a link over `rect` (PDF space) of `page` leads, then add it.
+pub fn new_link(page: usize, rect: core::Rect, cx: &mut App) {
+    open_form(Kind::NewLink { page, rect }, cx);
+}
+
 /// The document in front first, then the files picked.
 fn open_merge(cx: &mut App) {
     let files: Vec<crate::files::PickedFile> = active_tab(cx)

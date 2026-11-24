@@ -613,6 +613,11 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Stamp" => (icons::STAMP, "S"),
         "Redact" => (icons::EYE_SLASH, "X"),
         "Redact all matches" => (icons::EYE_SLASH, ""),
+        "Single page" => (icons::ROWS, ""),
+        "Two pages" => (icons::COLUMNS, ""),
+        "Two pages with cover" => (icons::BOOK_OPEN, ""),
+        "Presentation" => (icons::CORNERS_OUT, "F5"),
+        "Link" => (icons::LINK_SIMPLE, ""),
         _ => (icons::FILE, ""),
     }
 }

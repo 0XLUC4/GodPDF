@@ -39,6 +39,10 @@ New versions arrive through the Updates button, which downloads the update and r
 - Find as in a browser (`Ctrl+F`): every match highlighted, jump from word to word
 - Thumbnails, bookmarks and comments panels, two documents side by side
 - Large plans (A3 to A0) stay sharp at any zoom
+- Links work: a click goes to the page or opens the web address
+- Each file reopens at the page you were reading
+- Two pages side by side, with the first one alone as a cover if you like
+- Presentation (`F5`): full screen, one page at a time, arrows to turn, `Esc` to leave
 
 **Comment and mark up**
 - Highlight, underline and strike out by selecting the text
@@ -55,6 +59,7 @@ New versions arrive through the Updates button, which downloads the update and r
 - Put pictures on a page, move and resize them
 - Sign with a signature drawn once and kept
 - Fill in forms on the page, add text fields and check boxes
+- Draw links to a page or a web address
 - Redact: remove text, pictures and comments under the marked areas for good
 - Redaction cover in black, white, any colour, or none
 - Redact every match of a search at once, from the find bar

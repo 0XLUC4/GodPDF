@@ -334,7 +334,7 @@ fn set_children(dict: &mut Dictionary, kids: &[ObjectId], count: i64) {
 }
 
 /// Explicit destination array of an outline item (/Dest or /A GoTo /D).
-fn item_dest(doc: &Document, item: &Dictionary) -> Option<Vec<Object>> {
+pub(crate) fn item_dest(doc: &Document, item: &Dictionary) -> Option<Vec<Object>> {
     if let Ok(dest) = item.get(b"Dest") {
         return resolve_dest(doc, dest, 0);
     }
@@ -404,7 +404,7 @@ fn search_name_tree<'a>(
 }
 
 /// Page index of an explicit destination: a page reference, or an integer page number.
-fn dest_page(dest: &[Object], pages: &HashMap<ObjectId, usize>) -> Option<usize> {
+pub(crate) fn dest_page(dest: &[Object], pages: &HashMap<ObjectId, usize>) -> Option<usize> {
     match dest.first()? {
         Object::Reference(id) => pages.get(id).copied(),
         Object::Integer(n) => usize::try_from(*n).ok().filter(|&n| n < pages.len()),

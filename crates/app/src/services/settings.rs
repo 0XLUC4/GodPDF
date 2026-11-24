@@ -1,5 +1,6 @@
 //! Settings kept between sessions: theme, right panel, tools panel, recent files, window
-//! size. JSON in `settings.json`, in the app data folder (`%APPDATA%\GodPDF\data` on Windows).
+//! size, the page read last in each file. JSON in `settings.json`, in the app data folder
+//! (`%APPDATA%\GodPDF\data` on Windows).
 //!
 //! The root view notes what it shows every frame ([`track`]); it is written when it changed,
 //! every few seconds and when the app quits ([`save`]), so a crash loses little. The write is
@@ -24,6 +25,8 @@ pub struct Settings {
     pub maximized: bool,
     /// Custom colours of the style card (`0xRRGGBB`), newest first.
     pub recent_colors: Vec<u32>,
+    /// The page read last in each file (0-based), files opened last first.
+    pub last_pages: Vec<(PathBuf, usize)>,
 }
 
 impl Default for Settings {
@@ -36,6 +39,7 @@ impl Default for Settings {
             size: None,
             maximized: false,
             recent_colors: Vec::new(),
+            last_pages: Vec::new(),
         }
     }
 }
@@ -100,6 +104,11 @@ fn to_json(settings: &Settings) -> String {
             .iter()
             .map(|&rgb| format!("#{rgb:06X}"))
             .collect::<Vec<_>>(),
+        "last_pages": settings
+            .last_pages
+            .iter()
+            .map(|(path, page)| json!({ "path": path.display().to_string(), "page": page }))
+            .collect::<Vec<_>>(),
         "window": {
             "width": settings.size.map(|size| size.0),
             "height": settings.size.map(|size| size.1),
@@ -140,6 +149,23 @@ fn parse(text: &str) -> Settings {
                 .collect()
         })
         .unwrap_or_default();
+    let last_pages = value
+        .get("last_pages")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let path = entry
+                        .get("path")?
+                        .as_str()
+                        .filter(|path| !path.is_empty())?;
+                    let page = usize::try_from(entry.get("page")?.as_u64()?).ok()?;
+                    Some((PathBuf::from(path), page))
+                })
+                .take(crate::shell::MAX_LAST_PAGES)
+                .collect()
+        })
+        .unwrap_or_default();
     let window = value.get("window");
     let number = |key: &str| {
         window
@@ -163,6 +189,7 @@ fn parse(text: &str) -> Settings {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         recent_colors,
+        last_pages,
     }
 }
 
@@ -204,6 +231,10 @@ mod tests {
             size: Some((1200.0, 800.0)),
             maximized: true,
             recent_colors: vec![0x1F5FD6, 0x000000],
+            last_pages: vec![
+                (PathBuf::from("C:/a.pdf"), 12),
+                (PathBuf::from("/b c.pdf"), 0),
+            ],
         };
         assert_eq!(parse(&to_json(&settings)), settings);
     }
@@ -220,5 +251,7 @@ mod tests {
         assert_eq!(missing.size, None);
         let colors = parse(r##"{"recent_colors": ["#FF0000", "nope", 3, "0f0"]}"##);
         assert_eq!(colors.recent_colors, [0xFF0000, 0x00FF00]);
+        let pages = parse(r#"{"last_pages": [{"path": "/a.pdf", "page": 3}, {"path": ""}, 5]}"#);
+        assert_eq!(pages.last_pages, [(PathBuf::from("/a.pdf"), 3)]);
     }
 }

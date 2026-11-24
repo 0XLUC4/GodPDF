@@ -17,6 +17,7 @@ const PAGES: &str = "Pages";
 const PAGES_HINT: &str = "e.g. 1-3, 5, 8-";
 pub(super) const PER_PART: &str = "Pages per part";
 pub(super) const STARTS_AT: &str = "New part starts at";
+const LINK_TO: &str = "Link to";
 
 /// Colours offered for stamps.
 const COLOURS: [(&str, Color); 5] = [
@@ -114,6 +115,11 @@ pub enum Kind {
     /// The PDF/A copy is made: it shows its warnings and asks where to save it.
     PdfA,
     Word,
+    /// A link over `rect` (PDF space) of `page`.
+    NewLink {
+        page: usize,
+        rect: core::Rect,
+    },
 }
 
 impl Kind {
@@ -152,6 +158,7 @@ impl Kind {
                 "Export to Word",
                 "The text of each page in a .docx document. Layout and fonts are not kept.",
             ),
+            Self::NewLink { .. } => ("New link", "Click it with Select or Hand to follow it"),
         }
     }
 
@@ -172,6 +179,7 @@ impl Kind {
             Self::Compress => ("Compress", None),
             Self::PdfA => ("Save as…", None),
             Self::Word => ("Export…", None),
+            Self::NewLink { .. } => ("Add link", None),
         }
     }
 }
@@ -285,6 +293,7 @@ pub fn build(
         ],
         Kind::PdfA => Vec::new(),
         Kind::Word => vec![form::choice("Pictures", ["Include", "Leave out"], 0)],
+        Kind::NewLink { .. } => vec![text(LINK_TO, "", "Page number or https://…")],
         Kind::Properties => {
             let meta = bytes_meta.unwrap_or_else(|| Ok(Metadata::default()))?;
             let values = [
@@ -511,6 +520,12 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             convert::export_word(bytes, pictures, &title, cx);
             Ok(())
         }
+        Kind::NewLink { page, rect } => {
+            let target = link_target(&form.text(LINK_TO, cx), count)?;
+            apply(&tab, "Add link", "Link added", cx, |pdf| {
+                core::add_link(pdf, page, rect, &target)
+            })
+        }
         Kind::Properties => {
             let [title, author, subject, keywords, creator, producer] = META_LABELS.map(|label| {
                 Some(form.text(label, cx).trim().to_owned()).filter(|value| !value.is_empty())
@@ -573,6 +588,29 @@ pub fn number(text: &str, label: &str, range: RangeInclusive<f32>) -> Result<f32
     Ok(value)
 }
 
+/// Where a new link leads, typed as a page number (1 to `count`) or a web or mail address;
+/// an address starting with `www.` is taken as `https://`.
+fn link_target(text: &str, count: usize) -> Result<core::LinkTarget, String> {
+    let text = text.trim();
+    if let Ok(page) = text.parse::<usize>() {
+        return if (1..=count).contains(&page) {
+            Ok(core::LinkTarget::Page(page - 1))
+        } else {
+            Err(format!("{LINK_TO}: a page from 1 to {count}"))
+        };
+    }
+    let uri = if text.to_ascii_lowercase().starts_with("www.") {
+        format!("https://{text}")
+    } else {
+        text.to_owned()
+    };
+    if core::is_web_uri(&uri) && !uri.contains(char::is_whitespace) {
+        Ok(core::LinkTarget::Uri(uri))
+    } else {
+        Err("Type a page number, or an address starting with https://, http:// or mailto:".into())
+    }
+}
+
 /// A number format as it reads on the first of twelve pages.
 fn number_sample(template: &str) -> String {
     template.replace("{n}", "1").replace("{total}", "12")
@@ -596,6 +634,24 @@ mod tests {
         assert!(number("", "Size", 0.0..=10.0).is_err());
         assert!(number("11", "Size", 0.0..=10.0).is_err());
         assert!(number("-1", "Size", 0.0..=10.0).is_err());
+    }
+
+    #[test]
+    fn link_targets_are_pages_or_web_addresses() {
+        use godpdf_core::LinkTarget::{Page, Uri};
+        assert_eq!(link_target(" 3 ", 5), Ok(Page(2)));
+        assert!(link_target("0", 5).is_err() && link_target("6", 5).is_err());
+        assert_eq!(
+            link_target("www.example.com", 5),
+            Ok(Uri("https://www.example.com".into()))
+        );
+        assert_eq!(
+            link_target("mailto:a@b.c", 5),
+            Ok(Uri("mailto:a@b.c".into()))
+        );
+        assert!(link_target("javascript:alert(1)", 5).is_err());
+        assert!(link_target("https://a b", 5).is_err());
+        assert!(link_target("", 5).is_err());
     }
 
     #[test]

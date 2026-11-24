@@ -18,7 +18,9 @@ use gpui::{
 use lyon::tessellation::{LineCap, LineJoin};
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, fields, hsla, pointer, richtext, sign, stamp, tool_state};
+use super::{
+    Tool, current_tool, editor, fields, hsla, links, pointer, richtext, sign, stamp, tool_state,
+};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::{icons, text, toasts};
@@ -135,6 +137,8 @@ pub struct Canvas {
     pointer: Option<(usize, (f32, f32))>,
     /// The line, arrow or ink under the pointer (Select), outlined as hovered.
     hovered: Option<(usize, String)>,
+    /// Where the links of the pages are and lead.
+    pub(super) links: links::Links,
 }
 
 impl Canvas {
@@ -379,6 +383,14 @@ fn on_down(
         return;
     };
     let tool = viewer_tool(tab, cx);
+    if matches!(tool, Tool::Select | Tool::Hand)
+        && let Some(target) = link_under(tab, page, point, cx)
+    {
+        editor::commit(tab, cx);
+        links::follow(tab, target, cx);
+        cx.notify();
+        return;
+    }
     // A click outside the text being typed finishes it, and does nothing else for text tools.
     if tab.canvas.editor.is_some() {
         editor::commit(tab, cx);
@@ -423,7 +435,8 @@ fn on_down(
         | Tool::Arrow
         | Tool::Redact
         | Tool::Picture
-        | Tool::Field => {
+        | Tool::Field
+        | Tool::Link => {
             tab.canvas.gesture = Some(Gesture::Draw {
                 page,
                 points: vec![point],
@@ -431,6 +444,20 @@ fn on_down(
         }
     }
     cx.notify();
+}
+
+/// Where the link under `point` leads, unless a comment the Select tool moves is over it.
+fn link_under(
+    tab: &mut DocTab,
+    page: usize,
+    point: (f32, f32),
+    cx: &mut App,
+) -> Option<godpdf_core::LinkTarget> {
+    let target = links::at(tab, page, point)?;
+    let slop = HIT_SLOP / tab.view.zoom;
+    let covered = items(tab, page, cx)
+        .is_some_and(|items| hit(&items, point, slop).is_some_and(|index| items[index].movable()));
+    (!covered).then_some(target)
 }
 
 fn select_down(
@@ -880,6 +907,7 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
         | Tool::Rectangle
         | Tool::Ellipse
         | Tool::Redact
+        | Tool::Link
             if tiny =>
         {
             return;
@@ -952,6 +980,10 @@ fn commit_draw(tab: &mut DocTab, page: usize, points: &[(f32, f32)], cx: &mut Co
         }
         Tool::Field => {
             fields::new_field(tab, page, first, last, tiny, cx);
+            return;
+        }
+        Tool::Link => {
+            crate::dialogs::new_link(page, rect, cx);
             return;
         }
         _ => return,
@@ -1365,6 +1397,8 @@ pub fn page_overlay(
     let ghost_rect = ghost.map(|ghost| (ghost.id.clone(), ghost.dst));
     tab.canvas.ghost = settled;
     let editing_base = editor::lifted_page(tab, page, zoom);
+    // The Hand tool follows links too: they show it (Select has a box over every annotation).
+    let link_boxes = (tool == Tool::Hand).then(|| links::of_page(tab, page));
     let gesture = tab.canvas.gesture.as_ref();
     let mut layer = div()
         .id(("canvas-page", page))
@@ -1463,6 +1497,15 @@ pub fn page_overlay(
             };
             layer = layer
                 .child(hover_box.context_menu(move |menu, _, _| selection_menu(menu, &palette)));
+        }
+    }
+    if let Some(link_boxes) = link_boxes.filter(|_| gesture.is_none()) {
+        for (index, (rect, _)) in link_boxes.iter().enumerate() {
+            layer = layer.child(
+                boxed(*rect, zoom, 0.0)
+                    .id(("link-box", index))
+                    .cursor(CursorStyle::PointingHand),
+            );
         }
     }
     // The comment eraser tints what its circle would take.
@@ -1671,7 +1714,7 @@ fn shape(
             .border_2()
             .border_color(rgb(REDACT_RED))
             .into_any_element(),
-        Tool::Picture | Tool::Field => boxed(rect, zoom, 0.0)
+        Tool::Picture | Tool::Field | Tool::Link => boxed(rect, zoom, 0.0)
             .border_1()
             .border_dashed()
             .border_color(black())

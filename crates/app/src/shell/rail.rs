@@ -16,8 +16,10 @@ use gpui::{
 use super::FitPage;
 use crate::app::{FitWidth, GodPdfApp, ZoomIn, ZoomOut};
 use crate::doc::DocTab;
+use crate::geometry::Spread;
 use crate::panels::{self, Panel};
 use crate::theme::{self, Palette};
+use crate::viewer::{Present, SinglePageView, TwoPageView};
 use crate::widgets::{self, dispatch};
 use crate::{fonts, icons};
 
@@ -132,6 +134,9 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
 
     let doc = tab.read(cx);
     let (current, count, zoom) = (doc.view.current_page, doc.page_count(), doc.view.zoom);
+    // Previous and next rows of pages, one page each unless two sit side by side.
+    let (before, after) = (doc.neighbour_page(false), doc.neighbour_page(true));
+    let two_pages = doc.view.spread != Spread::Single;
     let goto = |page: usize| {
         let tab = tab.downgrade();
         move |_: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut gpui::App| {
@@ -147,20 +152,19 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
         "previous-page",
         icons::CARET_UP,
         "Previous page",
-        current > 0,
+        before.is_some(),
     )
-    .when(current > 0, |button| {
-        button.on_click(goto(current.saturating_sub(1)))
-    });
-    let next = rail(
-        "next-page",
-        icons::CARET_DOWN,
-        "Next page",
-        current + 1 < count,
-    )
-    .when(current + 1 < count, |button| {
-        button.on_click(goto(current + 1))
-    });
+    .when_some(before, |button, page| button.on_click(goto(page)));
+    let next = rail("next-page", icons::CARET_DOWN, "Next page", after.is_some())
+        .when_some(after, |button, page| button.on_click(goto(page)));
+    let spread = move |_: &gpui::ClickEvent, window: &mut gpui::Window, cx: &mut App| {
+        let action: Box<dyn gpui::Action> = if two_pages {
+            Box::new(SinglePageView)
+        } else {
+            Box::new(TwoPageView)
+        };
+        window.dispatch_action(action, cx);
+    };
 
     let dim = |text: String| {
         div()
@@ -191,6 +195,21 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
             .on_click(dispatch(FitWidth)),
         )
         .child(rail("fit-page", icons::FRAME_CORNERS, "Fit page", true).on_click(dispatch(FitPage)))
+        .child(
+            widgets::rail_button(
+                "two-pages",
+                icons::COLUMNS,
+                "Two pages side by side",
+                two_pages,
+                true,
+                palette,
+            )
+            .on_click(spread),
+        )
+        .child(
+            rail("present", icons::CORNERS_OUT, "Presentation (F5)", true)
+                .on_click(dispatch(Present)),
+        )
         .child(
             rail(
                 "zoom-in",

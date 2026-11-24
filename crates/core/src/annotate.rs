@@ -1462,6 +1462,25 @@ pub struct PlacedAnnotation {
     /// Parsed back when it is one of our kinds (Highlight/Underline/StrikeOut/Text/FreeText/
     /// Square/Circle/Line/Ink/Stamp with enough data); `None` for other subtypes (Link, ...).
     pub annotation: Option<Annotation>,
+    /// The /T entry (author), empty when absent.
+    pub author: String,
+    /// The /M entry (last change) as "YYYY-MM-DD HH:MM", empty when absent or unreadable.
+    pub modified: String,
+}
+
+/// A PDF date ("D:20260930153200+02'00'") as "2026-09-30 15:32"; `None` if malformed.
+pub fn display_date(date: &str) -> Option<String> {
+    let digits = date.strip_prefix("D:").unwrap_or(date);
+    let part = |range: std::ops::Range<usize>| {
+        digits
+            .get(range)
+            .filter(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    let (year, month, day) = (part(0..4)?, part(4..6)?, part(6..8)?);
+    Some(match (part(8..10), part(10..12)) {
+        (Some(hour), Some(minute)) => format!("{year}-{month}-{day} {hour}:{minute}"),
+        _ => format!("{year}-{month}-{day}"),
+    })
 }
 
 /// Annotations of `page`, in /Annots order.
@@ -1482,6 +1501,8 @@ pub fn annotations(pdf: &[u8], page: usize) -> Result<Vec<PlacedAnnotation>> {
                     y1: 0.0,
                 }),
                 annotation: parse_annotation(&doc, dict),
+                author: read_string(&doc, dict, b"T"),
+                modified: display_date(&read_string(&doc, dict, b"M")).unwrap_or_default(),
             })
         })
         .collect();
@@ -1722,10 +1743,15 @@ fn contents_string(text: &str) -> Object {
 }
 
 fn read_text(doc: &Document, dict: &Dictionary) -> String {
-    dict.get(b"Contents")
+    read_string(doc, dict, b"Contents")
+}
+
+/// The text string under `key`, empty when absent or not a string.
+fn read_string(doc: &Document, dict: &Dictionary, key: &[u8]) -> String {
+    dict.get(key)
         .ok()
-        .and_then(|contents| deref(doc, contents))
-        .and_then(|contents| decode_text_string(contents).ok())
+        .and_then(|value| deref(doc, value))
+        .and_then(|value| decode_text_string(value).ok())
         .unwrap_or_default()
 }
 

@@ -3,6 +3,7 @@
 //! a `border` line on its left. The panel a toggle opens is `panels::right`.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::component::input::{Input, InputEvent, InputState};
@@ -22,10 +23,92 @@ use crate::{fonts, icons};
 
 const WIDTH: f32 = 52.0;
 
+/// Which panels have something to show, per document: read in the background once per
+/// document generation, shown as accent dots on the rail.
+#[derive(Default)]
+struct Badges(HashMap<EntityId, (u64, Content)>);
+
+impl Global for Badges {}
+
+#[derive(Clone, Copy, Default)]
+struct Content {
+    comments: bool,
+    bookmarks: bool,
+    form: bool,
+}
+
+impl Content {
+    fn read(pdf: &[u8], pages: usize) -> Self {
+        let has = |found: Result<bool, String>| found.unwrap_or(false);
+        Self {
+            comments: has(crate::doc::guarded(|| {
+                for page in 0..pages {
+                    if !godpdf_core::annotations(pdf, page)?.is_empty() {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .map_err(|err| err.to_string())),
+            bookmarks: has(crate::doc::guarded(|| godpdf_core::outline(pdf))
+                .map(|items| !items.is_empty())
+                .map_err(|err| err.to_string())),
+            form: has(crate::doc::guarded(|| godpdf_core::form_fields(pdf))
+                .map(|fields| !fields.is_empty())
+                .map_err(|err| err.to_string())),
+        }
+    }
+
+    fn has(self, panel: Panel) -> bool {
+        match panel {
+            Panel::Comments => self.comments,
+            Panel::Bookmarks => self.bookmarks,
+            Panel::Form => self.form,
+            Panel::Pages | Panel::Sign => false,
+        }
+    }
+}
+
+/// The content of `tab` for its current generation; starts reading it when missing.
+fn content(tab: &Entity<DocTab>, cx: &mut Context<GodPdfApp>) -> Content {
+    let id = tab.entity_id();
+    let doc = tab.read(cx);
+    let generation = doc.generation();
+    let known = cx
+        .try_global::<Badges>()
+        .and_then(|badges| badges.0.get(&id).copied());
+    if let Some((read, content)) = known
+        && read == generation
+    {
+        return content;
+    }
+    let (bytes, pages) = (doc.shared_bytes(), doc.page_count());
+    // Mark it as read now, so one job runs per generation; the old dots stay meanwhile.
+    let shown = known.map(|(_, content)| content).unwrap_or_default();
+    cx.default_global::<Badges>()
+        .0
+        .insert(id, (generation, shown));
+    let job = cx
+        .background_executor()
+        .spawn(async move { Content::read(&bytes, pages) });
+    cx.spawn(async move |this, cx| {
+        let content = job.await;
+        let _ = this.update(cx, |_, cx| {
+            cx.default_global::<Badges>()
+                .0
+                .insert(id, (generation, content));
+            cx.notify();
+        });
+    })
+    .detach();
+    shown
+}
+
 pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfApp>) -> AnyElement {
     let open = panels::open_panel(cx);
+    let content = content(tab, cx);
     let views = Panel::ALL.map(|view| {
-        widgets::rail_button(
+        let button = widgets::rail_button(
             view.title(),
             view.icon(),
             view.title(),
@@ -33,7 +116,8 @@ pub fn render(tab: &Entity<DocTab>, palette: &Palette, cx: &mut Context<GodPdfAp
             true,
             palette,
         )
-        .on_click(move |_, _, cx| panels::rail_click(view, cx))
+        .on_click(move |_, _, cx| panels::rail_click(view, cx));
+        widgets::badge(button, content.has(view), palette)
     });
     // Search is the find bar over the viewer, not a panel.
     let find = widgets::rail_button(
@@ -202,12 +286,15 @@ fn page_box(
         .items_center()
         .justify_center()
         .rounded(px(theme::RADIUS))
-        .bg(palette.surface)
+        .bg(palette.bg)
         .border_1()
-        .border_color(palette.border)
+        .border_color(palette.outline.opacity(0.45))
         .hover(move |style| style.bg(hover))
         .cursor_ew_resize()
         .text_size(px(fonts::BODY))
+        // One line exactly as high as the text: the number sits in the middle of the box.
+        .line_height(px(fonts::BODY))
+        .text_center()
         .child(shown.to_string())
         .on_click(move |_, window, cx| edit(&weak, shown, window, cx))
         .on_drag(

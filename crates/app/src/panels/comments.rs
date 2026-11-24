@@ -8,9 +8,8 @@ use gpui::{AnyElement, App, Context, Entity, div, px};
 
 use super::label;
 use crate::doc::{DocTab, guarded};
-use crate::icons;
-use crate::theme::Palette;
-use crate::widgets;
+use crate::theme::{self, Palette};
+use crate::{fonts, icons, widgets};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -44,6 +43,21 @@ impl Kind {
         }
     }
 
+    /// The colour of its round badge: one per kind of action.
+    fn tint(self) -> u32 {
+        match self {
+            Self::Highlight => 0xCA8A04,
+            Self::Note => theme::AMBER,
+            Self::Underline => theme::BLUE,
+            Self::StrikeOut => theme::RED,
+            Self::FreeText => 0x71717A,
+            Self::Rectangle | Self::Ellipse | Self::Line => theme::PURPLE,
+            Self::Ink => theme::PINK,
+            Self::Picture => theme::TEAL,
+            Self::Stamp => theme::GREEN,
+        }
+    }
+
     fn icon(self) -> &'static str {
         match self {
             Self::Highlight => icons::HIGHLIGHTER,
@@ -66,10 +80,13 @@ pub struct Entry {
     kind: Kind,
     /// Note / free-text content; empty for markup.
     text: String,
+    /// Author and last change, empty when the file has none.
+    author: String,
+    modified: String,
 }
 
 impl Entry {
-    fn new(page: usize, annotation: Annotation) -> Self {
+    fn new(page: usize, annotation: Annotation, author: String, modified: String) -> Self {
         let (kind, text) = match annotation {
             Annotation::Highlight { .. } => (Kind::Highlight, String::new()),
             Annotation::Underline { .. } => (Kind::Underline, String::new()),
@@ -83,7 +100,13 @@ impl Entry {
             Annotation::Image { .. } => (Kind::Picture, String::new()),
             Annotation::Stamp { .. } => (Kind::Stamp, String::new()),
         };
-        Self { page, kind, text }
+        Self {
+            page,
+            kind,
+            text,
+            author,
+            modified,
+        }
     }
 }
 
@@ -99,12 +122,10 @@ fn collect(pdf: &[u8], page_count: usize) -> Found {
     for page in 0..page_count {
         let placed = guarded(|| godpdf_core::annotations(pdf, page))
             .map_err(|err| format!("Page {}: {err}", page + 1))?;
-        entries.extend(
-            placed
-                .into_iter()
-                .filter_map(|placed| placed.annotation)
-                .map(|annotation| Entry::new(page, annotation)),
-        );
+        entries.extend(placed.into_iter().filter_map(|placed| {
+            let annotation = placed.annotation?;
+            Some(Entry::new(page, annotation, placed.author, placed.modified))
+        }));
     }
     Ok(entries)
 }
@@ -151,7 +172,6 @@ pub fn render(tab: &Entity<DocTab>, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
     tab.update(cx, request);
     let doc = tab.read(cx);
-    let current = doc.view.current_page;
     let entries = match doc
         .panels
         .comments
@@ -191,23 +211,18 @@ pub fn render(tab: &Entity<DocTab>, cx: &mut App) -> AnyElement {
         let page = group[0].page;
         list.push(
             div()
-                .mt(px(6.))
+                .mt(px(10.))
                 .mb(px(2.))
                 .flex()
                 .items_center()
                 .justify_between()
+                .font_weight(fonts::STRONG)
                 .child(format!("Page {}", page + 1))
                 .child(label(group.len().to_string(), palette.text_dim))
                 .into_any_element(),
         );
         for (row_index, entry) in group.iter().enumerate() {
-            list.push(row(
-                tab,
-                (index, row_index),
-                entry,
-                page == current,
-                &palette,
-            ));
+            list.push(row(tab, (index, row_index), entry, &palette));
         }
     }
     div()
@@ -217,43 +232,49 @@ pub fn render(tab: &Entity<DocTab>, cx: &mut App) -> AnyElement {
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(px(2.))
         .children(list)
         .into_any_element()
 }
 
-fn row(
-    tab: &Entity<DocTab>,
-    id: (usize, usize),
-    entry: &Entry,
-    current: bool,
-    palette: &Palette,
-) -> AnyElement {
+fn row(tab: &Entity<DocTab>, id: (usize, usize), entry: &Entry, palette: &Palette) -> AnyElement {
     let (tab, page, hover) = (tab.downgrade(), entry.page, palette.hover);
+    let tint = theme::hex(entry.kind.tint());
+    // "Author" in bold, then "Kind · date" dimmed; without an author the kind is the title.
+    let (title, kind) = if entry.author.is_empty() {
+        (entry.kind.label().to_owned(), None)
+    } else {
+        (entry.author.clone(), Some(entry.kind.label()))
+    };
+    let details: Vec<&str> = kind
+        .into_iter()
+        .chain((!entry.modified.is_empty()).then_some(entry.modified.as_str()))
+        .collect();
     div()
         .id(gpui::ElementId::Name(
             format!("comment-{}-{}", id.0, id.1).into(),
         ))
         .flex_none()
-        .p(px(8.))
+        .px(px(8.))
+        .py(px(10.))
         .rounded(px(8.))
         .flex()
         .items_start()
-        .gap(px(8.))
+        .gap(px(10.))
         .cursor_pointer()
-        .when(current, |row| row.bg(palette.surface))
+        .border_b_1()
+        .border_color(palette.border)
         .hover(move |style| style.bg(hover))
         .child(
             div()
                 .flex_none()
-                .size(px(28.))
-                .rounded(px(14.))
-                // The current page's rows are `surface` already: the circle takes `bg` there.
-                .bg(if current { palette.bg } else { palette.surface })
+                .size(px(30.))
+                .rounded_full()
+                .bg(tint.opacity(0.16))
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(widgets::icon(entry.kind.icon(), 16.0, palette.text)),
+                .child(widgets::icon(entry.kind.icon(), 16.0, tint)),
         )
         .child(
             div()
@@ -261,10 +282,13 @@ fn row(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(6.))
-                .child(label(entry.kind.label(), palette.text_dim))
+                .gap(px(2.))
+                .child(div().font_weight(fonts::STRONG).child(title))
+                .when(!details.is_empty(), |column| {
+                    column.child(label(details.join("  ·  "), palette.text_dim))
+                })
                 .when(!entry.text.is_empty(), |column| {
-                    column.child(entry.text.clone())
+                    column.child(div().pt(px(4.)).child(entry.text.clone()))
                 }),
         )
         .on_click(move |_, _, cx| {

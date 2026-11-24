@@ -1,27 +1,29 @@
-//! The bundled fonts: Ubuntu Light (all UI text), Hack (monospace) from
-//! `epaint_default_fonts` 0.35, and the Phosphor icon font (regular) 0.13.
+//! The bundled fonts: Inter 4.1 Regular and SemiBold (all UI text, OFL), Hack (monospace)
+//! from `epaint_default_fonts` 0.35, and the Phosphor icon font (light weight) 2.1.
 
 use std::borrow::Cow;
 
 use gpui::{App, px};
 
-/// UI text: the typographic family of Ubuntu-Light.ttf.
-/// Its only face is Light (300), so every weight resolves to it, bold included.
-pub const UI: &str = "Ubuntu";
-/// The weight of [`UI`]: set it on the root so the match is exact.
-pub const UI_WEIGHT: gpui::FontWeight = gpui::FontWeight::LIGHT;
+/// UI text: Inter, Regular for text and SemiBold ([`STRONG`]) for titles and names.
+pub const UI: &str = "Inter";
+/// The weight of [`UI`] text: set it on the root.
+pub const UI_WEIGHT: gpui::FontWeight = gpui::FontWeight::NORMAL;
+/// Titles, author names, the active tab.
+pub const STRONG: gpui::FontWeight = gpui::FontWeight::SEMIBOLD;
 /// Monospace text.
 pub const MONO: &str = "Hack";
-/// Phosphor glyphs: see `icons.rs`.
+/// Phosphor glyphs, light weight (thin outlines): see `icons.rs`.
 pub const ICONS: &str = "Phosphor";
 
 /// The size of text without an explicit size (body and buttons).
 pub const BODY: f32 = 13.0;
 
-pub const FILES: [&[u8]; 3] = [
-    include_bytes!("../assets/fonts/Ubuntu-Light.ttf"),
+pub const FILES: [&[u8]; 4] = [
+    include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
     include_bytes!("../assets/fonts/Hack-Regular.ttf"),
-    include_bytes!("../assets/fonts/Phosphor.ttf"),
+    include_bytes!("../assets/fonts/Phosphor-Light.ttf"),
 ];
 
 /// Load the fonts into the text system. Call once, before the theme is set.
@@ -63,11 +65,13 @@ mod tests {
             );
             text.font_id(&gpui::font(family)).unwrap();
         }
-        let ui = gpui::Font {
-            weight: UI_WEIGHT,
-            ..gpui::font(UI)
-        };
-        text.font_id(&ui).unwrap();
+        for weight in [UI_WEIGHT, STRONG] {
+            let ui = gpui::Font {
+                weight,
+                ..gpui::font(UI)
+            };
+            text.font_id(&ui).unwrap();
+        }
         let icons = text.font_id(&gpui::font(ICONS)).unwrap();
         for glyph in [crate::icons::HOUSE, crate::icons::X, crate::icons::FILE_PDF] {
             let ch = glyph.chars().next().unwrap();

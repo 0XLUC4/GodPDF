@@ -653,7 +653,7 @@ fn picture_pixels(picture: &Picture) -> Result<RenderImage, String> {
 
 fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Context<DocTab>) {
     let tool = current_tool(cx);
-    if tool == Tool::Eraser {
+    if matches!(tool, Tool::Eraser | Tool::Ink) {
         tab.canvas.pointer = page_point(tab, page, event.position).map(|point| (page, point));
         cx.notify();
     }
@@ -1562,6 +1562,16 @@ pub fn page_overlay(
             .child(brush_ring(point, side, zoom, cx))
             .child(hide_pointer_here());
     }
+    // Drawing: a pencil in the ink colour stands in for the pointer, its tip on the point.
+    if tool == Tool::Ink
+        && tab.canvas.editor.is_none()
+        && let Some((_, point)) = tab.canvas.pointer.filter(|(at, _)| *at == page)
+    {
+        let color = hsla(tool_state(cx).styles.of(tool).color);
+        layer = layer
+            .child(pen_pointer(point, color, zoom))
+            .child(hide_pointer_here());
+    }
     // Over the comments: a click on a form field fills it in.
     if tool == Tool::Select && tab.canvas.editor.is_none() && tab.can_edit() {
         layer = layer.children(fields::render(tab, page, zoom, cx));
@@ -1724,6 +1734,23 @@ fn brush_ring(point: (f32, f32), side: f32, zoom: f32, cx: &App) -> Div {
                 .border_color(palette.text)
                 .bg(with_alpha(palette.text, 0.12)),
         )
+}
+
+/// The drawing pointer: a 22 px pencil glyph whose tip (its bottom-left corner) sits on
+/// `point` (displayed points), in the ink colour.
+fn pen_pointer(point: (f32, f32), color: Hsla, zoom: f32) -> Div {
+    const SIZE: f32 = 22.0;
+    // The glyph's tip is about 2 px in from its bottom-left corner.
+    const TIP: f32 = 2.0;
+    div()
+        .absolute()
+        .left(px((point.0 * zoom - TIP).round()))
+        .top(px((point.1 * zoom - SIZE + TIP).round()))
+        .child(crate::widgets::icon(
+            crate::icons::PENCIL_SIMPLE,
+            SIZE,
+            color,
+        ))
 }
 
 /// The circle stands in for the system pointer: hidden while the pointer is really over this

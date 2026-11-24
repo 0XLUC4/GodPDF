@@ -141,8 +141,8 @@ pub fn small_icon_button(
     )
 }
 
-/// 32×32 toggle of the right rail (18 px glyph); `selected` shows the `selected` square,
-/// hover the `hover` one.
+/// 32×32 toggle of the right rail (18 px glyph); `selected` shows a light accent square
+/// with an accent glyph, hover the `hover` one.
 pub fn rail_button(
     id: impl Into<ElementId>,
     glyph: &'static str,
@@ -151,9 +151,31 @@ pub fn rail_button(
     enabled: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let button = icon_widget(id, glyph, RAIL_BUTTON, 18.0, enabled, palette)
-        .when(selected, |button| button.bg(palette.selected));
+    let button = if selected {
+        let accent = Palette {
+            text: palette.accent_text,
+            ..*palette
+        };
+        icon_widget(id, glyph, RAIL_BUTTON, 18.0, enabled, &accent).bg(palette.selected)
+    } else {
+        icon_widget(id, glyph, RAIL_BUTTON, 18.0, enabled, palette)
+    };
     tooltip(button, tip)
+}
+
+/// A small accent dot in the top-right corner of a rail button: its panel has content.
+pub fn badge(button: Stateful<Div>, shown: bool, palette: &Palette) -> Stateful<Div> {
+    button.relative().when(shown, |button| {
+        button.child(
+            div()
+                .absolute()
+                .top(px(4.))
+                .right(px(4.))
+                .size(px(6.))
+                .rounded_full()
+                .bg(palette.accent),
+        )
+    })
 }
 
 /// Full-width list row: 20 px glyph in `tint` centered 20 px from the left,
@@ -221,7 +243,7 @@ pub fn button(
         .when(!label.is_empty(), |button| button.child(label))
 }
 
-/// Shape shared by the text buttons: height 28, padding 12, radius 6, body text, no border.
+/// Shape shared by the text buttons: a pill of height 28, padding 12, body text.
 fn base_button(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
@@ -232,22 +254,29 @@ fn base_button(id: impl Into<ElementId>) -> Stateful<Div> {
         .gap(px(6.))
         .px(px(theme::BUTTON_PADDING.0))
         .h(px(theme::INTERACT_HEIGHT))
-        .rounded(px(theme::RADIUS))
+        .rounded(px(theme::PILL_RADIUS))
         .text_size(px(fonts::BODY))
         .whitespace_nowrap()
 }
 
-/// A secondary button: subtle `button` fill, no border, `button_hover` on hover,
-/// `selected` while pressed. `enabled = false` dims the label and drops the hover.
+/// A secondary button: white pill with a thin `outline`, `button_hover` on hover and while
+/// pressed. `enabled = false` dims the label and the line and drops the hover.
 pub fn framed_button(
     id: impl Into<ElementId>,
     label: impl IntoElement,
     enabled: bool,
     palette: &Palette,
 ) -> Stateful<Div> {
-    let (hover, pressed) = (palette.button_hover, palette.selected);
+    let (hover, pressed) = (palette.button_hover, palette.button_hover);
+    let line = if enabled {
+        palette.outline
+    } else {
+        palette.outline.opacity(0.4)
+    };
     base_button(id)
         .bg(palette.button)
+        .border_1()
+        .border_color(line)
         .text_color(if enabled {
             palette.text
         } else {

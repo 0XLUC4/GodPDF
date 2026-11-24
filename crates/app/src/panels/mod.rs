@@ -251,7 +251,12 @@ pub fn right(
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(div().text_size(px(17.)).child(panel.title()))
+                    .child(
+                        div()
+                            .text_size(px(17.))
+                            .font_weight(crate::fonts::STRONG)
+                            .child(panel.title()),
+                    )
                     .children(comment_count.map(|count| {
                         div()
                             .text_size(px(15.))

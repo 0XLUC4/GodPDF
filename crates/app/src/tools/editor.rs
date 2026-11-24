@@ -864,6 +864,7 @@ pub fn render(
                         .absolute()
                         .inset_0()
                         .border_1()
+                        .border_dashed()
                         .border_color(rgb(BORDER)),
                 )
                 .child(text_selection_surface(

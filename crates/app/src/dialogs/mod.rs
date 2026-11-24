@@ -716,7 +716,11 @@ mod tests {
 
 /// Dialog title: 18 px (strong is only a colour), then 4 more of space.
 pub(crate) fn title(text: impl IntoElement) -> Div {
-    div().pb(px(4.)).text_size(px(18.)).child(text)
+    div()
+        .pb(px(4.))
+        .text_size(px(18.))
+        .font_weight(crate::fonts::STRONG)
+        .child(text)
 }
 
 /// Error line: warning glyph and text in the error colour.

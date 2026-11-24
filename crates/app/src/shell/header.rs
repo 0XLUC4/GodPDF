@@ -175,6 +175,7 @@ fn mode_tab(mode: Mode, active: bool, enabled: bool, palette: &Palette) -> State
         .items_center()
         .text_size(px(15.))
         .text_color(color)
+        .when(active, |tab| tab.font_weight(crate::fonts::STRONG))
         .when(enabled && !active, |tab| {
             tab.cursor_pointer().child(
                 div()

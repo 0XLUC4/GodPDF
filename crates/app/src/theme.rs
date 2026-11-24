@@ -1,4 +1,4 @@
-//! Monochrome palette of the app: black on white, white on black, and the shared visuals
+//! Palette of the app: white (or dark grey) surfaces, a blue accent, and the shared visuals
 //! as constants. See DESIGN.md.
 
 use gpui::{App, Global, Hsla, Rgba, rgb};
@@ -28,9 +28,11 @@ pub struct Palette {
     pub accent_text: Hsla,
     /// Hovered primary button.
     pub accent_hover: Hsla,
-    /// Fill of a secondary button (no border), and hovered.
+    /// Fill of a secondary button, and hovered.
     pub button: Hsla,
     pub button_hover: Hsla,
+    /// Outline of secondary buttons (white pills with a thin line).
+    pub outline: Hsla,
     /// Fill of selected / pressed controls.
     pub selected: Hsla,
     /// Viewer canvas behind pages.
@@ -53,8 +55,10 @@ pub fn hex(color: u32) -> Hsla {
 
 // ---- visuals, same for both palettes.
 
-/// Corner radius of buttons, fields, menu entries.
+/// Corner radius of fields, menu entries, icon buttons.
 pub const RADIUS: f32 = 6.0;
+/// Text buttons are pills: half their height.
+pub const PILL_RADIUS: f32 = INTERACT_HEIGHT / 2.0;
 /// `window_corner_radius`: dialogs.
 pub const WINDOW_RADIUS: f32 = 12.0;
 /// Popups and menus.
@@ -91,13 +95,14 @@ impl Palette {
             border: grey(0x24),
             text: grey(0xF2),
             text_dim: grey(0x9A),
-            accent: grey(0xF2),
-            on_accent: grey(0x11),
-            accent_text: grey(0xF2),
-            accent_hover: grey(0xD6),
-            button: grey(0x22),
-            button_hover: grey(0x2C),
-            selected: grey(0x33),
+            accent: hex(0x3B82F6),
+            on_accent: grey(0xFF),
+            accent_text: hex(0x60A5FA),
+            accent_hover: hex(0x2563EB),
+            button: grey(0x14),
+            button_hover: grey(0x22),
+            outline: grey(0x52),
+            selected: hex(0x1E2A44),
             canvas: grey(0x0A),
             success: grey(0xF2),
             error: hex(0xF87171),
@@ -105,24 +110,25 @@ impl Palette {
         }
     }
 
-    /// Default: white UI, light grey canvas so white pages stand out.
+    /// Default: white UI, blue accent, light grey canvas so white pages stand out.
     pub fn light() -> Self {
         Self {
             bg: grey(0xFF),
             panel: grey(0xFF),
-            surface: grey(0xF5),
-            hover: grey(0xEF),
-            border: grey(0xE6),
-            text: grey(0x11),
-            text_dim: grey(0x66),
-            accent: grey(0x11),
+            surface: hex(0xF4F4F5),
+            hover: hex(0xF1F1F3),
+            border: hex(0xE4E4E7),
+            text: hex(0x18181B),
+            text_dim: hex(0x71717A),
+            accent: hex(0x2563EB),
             on_accent: grey(0xFF),
-            accent_text: grey(0x11),
-            accent_hover: grey(0x33),
-            button: grey(0xF1),
-            button_hover: grey(0xE8),
-            selected: grey(0xE0),
-            canvas: grey(0xF2),
+            accent_text: hex(0x2563EB),
+            accent_hover: hex(0x1D4ED8),
+            button: grey(0xFF),
+            button_hover: hex(0xF4F4F5),
+            outline: hex(0x6B6B73),
+            selected: hex(0xE8EFFD),
+            canvas: hex(0xF0F0F2),
             success: grey(0x11),
             error: hex(0xD92D20),
             shadow_alpha: 28.0 / 255.0,
@@ -167,13 +173,15 @@ fn apply_to_components(cx: &mut App) {
     let p = Palette::of(cx);
     gpui::component::Theme::update(cx, |theme| {
         let c = &mut theme.colors;
-        (c.background, c.foreground, c.border, c.input) = (p.panel, p.text, p.border, p.border);
+        (c.background, c.foreground, c.border) = (p.panel, p.text, p.border);
+        // Fields: white with a visible line, like the buttons.
+        c.input = p.outline.opacity(0.45);
         (c.popover, c.popover_foreground) = (p.panel, p.text);
         (c.accent, c.accent_foreground) = (p.hover, p.text);
         (c.muted, c.muted_foreground) = (p.surface, p.text_dim);
         (c.ring, c.caret, c.selection) = (p.accent_text, p.text, p.selected);
         (c.list_hover, c.list_active) = (p.hover, p.selected);
-        (c.button, c.button_hover, c.button_active) = (p.button, p.button_hover, p.selected);
+        (c.button, c.button_hover, c.button_active) = (p.button, p.button_hover, p.button_hover);
         (c.secondary, c.secondary_hover, c.secondary_active) =
             (p.button, p.button_hover, p.selected);
         (c.button_secondary, c.button_secondary_hover) = (p.button, p.button_hover);

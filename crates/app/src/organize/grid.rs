@@ -11,7 +11,7 @@ use gpui::{
     Window, canvas, div, img, px, uniform_list, white,
 };
 
-use super::{InsertFile, MoveEarlier, MoveLater, apply_order, move_pages, order};
+use super::{InsertFile, MoveEarlier, MoveLater, ToggleOrganize, apply_order, move_pages, order};
 use crate::dialogs::{
     DeletePage, ExtractPages, InsertBlankPage, RotateAll, RotateLeft, RotateRight,
 };
@@ -99,22 +99,28 @@ fn columns(width: f32) -> usize {
 
 pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyElement {
     let palette = Palette::of(cx);
-    let (count, selected, width) = tab.update(cx, |tab, _| {
+    let (count, selected, width, current) = tab.update(cx, |tab, _| {
         tab.grid.thumbs.free_evicted(window);
-        (tab.page_count(), tab.grid.selection.len(), tab.grid.width)
+        let current = tab.view.current_page;
+        (
+            tab.page_count(),
+            tab.grid.selection.len(),
+            tab.grid.width,
+            current,
+        )
     });
     let per_row = columns(width);
     div()
         .size_full()
         .flex()
         .flex_col()
-        .child(toolbar(tab, count, selected, &palette))
+        .child(toolbar(tab, count, selected, current, &palette))
         .child(
             div()
                 .relative()
                 .flex_1()
                 .min_h_0()
-                .bg(palette.bg)
+                .bg(palette.canvas)
                 .child(measure(tab))
                 // Not measured yet (first frame): one column would flash before the real ones.
                 .when(width > 0., |grid| {
@@ -152,30 +158,51 @@ fn measure(tab: &Entity<DocTab>) -> impl IntoElement {
     .size_full()
 }
 
-/// The tool bar: panel fill, margin 16 × 10, wrapped framed buttons (glyph + label, 28 high), a
-/// separator, Select all / Clear selection, then "k of n selected".
-fn toolbar(tab: &Entity<DocTab>, count: usize, selected: usize, palette: &Palette) -> AnyElement {
+/// The tool bar: "Page k of n", the page commands as icons (their name and description in
+/// the tooltip), a separator, Select all / Clear selection and the selection count, then
+/// Close on the right.
+fn toolbar(
+    tab: &Entity<DocTab>,
+    count: usize,
+    selected: usize,
+    current: usize,
+    palette: &Palette,
+) -> AnyElement {
     let buttons = TOOLBAR
         .iter()
         .enumerate()
         .map(|(index, &(action, glyph, label, tip))| {
-            let content = widgets::with_icon(glyph, label, fonts::BODY, palette.text);
-            let button = widgets::framed_button(("organize-tool", index), content, true, palette)
-                .h(px(widgets::ICON_BUTTON))
-                .on_click(move |_, window, cx| window.dispatch_action(action(), cx));
-            widgets::tooltip(button, tip)
+            widgets::icon_button(
+                ("organize-tool", index),
+                glyph,
+                format!("{label}: {tip}"),
+                palette,
+            )
+            .on_click(move |_, window, cx| window.dispatch_action(action(), cx))
         });
     let (all, none) = (tab.downgrade(), tab.downgrade());
+    let close = widgets::button("organize-close", "", palette)
+        .child(widgets::with_icon(
+            icons::X,
+            "Close",
+            fonts::BODY,
+            palette.text,
+        ))
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleOrganize), cx));
     div()
         .flex()
         .flex_wrap()
         .items_center()
-        .gap(px(crate::theme::ITEM_SPACING.0))
+        .gap(px(4.))
         .px(px(16.))
-        .py(px(10.))
+        .py(px(8.))
         .bg(palette.panel)
         .border_b_1()
         .border_color(palette.border)
+        .child(div().mr(px(16.)).text_color(palette.text).child(format!(
+            "Page {} of {count}",
+            (current + 1).min(count.max(1))
+        )))
         .children(buttons)
         .child(div().w(px(1.)).h(px(20.)).bg(palette.border))
         .child(
@@ -195,11 +222,16 @@ fn toolbar(tab: &Entity<DocTab>, count: usize, selected: usize, palette: &Palett
             )
             .on_click(move |_, _, cx| update(&none, cx, |tab| tab.grid.selection.clear())),
         )
-        .child(
-            div()
-                .text_color(palette.text_dim)
-                .child(format!("{selected} of {count} selected")),
-        )
+        .when(selected > 0, |bar| {
+            bar.child(
+                div()
+                    .ml(px(4.))
+                    .text_color(palette.text_dim)
+                    .child(format!("{selected} selected")),
+            )
+        })
+        .child(div().flex_1())
+        .child(close)
         .into_any_element()
 }
 
@@ -256,8 +288,8 @@ struct DraggedCard {
     page: usize,
 }
 
-/// A page card: 168 × 218, radius 10, no fill or frame (hover fill when hovered), a 2 px
-/// accent outline when selected; the page fitted in 144 × 180 at 12 from the top, white; its
+/// A page card: 168 × 218, radius 10, no fill or frame (hover fill when hovered), a light
+/// accent fill when selected; the page fitted in 144 × 180 at 12 from the top, white; its
 /// number (13) 14 above the bottom; earlier / later arrows in the bottom corners.
 fn card(
     weak: &WeakEntity<DocTab>,
@@ -316,21 +348,9 @@ fn card(
         .w(px(CARD.0))
         .h(px(CARD.1))
         .rounded(px(10.))
-        .hover(move |style| style.bg(hover))
-        // Selection: a 2 px outline, drawn on top so nothing inside moves.
-        .when(selected, |card| {
-            card.child(
-                div()
-                    .absolute()
-                    .top(px(-1.))
-                    .left(px(-1.))
-                    .right(px(-1.))
-                    .bottom(px(-1.))
-                    .rounded(px(10.))
-                    .border_2()
-                    .border_color(palette.accent),
-            )
-        })
+        // Selection: a light accent fill behind the page.
+        .when(selected, |card| card.bg(palette.selected))
+        .when(!selected, |card| card.hover(move |style| style.bg(hover)))
         .cursor_pointer()
         .child(
             div()

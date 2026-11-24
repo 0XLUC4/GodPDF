@@ -52,7 +52,14 @@ fn floating(
             div()
                 .flex()
                 .items_center()
-                .child(div().flex_1().truncate().text_size(px(18.)).child(title))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_size(px(18.))
+                        .font_weight(fonts::STRONG)
+                        .child(title),
+                )
                 .child(
                     widgets::small_icon_button((id, 0usize), icons::X, "Close", palette)
                         .on_click(move |_, _, cx| close(cx)),

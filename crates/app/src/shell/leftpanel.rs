@@ -522,7 +522,13 @@ pub fn render(
                     .mb(px(14.))
                     .flex()
                     .items_center()
-                    .child(div().flex_1().text_size(px(17.)).child(mode.panel_title()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(17.))
+                            .font_weight(crate::fonts::STRONG)
+                            .child(mode.panel_title()),
+                    )
                     .child(
                         widgets::icon_button("close-tools", icons::X, "Close panel", palette)
                             .on_click(cx.listener(|app, _, _, cx| {

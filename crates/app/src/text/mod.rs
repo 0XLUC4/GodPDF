@@ -12,7 +12,8 @@ mod ocr;
 mod sel;
 mod view;
 
-pub(crate) use lineedit::reconcile;
+pub(crate) use lineedit::{reconcile, reconcile_at, replace_marks};
+pub(crate) use lineedit::commit as finish_editing;
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -491,7 +492,7 @@ pub fn page_overlay(
     _window: &mut Window,
     cx: &mut Context<DocTab>,
 ) -> Option<AnyElement> {
-    if !editing_text(cx) {
+    if !editing_text(cx) || !tab.can_edit() {
         return None;
     }
     sync(tab);

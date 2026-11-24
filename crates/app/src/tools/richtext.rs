@@ -93,12 +93,52 @@ impl Layout {
             .iter()
             .position(|range| index <= range.end)
             .unwrap_or(self.lines.len().saturating_sub(1));
-        let Some(range) = self.lines.get(line) else {
-            return (FREE_TEXT_PADDING, 0);
-        };
+        (self.caret_on_line(index, line), line)
+    }
+
+    fn caret_on_line(&self, index: usize, line: usize) -> f32 {
+        let range = &self.lines[line];
         let end = index.clamp(range.start, range.end);
-        let x = FREE_TEXT_PADDING + self.advances[range.start..end].iter().sum::<f32>();
-        (x, line)
+        FREE_TEXT_PADDING + self.advances[range.start..end].iter().sum::<f32>()
+    }
+
+    /// Insertion index and visual line at a position relative to the box, in PDF points.
+    pub fn hit_test(&self, x: f32, y: f32) -> (usize, usize) {
+        let line = (((y - FREE_TEXT_PADDING) / self.line_height()).floor() as usize)
+            .min(self.lines.len() - 1);
+        let range = &self.lines[line];
+        let mut edge = FREE_TEXT_PADDING;
+        for index in range.clone() {
+            let advance = self.advances[index];
+            if x < edge + advance * 0.5 {
+                return (index, line);
+            }
+            edge += advance;
+        }
+        (range.end, line)
+    }
+
+    pub fn word_at(&self, x: f32, line: usize) -> (usize, usize) {
+        let range = &self.lines[line];
+        let mut edge = FREE_TEXT_PADDING;
+        let glyph = range.clone().find(|&index| {
+            edge += self.advances[index];
+            x < edge
+        });
+        let Some(index) = glyph.or_else(|| range.clone().last()) else {
+            return (range.start, range.start);
+        };
+        let class = |c: char| (c.is_alphanumeric() || c == '_', c.is_whitespace());
+        let kind = class(self.chars[index]);
+        let start = self.chars[range.start..index]
+            .iter()
+            .rposition(|&c| class(c) != kind)
+            .map_or(range.start, |offset| range.start + offset + 1);
+        let end = self.chars[index..range.end]
+            .iter()
+            .position(|&c| class(c) != kind)
+            .map_or(range.end, |offset| index + offset);
+        (start, end)
     }
 
     fn line_top(&self, line: usize) -> f32 {
@@ -119,6 +159,7 @@ pub struct Look {
     pub family: &'static str,
     pub color: Hsla,
     pub selection: Option<Range<usize>>,
+    pub caret_hint: Option<(usize, usize)>,
 }
 
 /// Selected text fill, the caret colour.
@@ -134,7 +175,18 @@ pub fn element(layout: Rc<Layout>, look: Look, zoom: f32) -> AnyElement {
             if let Some(selection) = &look.selection {
                 let blue: Hsla = gpui::rgb(SELECTION).into();
                 if selection.is_empty() {
-                    let (x, line) = layout.caret(selection.start);
+                    let (x, line) =
+                        look.caret_hint
+                            .filter(|&(index, line)| {
+                                index == selection.start
+                                    && layout.lines.get(line).is_some_and(|range| {
+                                        range.start <= index && index <= range.end
+                                    })
+                            })
+                            .map_or_else(
+                                || layout.caret(selection.start),
+                                |(index, line)| (layout.caret_on_line(index, line), line),
+                            );
                     let mut top = at(x, layout.line_top(line));
                     // One crisp pixel wide, on a whole device pixel.
                     let scale = window.scale_factor();
@@ -148,8 +200,8 @@ pub fn element(layout: Rc<Layout>, look: Look, zoom: f32) -> AnyElement {
                     if start >= end {
                         continue;
                     }
-                    let (x0, _) = layout.caret(start);
-                    let (x1, _) = layout.caret(end);
+                    let x0 = layout.caret_on_line(start, line);
+                    let x1 = layout.caret_on_line(end, line);
                     let band = Bounds::new(
                         at(x0, layout.line_top(line)),
                         size(px((x1 - x0) * zoom), px(line_height * zoom)),
@@ -240,6 +292,22 @@ mod tests {
         let two = Font::Helvetica.char_width('2', plain, 10.0);
         assert!((runs[1].width - two * 0.65).abs() < 1e-4);
         assert!((runs[2].x - (runs[1].x + runs[1].width)).abs() < 1e-4);
+        // A click in the second half of the smaller glyph goes after it.
+        let x = runs[1].x + two * 0.4;
+        assert_eq!(layout.hit_test(x, layout.line_top(0)), (2, 0));
+    }
+
+    #[test]
+    fn hit_testing_uses_the_visible_line_and_character_midpoints() {
+        let layout = Layout::new("éééé\n", &[], Font::Courier, 10.0, 16.0);
+        assert_eq!(layout.lines, [0..2, 2..4, 5..5]);
+        let pad = FREE_TEXT_PADDING;
+        assert_eq!(layout.hit_test(pad + 2.0, pad), (0, 0));
+        assert_eq!(layout.hit_test(pad + 4.0, pad), (1, 0));
+        assert_eq!(layout.hit_test(100.0, pad), (2, 0));
+        assert_eq!(layout.hit_test(0.0, layout.line_top(1)), (2, 1));
+        assert_eq!(layout.hit_test(0.0, 100.0), (5, 2));
+        assert_eq!(layout.caret_on_line(2, 1), pad);
     }
 
     #[test]

@@ -17,7 +17,7 @@
 
 <p align="center"><img src="docs/screenshot.png" alt="GodPDF with a document open" width="900"></p>
 
-No account, no cloud, no telemetry. Your documents never leave your computer.
+No account, cloud storage or telemetry. Documents stay on your computer unless you choose to share them.
 
 ## Download
 
@@ -72,9 +72,17 @@ New versions arrive through the Updates button, which downloads the update and r
 
 The command palette (`Ctrl+K`) finds every tool by name.
 
+## Share a PDF
+
+Open a PDF and choose **Share → Share current PDF**. Copy the invitation code and send it to one person you trust. They can paste it under **Share → Join** in GodPDF. The session displays the other computer's name.
+
+You start with editing control. The other person sees changes as you make them. Choose **Pass editing control** to let them edit and follow their changes instead. Use **End session** to disconnect. Each person can save their current copy locally.
+
+The connection is encrypted. GodPDF connects directly when possible and can use an encrypted relay on different networks. Shared PDFs must be unencrypted at the file level and at most 64 MiB. The host and guest must keep GodPDF running during the session.
+
 ## Build
 
-Requires Rust 1.94 or newer.
+Requires Rust 1.95 or newer.
 
 ```sh
 cargo run --release -p godpdf

@@ -5,6 +5,8 @@
 //!
 //! Enter or a click away writes it, Esc drops it.
 
+use std::ops::Range;
+
 use godpdf_core::{CharStyle, Font, LineLook, Rect, style_at};
 use gpui::component::input::{Escape, Input, InputEvent, InputState};
 use gpui::prelude::*;
@@ -101,24 +103,57 @@ pub(crate) fn reconcile<T: Copy + Default>(
     new: &str,
     typing: Option<T>,
 ) {
+    reconcile_at(marks, old, new, typing, None);
+}
+
+pub(crate) fn reconcile_at<T: Copy + Default>(
+    marks: &mut Vec<T>,
+    old: &str,
+    new: &str,
+    typing: Option<T>,
+    caret: Option<usize>,
+) {
     let old: Vec<char> = old.chars().collect();
     let new: Vec<char> = new.chars().collect();
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let suffix = old[prefix..]
-        .iter()
-        .rev()
-        .zip(new[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    marks.resize(old.len(), T::default());
+    let shared_prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    // The unchanged tail starts at the post-edit caret. Reserve it before comparing
+    // prefixes so repeated characters on either side of the edit keep their styles.
+    let (prefix, suffix) = if let Some(at) =
+        caret.filter(|&at| new.get(at..).is_some_and(|tail| old.ends_with(tail)))
+    {
+        let suffix = new.len() - at;
+        (shared_prefix.min(at).min(old.len() - suffix), suffix)
+    } else {
+        let suffix = old[shared_prefix..]
+            .iter()
+            .rev()
+            .zip(new[shared_prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        (shared_prefix, suffix)
+    };
+    replace_marks(
+        marks,
+        old.len(),
+        prefix..old.len() - suffix,
+        new.len() - prefix - suffix,
+        typing,
+    );
+}
+
+pub(crate) fn replace_marks<T: Copy + Default>(
+    marks: &mut Vec<T>,
+    old_len: usize,
+    replaced: Range<usize>,
+    inserted: usize,
+    typing: Option<T>,
+) {
+    marks.resize(old_len, T::default());
     let mark = typing
-        .or_else(|| prefix.checked_sub(1).map(|at| marks[at]))
-        .or_else(|| marks.get(prefix).copied())
+        .or_else(|| replaced.start.checked_sub(1).map(|at| marks[at]))
+        .or_else(|| marks.get(replaced.start).copied())
         .unwrap_or_default();
-    let kept = marks.split_off(old.len() - suffix);
-    marks.truncate(prefix);
-    marks.extend(std::iter::repeat_n(mark, new.len() - prefix - suffix));
-    marks.extend(kept);
+    marks.splice(replaced, std::iter::repeat_n(mark, inserted));
 }
 
 /// The colour the page has around `band` (left, top, right, bottom, in pixels of a `width` x
@@ -259,11 +294,27 @@ pub fn open(
     window.prevent_default();
     let _events = cx.subscribe(&input, |tab, input, event: &InputEvent, cx| match event {
         InputEvent::Change => {
-            let typed = input.read(cx).value().to_string();
+            let state = input.read(cx);
+            let typed = state.value().to_string();
+            let caret = typed
+                .get(..state.cursor())
+                .map(|prefix| prefix.chars().count());
             if let Some(line) = tab.text.line.as_mut() {
                 let typing = line.typing.take();
-                reconcile(&mut line.styles, &line.marked, &typed, typing.map(|t| t.0));
-                reconcile(&mut line.inks, &line.marked, &typed, typing.map(|t| t.1));
+                reconcile_at(
+                    &mut line.styles,
+                    &line.marked,
+                    &typed,
+                    typing.map(|t| t.0),
+                    caret,
+                );
+                reconcile_at(
+                    &mut line.inks,
+                    &line.marked,
+                    &typed,
+                    typing.map(|t| t.1),
+                    caret,
+                );
                 line.marked = typed;
             }
             cx.notify();
@@ -494,7 +545,7 @@ pub fn line_at(chars: &[godpdf_render::TextChar], point: (f32, f32)) -> Option<[
 
 #[cfg(test)]
 mod tests {
-    use super::{backdrop, reconcile};
+    use super::{backdrop, reconcile, reconcile_at, replace_marks};
 
     /// A `width` x `height` BGRA bitmap of `paper`, with `ink` from `from` to `to` (pixels).
     fn bitmap(width: usize, height: usize, paper: [u8; 3], ink: ([u8; 3], [usize; 4])) -> Vec<u8> {
@@ -527,6 +578,24 @@ mod tests {
             backdrop(&bgra, 100, 60, [200.0, 200.0, 300.0, 300.0]),
             [255; 3]
         );
+    }
+
+    #[test]
+    fn inserting_and_deleting_an_identical_character_preserves_adjacent_marks() {
+        let mut marks = vec![1, 2, 3];
+        replace_marks(&mut marks, 3, 1..1, 1, Some(9));
+        assert_eq!(marks, [1, 9, 2, 3]);
+        replace_marks(&mut marks, 4, 1..2, 0, None);
+        assert_eq!(marks, [1, 2, 3]);
+    }
+
+    #[test]
+    fn the_caret_disambiguates_repeated_characters_in_a_full_snapshot() {
+        let mut marks = vec![1, 2, 3];
+        reconcile_at(&mut marks, "ééé", "éééé", Some(9), Some(2));
+        assert_eq!(marks, [1, 9, 2, 3]);
+        reconcile_at(&mut marks, "éééé", "ééé", None, Some(1));
+        assert_eq!(marks, [1, 2, 3]);
     }
 
     #[test]

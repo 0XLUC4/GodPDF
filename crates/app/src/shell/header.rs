@@ -16,11 +16,9 @@ use crate::theme::Palette;
 use crate::widgets::{self, dispatch, icon};
 use crate::{fonts, icons};
 
-/// Search pill: `available - 40` clamped to 140..=300.
-const SEARCH_MAX: f32 = 300.0;
-const SEARCH_MIN: f32 = 140.0;
 /// Narrower windows get a magnifier button instead of the pill, so the right buttons stay.
 const SEARCH_PILL_FROM: f32 = 900.0;
+const SEARCH_HINT_FROM: f32 = 1_080.0;
 
 pub fn render(
     app: &GodPdfApp,
@@ -96,7 +94,8 @@ pub fn render(
         }
     });
 
-    let search = if f32::from(window.viewport_size().width) < SEARCH_PILL_FROM {
+    let viewport_width = f32::from(window.viewport_size().width);
+    let search = if viewport_width < SEARCH_PILL_FROM {
         widgets::icon_button(
             "search-button",
             icons::MAGNIFYING_GLASS,
@@ -105,10 +104,9 @@ pub fn render(
         )
         .on_click(dispatch(CommandPalette))
     } else {
-        search_field(palette)
+        search_field(palette, viewport_width >= SEARCH_HINT_FROM)
     };
 
-    // TODO(header): the "Ctrl+K" hint shows even when the pill is under 200 px.
     div()
         .flex_none()
         .flex()
@@ -140,6 +138,14 @@ pub fn render(
                 .gap(px(6.))
                 .children(crate::services::working(palette, cx))
                 .child(search)
+                .child(
+                    Button::new("share-pdf")
+                        .ghost()
+                        .child("Share")
+                        .on_click(cx.listener(|app, _, window, cx| {
+                            crate::collaboration::toggle(app, window, cx);
+                        })),
+                )
                 .child(div().w(px(0.)))
                 .children(buttons),
         )
@@ -199,14 +205,12 @@ fn mode_tab(mode: Mode, active: bool, enabled: bool, palette: &Palette) -> State
 /// Pill that looks like a search box and opens the command palette:
 /// 32 high, radius 16, `bg` fill, 1 px `border` (`text_dim` on hover), magnifier 15 centered
 /// 18 px in, hint (14, dim) at 34 px, shortcut (12, dim) 14 px from the right.
-fn search_field(palette: &Palette) -> Stateful<Div> {
+fn search_field(palette: &Palette, show_shortcut: bool) -> Stateful<Div> {
     let hover = palette.text_dim;
     let pill = div()
         .id("search-pill")
-        .flex_1()
-        .min_w(px(SEARCH_MIN))
-        .w(px(SEARCH_MAX))
-        .max_w(px(SEARCH_MAX))
+        .flex_none()
+        .w(px(if show_shortcut { 300.0 } else { 184.0 }))
         .h(px(32.))
         .flex()
         .items_center()
@@ -217,7 +221,7 @@ fn search_field(palette: &Palette) -> Stateful<Div> {
         .border_1()
         .border_color(palette.border)
         .hover(move |style| style.border_color(hover))
-        .cursor_text()
+        .cursor_pointer()
         .text_color(palette.text_dim)
         .child(icon(icons::MAGNIFYING_GLASS, 16.0, palette.text_dim))
         .child(
@@ -229,9 +233,15 @@ fn search_field(palette: &Palette) -> Stateful<Div> {
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .child("Find tools and commands"),
+                .child(if show_shortcut {
+                    "Find tools and commands"
+                } else {
+                    "Find tools"
+                }),
         )
-        .child(div().pl(px(14.)).text_size(px(12.)).child(shortcut_hint()))
+        .when(show_shortcut, |pill| {
+            pill.child(div().pl(px(14.)).text_size(px(12.)).child(shortcut_hint()))
+        })
         .on_click(dispatch(CommandPalette));
     widgets::tooltip(pill, "Command palette (Ctrl+K)")
 }

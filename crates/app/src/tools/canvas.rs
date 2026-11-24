@@ -138,6 +138,11 @@ pub struct Canvas {
 }
 
 impl Canvas {
+    pub(crate) fn reset_shared_revision(&mut self) {
+        self.forget_selection();
+        self.redactions.clear();
+        self.gesture = None;
+    }
     /// The decoded picture's pixels, handed over to have their GPU texture freed.
     pub fn take_picture(&mut self) -> Option<Arc<RenderImage>> {
         self.picture.take().and_then(|cached| cached.image)
@@ -312,6 +317,11 @@ pub fn reset(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     tab.canvas.selected = None;
 }
 
+pub(crate) fn finish_shared_edit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+    reset(tab, cx);
+    fields::commit(tab, cx);
+}
+
 pub fn delete_selected(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     let Some(selected) = tab.canvas.selected.take() else {
         return;
@@ -349,6 +359,15 @@ pub(super) fn rewrite(
     report(result, cx);
 }
 
+fn viewer_tool(tab: &DocTab, cx: &App) -> Tool {
+    let tool = current_tool(cx);
+    if tab.can_edit() || tool == Tool::Hand {
+        tool
+    } else {
+        Tool::Select
+    }
+}
+
 fn on_down(
     tab: &mut DocTab,
     page: usize,
@@ -359,7 +378,7 @@ fn on_down(
     let Some(point) = page_point(tab, page, event.position) else {
         return;
     };
-    let tool = current_tool(cx);
+    let tool = viewer_tool(tab, cx);
     // A click outside the text being typed finishes it, and does nothing else for text tools.
     if tab.canvas.editor.is_some() {
         editor::commit(tab, cx);
@@ -422,6 +441,12 @@ fn select_down(
     window: &mut Window,
     cx: &mut Context<DocTab>,
 ) {
+    if !tab.can_edit() {
+        if text::select_from(tab, page, point, clicks) {
+            tab.canvas.gesture = Some(Gesture::Text);
+        }
+        return;
+    }
     let Some(items) = items(tab, page, cx) else {
         return;
     };
@@ -742,7 +767,7 @@ fn finish(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     };
     match gesture {
         Gesture::Draw { page, points } => commit_draw(tab, page, &points, cx),
-        Gesture::Text if current_tool(cx) != Tool::Select => commit_markup(tab, cx),
+        Gesture::Text if viewer_tool(tab, cx) != Tool::Select => commit_markup(tab, cx),
         Gesture::Brush { page, points } => erase_content(tab, page, &points, cx),
         Gesture::Move { offset, .. } if offset.0.hypot(offset.1) < geom::MIN_MOVE => {}
         Gesture::Move { .. } | Gesture::Resize { .. } => {
@@ -1289,7 +1314,7 @@ pub fn page_overlay(
     window: &mut Window,
     cx: &mut Context<DocTab>,
 ) -> Option<AnyElement> {
-    let tool = current_tool(cx);
+    let tool = viewer_tool(tab, cx);
     let zoom = tab.view.zoom;
     let items = items(tab, page, cx)?;
     // Forget a selection whose annotation is gone (undo, page edits).
@@ -1538,10 +1563,12 @@ pub fn page_overlay(
             .child(hide_pointer_here());
     }
     // Over the comments: a click on a form field fills it in.
-    if tool == Tool::Select && tab.canvas.editor.is_none() {
+    if tool == Tool::Select && tab.canvas.editor.is_none() && tab.can_edit() {
         layer = layer.children(fields::render(tab, page, zoom, cx));
     }
-    layer = layer.children(fields::editor(tab, page, zoom, cx));
+    if tab.can_edit() {
+        layer = layer.children(fields::editor(tab, page, zoom, cx));
+    }
     if tab
         .canvas
         .editor
@@ -1772,6 +1799,7 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec
                 family: editor::font_family(*font),
                 color: hsla(*color),
                 selection: None,
+                caret_hint: None,
             };
             Some(
                 boxed(ghost.dst, zoom, 0.0)

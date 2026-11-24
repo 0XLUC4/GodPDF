@@ -17,6 +17,7 @@ macro_rules! secondary {
 }
 
 mod app;
+mod collaboration;
 mod dialogs;
 // Edit, PDF-space and palette API not used yet: it is for the tools and panels to come.
 #[allow(dead_code)]

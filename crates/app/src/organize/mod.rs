@@ -147,7 +147,7 @@ pub fn target_pages(tab: &DocTab) -> Vec<usize> {
 
 /// The pages a page tool is offered for: those selected in the grid (more than one), or all.
 pub fn offered_pages(tab: &DocTab) -> Vec<usize> {
-    if tab.grid.selection.len() > 1 {
+    if tab.grid.on && tab.grid.selection.len() > 1 {
         tab.grid.selection.iter().copied().collect()
     } else {
         (0..tab.page_count()).collect()

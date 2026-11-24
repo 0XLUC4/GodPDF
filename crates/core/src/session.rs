@@ -81,6 +81,14 @@ impl Session {
         self.redo.last().map(|(label, _)| label.as_str())
     }
 
+    pub fn undo_size(&self) -> Option<usize> {
+        self.undo.last().map(|(_, bytes)| bytes.len())
+    }
+
+    pub fn redo_size(&self) -> Option<usize> {
+        self.redo.last().map(|(_, bytes)| bytes.len())
+    }
+
     /// Returns false when nothing to undo.
     pub fn undo(&mut self) -> bool {
         Self::step(

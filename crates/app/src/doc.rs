@@ -28,6 +28,16 @@ pub fn guarded<T>(work: impl FnOnce() -> godpdf_core::Result<T>) -> godpdf_core:
         .unwrap_or_else(|_| Err(godpdf_core::Error::Pdf(PANIC_MESSAGE.to_owned())))
 }
 
+fn limit_shared_edit(bytes: Vec<u8>, limit: usize) -> godpdf_core::Result<Vec<u8>> {
+    if bytes.len() > limit {
+        return Err(godpdf_core::Error::InvalidArgument(format!(
+            "Shared PDFs are limited to {} MiB",
+            limit / (1024 * 1024)
+        )));
+    }
+    Ok(bytes)
+}
+
 /// Images of closed documents whose GPU textures are freed on the next window paint
 /// (dropping an `Arc<RenderImage>` does not free its sprite-atlas texture).
 #[derive(Default)]
@@ -111,6 +121,7 @@ pub struct ViewState {
 
 pub struct DocTab {
     pub session: Session,
+    pub(crate) shared: Option<crate::collaboration::SharedDocument>,
     render: Option<Arc<Document>>,
     /// The bytes `render` was opened from (shared with background renders).
     bytes: Arc<Vec<u8>>,
@@ -151,6 +162,7 @@ impl DocTab {
     pub fn new(session: Session) -> Self {
         let mut tab = Self {
             session,
+            shared: None,
             render: None,
             bytes: Arc::default(),
             render_error: None,
@@ -199,6 +211,40 @@ impl DocTab {
 
     pub fn page_count(&self) -> usize {
         self.page_sizes.len()
+    }
+
+    pub(crate) fn can_edit(&self) -> bool {
+        self.shared.as_ref().is_none_or(|shared| shared.editing)
+    }
+
+    pub(crate) fn shared_bytes(&self) -> Arc<Vec<u8>> {
+        Arc::clone(&self.bytes)
+    }
+
+    pub(crate) fn receive_shared(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        if self.can_edit() {
+            return Err("The peer sent an update outside its editing turn".into());
+        }
+        self.session
+            .apply("Changes from shared session", |_| Ok(bytes))
+            .map_err(|err| err.to_string())?;
+        self.canvas.reset_shared_revision();
+        self.reload();
+        Ok(())
+    }
+
+    fn publish_shared(&self) {
+        if let Some(shared) = &self.shared {
+            shared.publish(self.shared_bytes());
+        }
+    }
+
+    fn shared_size_limit(&self) -> usize {
+        if self.shared.is_some() {
+            crate::collaboration::SHARED_PDF_LIMIT
+        } else {
+            usize::MAX
+        }
     }
 
     /// Re-parse after the bytes changed. Old bitmaps stay visible as stale previews while
@@ -255,10 +301,15 @@ impl DocTab {
         label: &str,
         edit: impl FnOnce(&[u8]) -> godpdf_core::Result<Vec<u8>>,
     ) -> Result<(), String> {
+        if !self.can_edit() {
+            return Err("Your peer has editing control".into());
+        }
+        let limit = self.shared_size_limit();
         self.session
-            .apply(label, |pdf| guarded(|| edit(pdf)))
+            .apply(label, |pdf| guarded(|| limit_shared_edit(edit(pdf)?, limit)))
             .map_err(|err| err.to_string())?;
         self.reload();
+        self.publish_shared();
         Ok(())
     }
 
@@ -268,26 +319,39 @@ impl DocTab {
         label: &str,
         edit: impl FnOnce(&[u8]) -> godpdf_core::Result<Vec<u8>>,
     ) -> Result<(), String> {
+        if !self.can_edit() {
+            return Err("Your peer has editing control".into());
+        }
+        let limit = self.shared_size_limit();
         self.session
-            .amend(label, |pdf| guarded(|| edit(pdf)))
+            .amend(label, |pdf| guarded(|| limit_shared_edit(edit(pdf)?, limit)))
             .map_err(|err| err.to_string())?;
         self.reload();
+        self.publish_shared();
         Ok(())
     }
 
     /// Returns the label of the undone step, `None` when there was nothing to undo.
     pub fn undo(&mut self) -> Option<String> {
+        if !self.can_edit() || self.session.undo_size()? > self.shared_size_limit() {
+            return None;
+        }
         let label = self.session.undo_label()?.to_owned();
         self.session.undo().then(|| {
             self.reload();
+            self.publish_shared();
             label
         })
     }
 
     pub fn redo(&mut self) -> Option<String> {
+        if !self.can_edit() || self.session.redo_size()? > self.shared_size_limit() {
+            return None;
+        }
         let label = self.session.redo_label()?.to_owned();
         self.session.redo().then(|| {
             self.reload();
+            self.publish_shared();
             label
         })
     }

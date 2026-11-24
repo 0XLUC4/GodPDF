@@ -80,7 +80,8 @@ fn check(
             continue;
         };
         // Saved elsewhere meanwhile: the next look sees the new file.
-        if tab.read(cx).session.path.as_ref() != Some(&path) {
+        let doc = tab.read(cx);
+        if doc.shared.is_some() || doc.session.path.as_ref() != Some(&path) {
             continue;
         }
         let Some(time) = time else {

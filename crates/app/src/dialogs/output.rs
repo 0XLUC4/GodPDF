@@ -1,8 +1,7 @@
-//! Work that writes other files: pages as pictures, split parts. The heavy part runs in the background;
-//! the folder is asked for once it is done.
+//! Export pages as images and split documents in the background.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use godpdf_core as core;
 use gpui::App;
@@ -12,7 +11,7 @@ use crate::doc::guarded;
 use crate::files::write_atomic;
 use crate::toasts;
 
-/// Render `pages` at `dpi` as PNG or JPEG, then ask for a folder to write them to.
+/// Ask where to save the images, then render and write them one page at a time.
 pub fn export_images(
     pdf: Vec<u8>,
     pages: Vec<usize>,
@@ -21,17 +20,26 @@ pub fn export_images(
     base: String,
     cx: &mut App,
 ) {
-    toasts::info(cx, "Drawing the pages…");
-    let rendered =
-        crate::services::jobs::background(cx, move || render_images(pdf, &pages, dpi, jpeg, &base));
-    cx.spawn(async move |cx| {
-        let result = rendered.await;
-        cx.update(|cx| match result {
-            Ok(files) => save_files(files, cx),
-            Err(err) => toasts::error(cx, err),
+    crate::files::pick_folder(cx, move |folder, cx| {
+        let count = pages.len();
+        let exported = crate::services::jobs::background(cx, move || {
+            render_images(pdf, &pages, dpi, jpeg, &base, &folder)
         });
-    })
-    .detach();
+        cx.spawn(async move |cx| {
+            let result = exported.await;
+            cx.update(|cx| match result {
+                Ok(()) => toasts::note(
+                    cx,
+                    format!(
+                        "Exported {count} {}",
+                        if count == 1 { "page" } else { "pages" }
+                    ),
+                ),
+                Err(err) => toasts::error(cx, err),
+            });
+        })
+        .detach();
+    });
 }
 
 /// Split every `n` pages, or at `starts`; save the parts to a folder or open them as tabs.
@@ -78,50 +86,55 @@ pub fn split(
     .detach();
 }
 
-/// `pages` rendered at `dpi`, each as a PNG or JPEG named after `base` and its number.
+/// Render and save each page before allocating the bitmap for the next one.
 fn render_images(
     pdf: Vec<u8>,
     pages: &[usize],
     dpi: u32,
     jpeg: bool,
     base: &str,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
+    folder: &Path,
+) -> Result<(), String> {
     let doc = godpdf_render::Document::open(Arc::new(pdf), None).map_err(|err| err.to_string())?;
     let digits = doc.page_count().to_string().len();
     let extension = if jpeg { "jpg" } else { "png" };
-    pages
-        .iter()
-        .map(|&page| {
+    for (written, &page) in pages.iter().enumerate() {
+        let result = (|| {
             let bitmap = doc
                 .render(page, dpi as f32 / 72.0)
                 .map_err(|err| err.to_string())?;
             let image = image::RgbaImage::from_raw(bitmap.width, bitmap.height, bitmap.rgba)
                 .ok_or("The page could not be drawn")?;
             let mut bytes = std::io::Cursor::new(Vec::new());
-            let written = if jpeg {
+            let encoded = if jpeg {
                 image::DynamicImage::ImageRgba8(image)
                     .to_rgb8()
                     .write_to(&mut bytes, image::ImageFormat::Jpeg)
             } else {
                 image.write_to(&mut bytes, image::ImageFormat::Png)
             };
-            written.map_err(|err| format!("Cannot write page {}: {err}", page + 1))?;
+            encoded.map_err(|err| err.to_string())?;
             let name = format!("{base} - page {:0digits$}.{extension}", page + 1);
-            Ok((name, bytes.into_inner()))
-        })
-        .collect()
+            write_unique(folder, &name, bytes.get_ref())
+        })();
+        result.map_err(|err| {
+            format!(
+                "Cannot export page {} ({written} already saved): {err}",
+                page + 1
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Ask for a folder and write each `(name, bytes)` there in the background, never over an
 /// existing file.
-// shortcut: every file is held in memory until written; write each as it is rendered if
-// exports of hundreds of pages at 300 dpi run out of memory.
 fn save_files(files: Vec<(String, Vec<u8>)>, cx: &mut App) {
     crate::files::pick_folder(cx, move |folder, cx| {
         let written = crate::services::jobs::background(cx, move || {
             files
                 .iter()
-                .try_for_each(|(name, bytes)| write_atomic(&free_path(&folder, name), bytes))
+                .try_for_each(|(name, bytes)| write_unique(&folder, name, bytes))
         });
         cx.spawn(async move |cx| {
             if let Err(err) = written.await {
@@ -135,6 +148,13 @@ fn save_files(files: Vec<(String, Vec<u8>)>, cx: &mut App) {
 /// `report.pdf` + 2 -> `report_part2.pdf`.
 fn part_name(base: &str, index: usize) -> String {
     format!("{}_part{index}.pdf", super::kinds::stem(base))
+}
+
+fn write_unique(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    // Keep name selection and writing together when two exports use the same folder.
+    static WRITING: Mutex<()> = Mutex::new(());
+    let _writing = WRITING.lock().unwrap_or_else(|err| err.into_inner());
+    write_atomic(&free_path(folder, name), bytes)
 }
 
 /// `folder/name`, or `name (2)`, `name (3)`... when taken.
@@ -169,6 +189,23 @@ mod tests {
         assert_eq!(free_path(&dir, "a.png"), dir.join("a.png"));
         std::fs::write(dir.join("a.png"), b"x").unwrap();
         assert_eq!(free_path(&dir, "a.png"), dir.join("a (2).png"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_later_page_leaves_the_first_image_and_existing_file_intact() {
+        let dir = std::env::temp_dir().join(format!("godpdf-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("scan - page 1.png");
+        std::fs::write(&original, b"existing").unwrap();
+        let pdf = core::blank_document(12.0, 12.0).unwrap();
+
+        let err = render_images(pdf, &[0, 1], 72, false, "scan", &dir).unwrap_err();
+
+        assert!(err.contains("page 2 (1 already saved)"), "{err}");
+        assert_eq!(std::fs::read(original).unwrap(), b"existing");
+        let exported = image::open(dir.join("scan - page 1 (2).png")).unwrap();
+        assert_eq!((exported.width(), exported.height()), (12, 12));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

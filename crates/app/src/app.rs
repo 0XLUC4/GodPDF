@@ -73,6 +73,7 @@ pub struct GodPdfApp {
     pub active: usize,
     /// What the window chrome shows (mode, tools panel, home tab, banners).
     pub shell: Shell,
+    pub(crate) collaboration: crate::collaboration::Collaboration,
     focus: FocusHandle,
     /// Window title last set, to call the platform only on change.
     title: String,
@@ -92,6 +93,7 @@ impl GodPdfApp {
             tabs: Vec::new(),
             active: 0,
             shell: Shell::default(),
+            collaboration: Default::default(),
             focus,
             title: String::new(),
             prompting: false,
@@ -205,15 +207,10 @@ impl GodPdfApp {
             return;
         };
         let doc = tab.read(cx);
-        // A password set in the Protect dialog encrypts what is written, not the session.
-        let bytes = match dialogs::bytes_to_save(tab.entity_id(), doc.session.bytes(), cx) {
-            Ok(bytes) => bytes.into_owned(),
-            Err(err) => return toasts::error(cx, err),
-        };
         let (name, path) = (doc.session.name.clone(), doc.session.path.clone());
         match path.filter(|_| !save_as) {
             Some(path) => {
-                if self.write_tab(&tab, path, &bytes, cx) {
+                if self.write_tab(&tab, path, cx) {
                     then(self, cx);
                 }
             }
@@ -221,7 +218,7 @@ impl GodPdfApp {
                 let this = cx.entity().downgrade();
                 files::pick_save(cx, &name, true, move |path, cx| {
                     let _ = this.update(cx, |app, cx| {
-                        if app.write_tab(&tab, path, &bytes, cx) {
+                        if app.tabs.contains(&tab) && app.write_tab(&tab, path, cx) {
                             then(app, cx);
                         }
                     });
@@ -230,15 +227,23 @@ impl GodPdfApp {
         }
     }
 
-    /// Write `bytes` to `path` as the file of `tab`. Returns true when written.
+    /// Save the current revision when the destination is ready.
     fn write_tab(
         &mut self,
         tab: &Entity<DocTab>,
         path: PathBuf,
-        bytes: &[u8],
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Err(err) = files::write_atomic(&path, bytes) {
+        // A password from the Protect dialog encrypts the output file.
+        let doc = tab.read(cx);
+        let bytes = match dialogs::bytes_to_save(tab.entity_id(), doc.session.bytes(), cx) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                toasts::error(cx, err);
+                return false;
+            }
+        };
+        if let Err(err) = files::write_atomic(&path, &bytes) {
             toasts::error(cx, err);
             return false;
         }
@@ -319,6 +324,7 @@ impl GodPdfApp {
     pub fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
             let tab = self.tabs.remove(index);
+            crate::collaboration::tab_closing(self, &tab, cx);
             crate::doc::release(&tab, cx);
             if let Some(path) = tab.read(cx).session.path.clone() {
                 self.shell.closed.retain(|closed| closed != &path);

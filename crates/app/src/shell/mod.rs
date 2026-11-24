@@ -207,6 +207,7 @@ pub fn render(
     }
     let tab_row = tabrow::render(app, &palette, window, cx);
     let header = header::render(app, &palette, window, cx);
+    let collaboration = crate::collaboration::panel(app, &palette, window, cx);
     let body = match active.filter(|_| app.doc_view()) {
         Some(tab) => {
             let tools = leftpanel::render(app, &palette, cx);
@@ -255,6 +256,7 @@ pub fn render(
         .flex_col()
         .child(tab_row)
         .child(header)
+        .children(collaboration)
         .child(body)
         .into_any_element()
 }

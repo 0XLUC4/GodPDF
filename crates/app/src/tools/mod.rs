@@ -32,6 +32,7 @@ use crate::icons;
 pub use canvas::Canvas;
 /// Write the text being typed and drop the gesture and selection (as Esc on the page does).
 pub use canvas::reset as finish_editing;
+pub(crate) use canvas::finish_shared_edit;
 pub use picker::parse_hex;
 pub use sign::place_in as place_signature;
 

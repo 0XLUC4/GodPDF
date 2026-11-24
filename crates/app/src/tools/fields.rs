@@ -98,7 +98,7 @@ fn fill(tab: &mut DocTab, name: String, value: FieldValue, cx: &mut Context<DocT
 }
 
 /// The box being typed is done: write what it says.
-fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+pub(super) fn commit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     let Some(edit) = tab.canvas.fields.edit.take() else {
         return;
     };

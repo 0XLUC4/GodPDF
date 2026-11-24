@@ -80,7 +80,9 @@ actions!(
         PaletteDown,
         ExportText,
         SaveAsPdfA,
-        ExportWord
+        ExportWord,
+        AddHeaderFooter,
+        BatesNumbering
     ]
 );
 
@@ -88,6 +90,7 @@ actions!(
 pub struct Passwords {
     pub user: String,
     pub owner: String,
+    pub permissions: core::Permissions,
 }
 
 /// Opened by an action, built on the next frame (its text fields need the window).
@@ -170,6 +173,8 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &SetPassword, cx| open_form(Kind::Encrypt, cx));
     cx.on_action(|_: &Properties, cx| open_form(Kind::Properties, cx));
     cx.on_action(|_: &MergeFiles, cx| open_merge(cx));
+    cx.on_action(|_: &AddHeaderFooter, cx| open_form(Kind::HeaderFooter, cx));
+    cx.on_action(|_: &BatesNumbering, cx| open_form(Kind::Bates, cx));
     cx.on_action(|_: &AttachedFiles, cx| attach::open(cx));
     cx.on_action(|_: &RemovePassword, cx| remove_password(cx));
     cx.on_action(|_: &Print, cx| print_active(cx));
@@ -284,6 +289,7 @@ pub fn keep_password(tab: EntityId, password: String, cx: &mut App) {
     let passwords = Passwords {
         user: password.clone(),
         owner: password,
+        permissions: core::Permissions::default(),
     };
     state(cx).passwords.insert(tab, passwords);
 }
@@ -299,7 +305,11 @@ pub fn bytes_to_save<'a>(
         .and_then(|dialogs| dialogs.passwords.get(&tab));
     match passwords {
         None => Ok(Cow::Borrowed(bytes)),
-        Some(Passwords { user, owner }) => guarded(|| core::encrypt(bytes, user, owner))
+        Some(Passwords {
+            user,
+            owner,
+            permissions,
+        }) => guarded(|| core::encrypt_with(bytes, user, owner, *permissions))
             .map(Cow::Owned)
             .map_err(|err| format!("Encryption failed: {err}")),
     }
@@ -433,6 +443,11 @@ pub fn new_field(page: usize, rect: core::Rect, cx: &mut App) {
 /// Ask where a link over `rect` (PDF space) of `page` leads, then add it.
 pub fn new_link(page: usize, rect: core::Rect, cx: &mut App) {
     open_form(Kind::NewLink { page, rect }, cx);
+}
+
+/// Ask the words and colour of the stamp tool's own stamp.
+pub fn custom_stamp(cx: &mut App) {
+    open_form(Kind::CustomStamp, cx);
 }
 
 /// The document in front first, then the files picked.

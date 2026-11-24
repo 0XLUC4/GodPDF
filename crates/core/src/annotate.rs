@@ -101,14 +101,22 @@ pub enum Annotation {
 }
 
 /// Preset labels of a rubber stamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StampLabel {
     Approved,
     Draft,
     Confidential,
     Rejected,
     Final,
+    /// Words of the user's own, in their colour.
+    Custom {
+        text: String,
+        color: Color,
+    },
 }
+
+/// /Name of a stamp with a custom label.
+const CUSTOM_STAMP: &str = "GodPdfCustom";
 
 impl StampLabel {
     pub const ALL: [Self; 5] = [
@@ -120,35 +128,38 @@ impl StampLabel {
     ];
 
     /// The words printed on the stamp.
-    pub fn text(self) -> &'static str {
+    pub fn text(&self) -> &str {
         match self {
             Self::Approved => "APPROVED",
             Self::Draft => "DRAFT",
             Self::Confidential => "CONFIDENTIAL",
             Self::Rejected => "REJECTED",
             Self::Final => "FINAL",
+            Self::Custom { text, .. } => text,
         }
     }
 
     /// Frame and text colour.
-    pub fn color(self) -> Color {
+    pub fn color(&self) -> Color {
         let (r, g, b) = match self {
             Self::Approved => (0.1, 0.55, 0.2),
             Self::Draft => (0.15, 0.35, 0.75),
             Self::Confidential | Self::Rejected => (0.8, 0.1, 0.1),
             Self::Final => (0.4, 0.2, 0.6),
+            Self::Custom { color, .. } => return *color,
         };
         Color { r, g, b }
     }
 
     /// The standard /Name of the stamp (PDF 32000 table 181), so other viewers know it.
-    fn pdf_name(self) -> &'static str {
+    fn pdf_name(&self) -> &'static str {
         match self {
             Self::Approved => "Approved",
             Self::Draft => "Draft",
             Self::Confidential => "Confidential",
             Self::Rejected => "NotApproved",
             Self::Final => "Final",
+            Self::Custom { .. } => CUSTOM_STAMP,
         }
     }
 
@@ -249,7 +260,7 @@ impl Picture {
     }
 
     /// The image object (and its soft mask) written into `doc`.
-    fn write(&self, doc: &mut Document) -> ObjectId {
+    pub(crate) fn write(&self, doc: &mut Document) -> ObjectId {
         let mut dict = dictionary! {
             "Type" => "XObject",
             "Subtype" => "Image",
@@ -712,7 +723,11 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             STRIKE_OUT_AT,
         )),
         Annotation::Stamp { rect, label, date } => {
-            Ok(stamp(normalized(*rect)?, *label, date.as_deref()))
+            if label.text().trim().is_empty() {
+                return Err(Error::InvalidArgument("the stamp has no text".into()));
+            }
+            crate::stamp::check_text(label.text())?;
+            Ok(stamp(normalized(*rect)?, label, date.as_deref()))
         }
     }
 }
@@ -1175,7 +1190,7 @@ fn line(
 }
 
 /// Rubber stamp: `label` in bold capitals inside a coloured frame, `date` smaller below it.
-fn stamp(rect: Rect, label: StampLabel, date: Option<&str>) -> Parts {
+fn stamp(rect: Rect, label: &StampLabel, date: Option<&str>) -> Parts {
     let color = label.color();
     let (width, height) = (rect.x1 - rect.x0, rect.y1 - rect.y0);
     let frame = (width.min(height) * 0.06).clamp(0.5, 4.0);
@@ -1813,8 +1828,15 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             if let Some(picture) = read_picture(doc, dict) {
                 return Some(Annotation::Image { rect, picture });
             }
-            let label = StampLabel::from_pdf_name(dict.get(b"Name").ok()?.as_name().ok()?)?;
+            let name = dict.get(b"Name").ok()?.as_name().ok()?;
             let text = read_text(doc, dict);
+            let label = match name {
+                name if name == CUSTOM_STAMP.as_bytes() => StampLabel::Custom {
+                    text: text.lines().next().unwrap_or_default().to_owned(),
+                    color: read_color(doc, dict)?,
+                },
+                name => StampLabel::from_pdf_name(name)?,
+            };
             Some(Annotation::Stamp {
                 rect,
                 label,

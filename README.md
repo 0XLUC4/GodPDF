@@ -49,6 +49,7 @@ New versions arrive through the Updates button, which downloads the update and r
 - Text boxes with fonts, bold, italic, underline, subscript and superscript, and a handle to change their width
 - Sticky notes, ink, rectangles, ellipses, lines and arrows, with a fill colour for shapes
 - Stamps: Approved, Draft, Confidential, Rejected, Final, with an optional date
+- Custom stamps with your own words and colour, or a picture of your own
 - Preset colours plus a picker with hex input and recent colours
 - Move, resize, bring to front or send to back, all in real time
 - Eraser for whole comments or for the page content itself
@@ -60,6 +61,7 @@ New versions arrive through the Updates button, which downloads the update and r
 - Sign with a signature drawn once and kept
 - Fill in forms on the page, add text fields and check boxes
 - Draw links to a page or a web address
+- Add radio buttons, drop-down lists and list boxes to forms
 - Redact: remove text, pictures and comments under the marked areas for good
 - Redaction cover in black, white, any colour, or none
 - Redact every match of a search at once, from the find bar
@@ -72,7 +74,9 @@ New versions arrive through the Updates button, which downloads the update and r
 
 **Protect and share**
 - Open encrypted files, add or remove a password, remove hidden data
+- Choose what an encrypted file allows: printing, copying text, editing, comments and forms
 - Page numbers and watermarks
+- Headers and footers with page number, date and file name, Bates numbering, picture watermarks
 - Compress, export pages as PNG or JPEG, print
 - Export the whole text as a .txt file
 - Recognize the text of scans (OCR), compare two PDFs

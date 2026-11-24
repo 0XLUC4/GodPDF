@@ -68,8 +68,11 @@ pub use pdfa::{PdfA, convert_to_pdfa};
 pub use redact::{erase_content, redact, redact_with};
 pub use retype::{LineLook, line_look, replace_styled, replace_text};
 pub use runedit::{replace_run, run_text};
-pub use security::{decrypt, encrypt, is_encrypted};
+pub use security::{Permissions, decrypt, encrypt, encrypt_with, is_encrypted, permissions};
 pub use session::Session;
-pub use stamp::{PageNumbers, Place, Watermark, number_pages, remove_links, watermark};
+pub use stamp::{
+    Bates, HeaderFooter, PageNumbers, PictureWatermark, Place, Watermark, header_footer,
+    number_pages, picture_watermark, remove_links, watermark,
+};
 pub use text::{SearchHit, extract_all_text, extract_text, search};
 pub use textlayer::{Word, add_text_layer};

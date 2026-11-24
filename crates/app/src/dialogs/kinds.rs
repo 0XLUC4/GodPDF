@@ -3,7 +3,10 @@
 
 use std::ops::RangeInclusive;
 
-use godpdf_core::{self as core, Color, Metadata, PageNumbers, Place, Tint, Watermark};
+use godpdf_core::{
+    self as core, Bates, Color, HeaderFooter, Metadata, PageNumbers, Permissions, Place, Tint,
+    Watermark,
+};
 use gpui::{App, Entity, Window};
 
 use super::form::{self, Form};
@@ -18,6 +21,12 @@ const PAGES_HINT: &str = "e.g. 1-3, 5, 8-";
 pub(super) const PER_PART: &str = "Pages per part";
 pub(super) const STARTS_AT: &str = "New part starts at";
 const LINK_TO: &str = "Link to";
+pub(super) const OPTIONS: &str = "Options";
+pub(super) const MARK: &str = "Watermark";
+pub(super) const SCALE: &str = "Size (% of page)";
+const OWNER: &str = "Owner password";
+const ALLOW: [&str; 2] = ["Allowed", "Not allowed"];
+const FIELD_KINDS: [&str; 5] = ["Text", "Check box", "Radio buttons", "Drop-down", "List"];
 
 /// Colours offered for stamps.
 const COLOURS: [(&str, Color); 5] = [
@@ -120,6 +129,10 @@ pub enum Kind {
         page: usize,
         rect: core::Rect,
     },
+    HeaderFooter,
+    Bates,
+    /// The words and colour of the stamp tool's own stamp.
+    CustomStamp,
 }
 
 impl Kind {
@@ -128,7 +141,10 @@ impl Kind {
         match self {
             Self::GoToPage => ("Go to page", ""),
             Self::NumberPages => ("Number pages", "Write its number on every page"),
-            Self::Watermark => ("Add watermark", "Draw a line of text across the pages"),
+            Self::Watermark => (
+                "Add watermark",
+                "A line of text or a picture across the pages",
+            ),
             Self::Crop => ("Crop pages", "Hide the margins of the pages"),
             Self::PageSize => ("Change page size", "What the pages show is scaled to fit"),
             Self::PerSheet => ("Pages per sheet", "Several pages on each sheet"),
@@ -159,6 +175,12 @@ impl Kind {
                 "The text of each page in a .docx document. Layout and fonts are not kept.",
             ),
             Self::NewLink { .. } => ("New link", "Click it with Select or Hand to follow it"),
+            Self::HeaderFooter => (
+                "Header & footer",
+                "{n} page, {total} last page, {date} today, {file} file name",
+            ),
+            Self::Bates => ("Bates numbering", "A unique number on every page"),
+            Self::CustomStamp => ("Custom stamp", "The stamp tool places it with a click"),
         }
     }
 
@@ -180,6 +202,9 @@ impl Kind {
             Self::PdfA => ("Save as…", None),
             Self::Word => ("Export…", None),
             Self::NewLink { .. } => ("Add link", None),
+            Self::HeaderFooter => ("Add header & footer", None),
+            Self::Bates => ("Number pages", None),
+            Self::CustomStamp => ("Use stamp", None),
         }
     }
 }
@@ -191,9 +216,21 @@ pub fn build(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<Form, String> {
-    let field_kind = cx
-        .try_global::<crate::tools::ToolState>()
-        .map_or(core::NewField::Text, |tools| tools.field_kind);
+    let tools = cx.try_global::<crate::tools::ToolState>();
+    let field_kind = tools.map_or(0, |tools| match tools.field_kind {
+        core::NewField::Text => 0,
+        core::NewField::CheckBox => 1,
+        core::NewField::Radio { .. } => 2,
+        core::NewField::Choice { list: false, .. } => 3,
+        core::NewField::Choice { list: true, .. } => 4,
+    });
+    let stamp = match tools.map(|tools| &tools.stamp) {
+        Some(core::StampLabel::Custom { text, color }) => (
+            text.clone(),
+            COLOURS.iter().position(|(_, c)| c == color).unwrap_or(0),
+        ),
+        _ => (String::new(), 2),
+    };
     let doc = tab.read(cx);
     let count = doc.page_count();
     // The pages selected in the Organize grid, or all of them.
@@ -223,7 +260,9 @@ pub fn build(
             text(PAGES, &all, PAGES_HINT),
         ],
         Kind::Watermark => vec![
+            form::choice(MARK, ["Text", "Picture"], 0),
             text("Text", "", "e.g. DRAFT"),
+            text(SCALE, "50", ""),
             text("Size (pt)", "64", ""),
             text("Opacity (%)", "30", ""),
             text("Angle (°)", "45", ""),
@@ -271,15 +310,41 @@ pub fn build(
         Kind::Encrypt => vec![
             form::password("Open password", "", window, cx),
             form::password("Confirm", "", window, cx),
-            form::password("Owner password", "optional", window, cx),
+            form::password(OWNER, "optional: lifts the limits", window, cx),
+            form::choice("Printing", ALLOW, 0),
+            form::choice("Copying text", ALLOW, 0),
+            form::choice("Editing", ALLOW, 0),
+            form::choice("Comments & forms", ALLOW, 0),
         ],
         Kind::NewField { .. } => vec![
-            form::choice(
-                "Kind",
-                ["Text", "Check box"],
-                usize::from(field_kind == core::NewField::CheckBox),
-            ),
+            form::choice("Kind", FIELD_KINDS, field_kind),
             text("Name", "Field", ""),
+            text(OPTIONS, "", "e.g. Yes, No, Maybe"),
+        ],
+        Kind::HeaderFooter => vec![
+            text("Header left", "", ""),
+            text("Header centre", "", ""),
+            text("Header right", "", "e.g. {date}"),
+            text("Footer left", "", "e.g. {file}"),
+            text("Footer centre", "Page {n} of {total}", ""),
+            text("Footer right", "", ""),
+            text("First number", "1", ""),
+            text("Size (pt)", "10", ""),
+            form::choice("Colour", COLOURS.map(|(name, _)| name), 0),
+            text(PAGES, &all, PAGES_HINT),
+        ],
+        Kind::Bates => vec![
+            text("Prefix", "", "e.g. ACME-"),
+            text("Start at", "1", ""),
+            text("Digits", "6", ""),
+            form::choice("Position", Place::ALL.map(Place::label), 2),
+            text("Size (pt)", "10", ""),
+            form::choice("Colour", COLOURS.map(|(name, _)| name), 0),
+            text(PAGES, &all, PAGES_HINT),
+        ],
+        Kind::CustomStamp => vec![
+            text("Text", &stamp.0, "e.g. PAID"),
+            form::choice("Colour", COLOURS.map(|(name, _)| name), stamp.1),
         ],
         Kind::Compress => vec![
             form::choice(
@@ -352,6 +417,13 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             apply(&tab, "Number pages", "Pages numbered", cx, |pdf| {
                 core::number_pages(pdf, &pages, &numbers)
             })
+        }
+        Kind::Watermark if form.choice(MARK) == 1 => {
+            let opacity = num("Opacity (%)", 5.0..=100.0)? / 100.0;
+            let scale = num(SCALE, 5.0..=100.0)? / 100.0;
+            let pages = pages()?;
+            picture_watermark(tab, pages, opacity, scale, cx);
+            Ok(())
         }
         Kind::Watermark => {
             let text = form.text("Text", cx);
@@ -479,24 +551,49 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
         }
         Kind::Encrypt => {
             let user = form.text("Open password", cx);
-            let owner = form.text("Owner password", cx);
+            let owner = form.text(OWNER, cx);
+            let permissions = Permissions {
+                print: form.choice("Printing") == 0,
+                copy: form.choice("Copying text") == 0,
+                edit: form.choice("Editing") == 0,
+                annotate: form.choice("Comments & forms") == 0,
+            };
             if user.is_empty() {
                 return Err("Enter a password".to_owned());
             }
             if user != form.text("Confirm", cx) {
                 return Err("Passwords do not match".to_owned());
             }
-            state(cx)
-                .passwords
-                .insert(tab.entity_id(), Passwords { user, owner });
+            state(cx).passwords.insert(
+                tab.entity_id(),
+                Passwords {
+                    user,
+                    owner,
+                    permissions,
+                },
+            );
             toasts::success(cx, "Password set: the file is encrypted when you save");
             Ok(())
         }
         Kind::NewField { page, rect } => {
-            let kind = if form.choice("Kind") == 1 {
-                core::NewField::CheckBox
-            } else {
-                core::NewField::Text
+            let options: Vec<String> = form
+                .text(OPTIONS, cx)
+                .split(',')
+                .map(|option| option.trim().to_owned())
+                .filter(|option| !option.is_empty())
+                .collect();
+            let kind = match form.choice("Kind") {
+                1 => core::NewField::CheckBox,
+                2 => core::NewField::Radio { options },
+                3 => core::NewField::Choice {
+                    options,
+                    list: false,
+                },
+                4 => core::NewField::Choice {
+                    options,
+                    list: true,
+                },
+                _ => core::NewField::Text,
             };
             let name = form.text("Name", cx);
             let done = "Field added: type its answer with Fill in form";
@@ -526,6 +623,63 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
                 core::add_link(pdf, page, rect, &target)
             })
         }
+        Kind::HeaderFooter => {
+            let slot = |label| form.text(label, cx);
+            let marks = HeaderFooter {
+                header: ["Header left", "Header centre", "Header right"].map(slot),
+                footer: ["Footer left", "Footer centre", "Footer right"].map(slot),
+                first: num("First number", 0.0..=99_999.0)? as usize,
+                date: crate::tools::today(),
+                file: tab.read(cx).title().to_owned(),
+                font_size: num("Size (pt)", 6.0..=72.0)?,
+                color: colour(),
+                ..HeaderFooter::default()
+            };
+            let pages = pages()?;
+            apply(
+                &tab,
+                "Header & footer",
+                "Header and footer added",
+                cx,
+                |pdf| core::header_footer(pdf, &pages, &marks),
+            )
+        }
+        Kind::Bates => {
+            let place = Place::ALL[form.choice("Position").min(Place::ALL.len() - 1)];
+            let mut marks = HeaderFooter {
+                bates: Bates {
+                    prefix: form.text("Prefix", cx).trim().to_owned(),
+                    start: num("Start at", 0.0..=1e9)? as u64,
+                    digits: num("Digits", 1.0..=12.0)? as usize,
+                },
+                font_size: num("Size (pt)", 6.0..=72.0)?,
+                color: colour(),
+                ..HeaderFooter::default()
+            };
+            let slot = match place {
+                Place::TopLeft | Place::BottomLeft => 0,
+                Place::TopCenter | Place::BottomCenter => 1,
+                Place::TopRight | Place::BottomRight => 2,
+            };
+            let line = match place {
+                Place::TopLeft | Place::TopCenter | Place::TopRight => &mut marks.header,
+                _ => &mut marks.footer,
+            };
+            line[slot] = "{bates}".to_owned();
+            let pages = pages()?;
+            apply(&tab, "Bates numbering", "Bates numbers added", cx, |pdf| {
+                core::header_footer(pdf, &pages, &marks)
+            })
+        }
+        Kind::CustomStamp => {
+            let text = form.text("Text", cx).trim().to_owned();
+            if text.is_empty() {
+                return Err("Type the words of the stamp".to_owned());
+            }
+            let color = colour();
+            crate::tools::use_stamp(core::StampLabel::Custom { text, color }, cx);
+            Ok(())
+        }
         Kind::Properties => {
             let [title, author, subject, keywords, creator, producer] = META_LABELS.map(|label| {
                 Some(form.text(label, cx).trim().to_owned()).filter(|value| !value.is_empty())
@@ -543,6 +697,35 @@ pub fn confirm(form: &Form, secondary: bool, cx: &mut App) -> Result<(), String>
             })
         }
     }
+}
+
+/// Ask for a PNG or JPEG, then draw it in the middle of `pages` of `tab` (one undo step).
+fn picture_watermark(
+    tab: Entity<DocTab>,
+    pages: Vec<usize>,
+    opacity: f32,
+    scale: f32,
+    cx: &mut App,
+) {
+    crate::files::pick_file(cx, ("Picture", &["png", "jpg", "jpeg"]), move |path, cx| {
+        let picture = std::fs::read(&path)
+            .map_err(|err| err.to_string())
+            .and_then(|bytes| crate::tools::decode_picture(&bytes));
+        let mark = match picture {
+            Ok(picture) => core::PictureWatermark {
+                picture,
+                opacity,
+                scale,
+            },
+            Err(err) => return toasts::error(cx, format!("Cannot use this picture: {err}")),
+        };
+        let done = apply(&tab, "Add watermark", "Watermark added", cx, |pdf| {
+            core::picture_watermark(pdf, &pages, &mark)
+        });
+        if let Err(err) = done {
+            toasts::error(cx, err);
+        }
+    });
 }
 
 /// One undo step on `tab`; says `done` when it worked.

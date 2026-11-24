@@ -238,6 +238,7 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
     let palette = Palette::of(cx);
     let add = div()
         .flex()
+        .flex_wrap()
         .gap(px(8.))
         .child(
             framed_button(
@@ -256,6 +257,35 @@ pub fn render(tab: &Entity<DocTab>, window: &mut Window, cx: &mut App) -> AnyEle
                 &palette,
             )
             .on_click(|_, window, cx| add_field(NewField::CheckBox, window, cx)),
+        )
+        .child(
+            framed_button(
+                "form-add-radio",
+                with_icon(
+                    icons::CHECK_CIRCLE,
+                    "Radio buttons",
+                    fonts::BODY,
+                    palette.text,
+                ),
+                true,
+                &palette,
+            )
+            .on_click(|_, window, cx| {
+                let options = Vec::new();
+                add_field(NewField::Radio { options }, window, cx)
+            }),
+        )
+        .child(
+            framed_button(
+                "form-add-list",
+                with_icon(icons::LIST_BULLETS, "Drop-down", fonts::BODY, palette.text),
+                true,
+                &palette,
+            )
+            .on_click(|_, window, cx| {
+                let (options, list) = (Vec::new(), false);
+                add_field(NewField::Choice { options, list }, window, cx)
+            }),
         );
     let head = div()
         .flex()

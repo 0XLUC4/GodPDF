@@ -24,18 +24,20 @@ use gpui::{
     Action, AnyElement, App, Context, Global, Hsla, KeyBinding, Rgba, WeakEntity, Window, actions,
 };
 
-use godpdf_core::{CharStyle, Color, Font, NewField, Script, StampLabel, ZOrder};
+use godpdf_core::{CharStyle, Color, Font, NewField, Picture, Script, StampLabel, ZOrder};
 
 use crate::doc::DocTab;
 use crate::geometry::PageRect;
 use crate::icons;
 
 pub use canvas::Canvas;
+pub(crate) use canvas::decode_picture;
 /// Write the text being typed and drop the gesture and selection (as Esc on the page does).
 pub use canvas::reset as finish_editing;
 pub(crate) use canvas::{finish_shared_edit, redact_areas};
 pub use picker::parse_hex;
 pub use sign::place_in as place_signature;
+pub use stamp::today;
 
 actions!(
     godpdf,
@@ -429,6 +431,8 @@ pub struct ToolState {
     /// The stamp the stamp tool places, and whether it gets today's date.
     pub stamp: StampLabel,
     pub stamp_date: bool,
+    /// A picture the stamp tool places instead of `stamp`.
+    pub stamp_picture: Option<Picture>,
     /// The kind of field the field tool adds (picked in the form panel).
     pub field_kind: NewField,
     /// The eraser brushes the page content away instead of removing comments.
@@ -456,6 +460,7 @@ impl Default for ToolState {
             markup: Tool::Highlight,
             stamp: StampLabel::Approved,
             stamp_date: false,
+            stamp_picture: None,
             field_kind: NewField::Text,
             erase_content: false,
             brush: 12.0,
@@ -510,6 +515,14 @@ fn with_active(cx: &mut App, update: impl FnOnce(&mut DocTab, &mut Context<DocTa
         update(tab, cx);
         cx.notify();
     });
+}
+
+/// Make `label` what the stamp tool places, and take that tool.
+pub fn use_stamp(label: StampLabel, cx: &mut App) {
+    let state = tool_state(cx);
+    state.stamp = label;
+    state.stamp_picture = None;
+    set_tool(Tool::Stamp, cx);
 }
 
 fn set_tool(tool: Tool, cx: &mut App) {

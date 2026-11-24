@@ -20,7 +20,11 @@ const READ_ONLY: i64 = 1;
 const MULTILINE: i64 = 1 << 12;
 const RADIO: i64 = 1 << 15;
 const PUSH_BUTTON: i64 = 1 << 16;
+const NO_TOGGLE_TO_OFF: i64 = 1 << 14;
+const COMBO: i64 = 1 << 17;
 const COMB: i64 = 1 << 24;
+/// Lowest row of a radio button laid out one under the other.
+const MIN_ROW: f32 = 12.0;
 /// Space between the edge of a text field and its text.
 const PADDING: f32 = 2.0;
 
@@ -254,8 +258,18 @@ pub fn fill_form(pdf: &[u8], values: &[(String, FieldValue)]) -> Result<Vec<u8>>
                     multiline: false,
                     comb: None,
                 };
+                // A list box shows all its options, a drop-down only the one chosen.
+                let list = (field.flags & COMBO == 0)
+                    .then(|| {
+                        doc.get_dictionary(field.id)
+                            .map(|d| choice_options(&doc, d))
+                    })
+                    .transpose()?;
                 for &widget in &field.widgets {
-                    text_appearance(&mut doc, widget, option, look, font)?;
+                    match &list {
+                        Some(options) => list_appearance(&mut doc, widget, options, option, font)?,
+                        None => text_appearance(&mut doc, widget, option, look, font)?,
+                    }
                 }
             }
             FieldValue::Choice(option) => {
@@ -310,10 +324,20 @@ fn set_entry(doc: &mut Document, id: ObjectId, key: &str, value: Object) -> Resu
 }
 
 /// A field to add.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewField {
     Text,
     CheckBox,
+    /// One button per option, side by side or one under the other in the box: the field
+    /// holds the option chosen.
+    Radio {
+        options: Vec<String>,
+    },
+    /// A drop-down list, or with `list` a box showing every option.
+    Choice {
+        options: Vec<String>,
+        list: bool,
+    },
 }
 
 /// Add an empty field over `rect` of `page`, named `name` (or `name 2`, `name 3`… when the
@@ -346,7 +370,7 @@ pub fn add_form_field(
         })
         .find(|candidate| !taken.contains(candidate))
         .unwrap_or_else(|| name.to_owned());
-    form_font(&mut doc)?;
+    let font = form_font(&mut doc)?;
     let (w, h) = (x1 - x0, y1 - y0);
     let border = border_ops(w, h);
     let mut widget = dictionary! {
@@ -358,12 +382,14 @@ pub fn add_form_field(
         "F" => 4,
         "MK" => dictionary! { "BC" => vec![0.55.into(), 0.55.into(), 0.55.into()] },
     };
-    match kind {
+    let (field, widgets) = match kind {
         NewField::Text => {
             widget.set("FT", "Tx");
             widget.set("DA", text_string("/Helv 0 Tf 0 g"));
             let look = doc.add_object(form_stream(w, h, &border, Dictionary::new()));
             widget.set("AP", dictionary! { "N" => look });
+            let id = doc.add_object(widget);
+            (id, vec![id])
         }
         NewField::CheckBox => {
             widget.set("FT", "Btn");
@@ -384,11 +410,43 @@ pub fn add_form_field(
                 "AP",
                 dictionary! { "N" => dictionary! { "Yes" => on, "Off" => off } },
             );
+            let id = doc.add_object(widget);
+            (id, vec![id])
         }
-    }
-    let widget = doc.add_object(widget);
+        NewField::Choice { options, list } => {
+            let options = option_list(&options)?;
+            widget.set("FT", "Ch");
+            widget.set("DA", text_string("/Helv 0 Tf 0 g"));
+            let opt: Vec<Object> = options.iter().map(|o| text_string(o)).collect();
+            widget.set("Opt", opt);
+            if !list {
+                widget.set("Ff", COMBO);
+                // A small arrow on the right says it opens.
+                let arrow = format!(
+                    "{border}q 0.4 g {} {} m {} {} l {} {} l f Q\n",
+                    num(w - h * 0.75),
+                    num(h * 0.62),
+                    num(w - h * 0.25),
+                    num(h * 0.62),
+                    num(w - h * 0.5),
+                    num(h * 0.38)
+                );
+                let look = doc.add_object(form_stream(w, h, &arrow, Dictionary::new()));
+                widget.set("AP", dictionary! { "N" => look });
+            }
+            let id = doc.add_object(widget);
+            if list {
+                list_appearance(&mut doc, id, &options, "", font)?;
+            }
+            (id, vec![id])
+        }
+        NewField::Radio { options } => {
+            let options = option_list(&options)?;
+            radio_group(&mut doc, page_id, [x0, y0, x1, y1], &name, &options, font)?
+        }
+    };
     let mut annots = annots_entries(&doc, page_id)?;
-    annots.push(Object::Reference(widget));
+    annots.extend(widgets.into_iter().map(Object::Reference));
     set_annots(&mut doc, page_id, annots)?;
     let form_id = acro_form(&mut doc)?;
     let form = doc.get_dictionary_mut(form_id)?;
@@ -397,9 +455,172 @@ pub fn add_form_field(
         .and_then(Object::as_array)
         .cloned()
         .unwrap_or_default();
-    fields.push(Object::Reference(widget));
+    fields.push(Object::Reference(field));
     form.set("Fields", fields);
     save(&mut doc)
+}
+
+/// The options of a new radio group or list: trimmed, at least one, none twice.
+fn option_list(options: &[String]) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for option in options.iter().map(|o| o.trim()).filter(|o| !o.is_empty()) {
+        check_text(option)?;
+        if option == "Off" {
+            return Err(Error::InvalidArgument("“Off” cannot be an option".into()));
+        }
+        if out.iter().any(|o| o == option) {
+            return Err(Error::InvalidArgument(format!("“{option}” is there twice")));
+        }
+        out.push(option.to_owned());
+    }
+    if out.is_empty() {
+        return Err(Error::InvalidArgument("the field has no options".into()));
+    }
+    Ok(out)
+}
+
+/// A radio field named `name` with one button per option, laid out in `area` (x0, y0, x1,
+/// y1) one under the other, or side by side in a low box. Each button
+/// shows its option next to it. Gives the field and its buttons.
+fn radio_group(
+    doc: &mut Document,
+    page_id: ObjectId,
+    area: [f32; 4],
+    name: &str,
+    options: &[String],
+    font: ObjectId,
+) -> Result<(ObjectId, Vec<ObjectId>)> {
+    let [x0, y0, x1, y1] = area;
+    let (w, h, count) = (x1 - x0, y1 - y0, options.len() as f32);
+    // One under the other when each gets a row of a readable height, else side by side.
+    let across = h / count < MIN_ROW;
+    let (cell_w, cell_h) = if across {
+        (w / count, h)
+    } else {
+        (w, h / count)
+    };
+    if cell_w.min(cell_h) < 6.0 {
+        return Err(Error::InvalidArgument("the field is too small".into()));
+    }
+    let field = doc.add_object(dictionary! {
+        "FT" => "Btn",
+        "Ff" => RADIO | NO_TOGGLE_TO_OFF,
+        "T" => text_string(name),
+        "V" => "Off",
+    });
+    let radius = (cell_h * 0.4).min(cell_w * 0.4).min(8.0);
+    let size = (cell_h * 0.6).min(10.0);
+    let (cx, cy) = (1.0 + radius, cell_h / 2.0);
+    let mut kids = Vec::new();
+    for (index, option) in options.iter().enumerate() {
+        let (left, top) = if across {
+            (x0 + cell_w * index as f32, y1)
+        } else {
+            (x0, y1 - cell_h * index as f32)
+        };
+        let ring = format!(
+            "q 0.55 0.55 0.55 RG 1 w {} S Q\n\
+             q 0 0 {} {} re W n BT /Helv {} Tf 0 g {} {} Td <{}> Tj ET Q\n",
+            circle(cx, cy, radius - 0.5),
+            num(cell_w),
+            num(cell_h),
+            num(size),
+            num(2.0 * radius + 4.0),
+            num(cy - size * 0.35),
+            win_ansi_hex(option)
+        );
+        let dot = format!("{ring}q 0 g {} f Q\n", circle(cx, cy, radius * 0.5));
+        let resources = || dictionary! { "Font" => dictionary! { "Helv" => font } };
+        let on = doc.add_object(form_stream(cell_w, cell_h, &dot, resources()));
+        let off = doc.add_object(form_stream(cell_w, cell_h, &ring, resources()));
+        let mut states = Dictionary::new();
+        states.set(option.as_bytes().to_vec(), on);
+        states.set("Off", off);
+        let rect: Vec<Object> = [left, top - cell_h, left + cell_w, top]
+            .map(Object::Real)
+            .to_vec();
+        kids.push(doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "Parent" => field,
+            "Rect" => rect,
+            "P" => page_id,
+            "F" => 4,
+            "AS" => "Off",
+            "AP" => dictionary! { "N" => states },
+        }));
+    }
+    let refs: Vec<Object> = kids.iter().copied().map(Object::Reference).collect();
+    set_entry(doc, field, "Kids", refs.into())?;
+    Ok((field, kids))
+}
+
+/// A closed circle path of four Bézier curves.
+fn circle(cx: f32, cy: f32, r: f32) -> String {
+    let k = r * 0.552_284_8;
+    let curves = [
+        [cx + r, cy + k, cx + k, cy + r, cx, cy + r],
+        [cx - k, cy + r, cx - r, cy + k, cx - r, cy],
+        [cx - r, cy - k, cx - k, cy - r, cx, cy - r],
+        [cx + k, cy - r, cx + r, cy - k, cx + r, cy],
+    ];
+    let mut ops = format!("{} {} m", num(cx + r), num(cy));
+    for curve in curves {
+        for value in curve {
+            ops += &format!(" {}", num(value));
+        }
+        ops += " c";
+    }
+    ops
+}
+
+/// Draw every option of a list box from the top, `chosen` on a blue band.
+fn list_appearance(
+    doc: &mut Document,
+    widget: ObjectId,
+    options: &[String],
+    chosen: &str,
+    font: ObjectId,
+) -> Result<()> {
+    let Some(rect) = widget_rect(doc, widget) else {
+        return Ok(());
+    };
+    let (w, h) = (rect.x1 - rect.x0, rect.y1 - rect.y0);
+    let (size, color) = da_look(doc, doc.get_dictionary(widget)?);
+    let size = if size > 0.0 { size } else { 10.0 };
+    let leading = size * 1.2;
+    let mut ops = border_ops(w, h);
+    ops += &format!("/Tx BMC q 1 1 {} {} re W n\n", num(w - 2.0), num(h - 2.0));
+    for (index, option) in options.iter().enumerate() {
+        let top = h - 1.0 - leading * index as f32;
+        if top <= 0.0 {
+            break;
+        }
+        if option == chosen {
+            ops += &format!(
+                "0.6 0.75 0.95 rg 1 {} {} {} re f\n",
+                num(top - leading),
+                num(w - 2.0),
+                num(leading)
+            );
+        }
+        ops += &format!(
+            "BT /Helv {} Tf {color} {} {} Td <{}> Tj ET\n",
+            num(size),
+            num(PADDING),
+            num(top - leading + (leading - size * 0.7) / 2.0),
+            win_ansi_hex(option)
+        );
+    }
+    ops += "Q EMC\n";
+    let resources = dictionary! { "Font" => dictionary! { "Helv" => font } };
+    let look = doc.add_object(form_stream(w, h, &ops, resources));
+    set_entry(
+        doc,
+        widget,
+        "AP",
+        Object::Dictionary(dictionary! { "N" => look }),
+    )
 }
 
 fn border_ops(w: f32, h: f32) -> String {
@@ -762,9 +983,9 @@ mod tests {
 
     fn form() -> Vec<u8> {
         let pdf = crate::blank_document(400.0, 400.0).unwrap();
-        let text = NewField::Text;
-        let pdf = add_form_field(&pdf, 0, rect(20.0, 300.0, 220.0, 320.0), text, "Name").unwrap();
-        let pdf = add_form_field(&pdf, 0, rect(20.0, 260.0, 220.0, 280.0), text, "Name").unwrap();
+        let text = || NewField::Text;
+        let pdf = add_form_field(&pdf, 0, rect(20.0, 300.0, 220.0, 320.0), text(), "Name").unwrap();
+        let pdf = add_form_field(&pdf, 0, rect(20.0, 260.0, 220.0, 280.0), text(), "Name").unwrap();
         let check = NewField::CheckBox;
         add_form_field(&pdf, 0, rect(20.0, 220.0, 34.0, 234.0), check, "Agree").unwrap()
     }
@@ -801,6 +1022,87 @@ mod tests {
         assert_eq!(widgets[0].field.name, "Name");
         assert_eq!(widgets[0].rect, rect(20.0, 300.0, 220.0, 320.0));
         assert!(field_widgets(&form(), 1).is_err());
+    }
+
+    fn options(names: &[&str]) -> Vec<String> {
+        names.iter().map(|&name| name.to_owned()).collect()
+    }
+
+    #[test]
+    fn radio_groups_are_added_filled_and_read_back() {
+        let pdf = crate::blank_document(400.0, 400.0).unwrap();
+        let radio = NewField::Radio {
+            options: options(&["Small", " Large ", ""]),
+        };
+        let area = rect(20.0, 300.0, 220.0, 320.0);
+        let pdf = add_form_field(&pdf, 0, area, radio, "Size").unwrap();
+        let fields = form_fields(&pdf).unwrap();
+        let expected = FieldKind::Radio {
+            options: options(&["Small", "Large"]),
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].kind, expected);
+        assert_eq!(fields[0].value, FieldValue::Choice(String::new()));
+        // Side by side: the box is wide and low.
+        let widgets = field_widgets(&pdf, 0).unwrap();
+        assert_eq!(widgets.len(), 2);
+        assert_eq!(widgets[1].option.as_deref(), Some("Large"));
+        assert_eq!(widgets[1].rect, rect(120.0, 300.0, 220.0, 320.0));
+        let values = [("Size".to_owned(), FieldValue::Choice("Large".into()))];
+        let filled = fill_form(&pdf, &values).unwrap();
+        let field = &form_fields(&filled).unwrap()[0];
+        assert_eq!(field.value, FieldValue::Choice("Large".into()));
+        // Each button shows its own state.
+        let doc = load(&filled).unwrap();
+        let state = |widget: ObjectId| {
+            let dict = doc.get_dictionary(widget).unwrap();
+            dict.get(b"AS").unwrap().as_name().unwrap().to_vec()
+        };
+        let states: Vec<Vec<u8>> = terminals(&doc)[0]
+            .widgets
+            .iter()
+            .map(|&w| state(w))
+            .collect();
+        assert_eq!(states, [b"Off".to_vec(), b"Large".to_vec()]);
+    }
+
+    #[test]
+    fn lists_are_added_filled_and_read_back() {
+        let pdf = crate::blank_document(400.0, 400.0).unwrap();
+        for list in [false, true] {
+            let choice = NewField::Choice {
+                options: options(&["Red", "Green", "Blue"]),
+                list,
+            };
+            let area = rect(20.0, 200.0, 220.0, 260.0);
+            let pdf = add_form_field(&pdf, 0, area, choice, "Colour").unwrap();
+            let field = &form_fields(&pdf).unwrap()[0];
+            let expected = FieldKind::Choice {
+                options: options(&["Red", "Green", "Blue"]),
+            };
+            assert_eq!(field.kind, expected);
+            let values = [("Colour".to_owned(), FieldValue::Choice("Green".into()))];
+            let filled = fill_form(&pdf, &values).unwrap();
+            let field = &form_fields(&filled).unwrap()[0];
+            assert_eq!(field.value, FieldValue::Choice("Green".into()));
+        }
+    }
+
+    #[test]
+    fn options_must_be_usable() {
+        let pdf = crate::blank_document(400.0, 400.0).unwrap();
+        let area = rect(20.0, 300.0, 220.0, 320.0);
+        for bad in [&[][..], &["  "], &["A", "A"], &["Off"]] {
+            let kind = NewField::Radio {
+                options: options(bad),
+            };
+            assert!(add_form_field(&pdf, 0, area, kind, "R").is_err());
+        }
+        // Ten buttons do not fit in a box 30 wide and 20 high.
+        let kind = NewField::Radio {
+            options: (0..10).map(|n| n.to_string()).collect(),
+        };
+        assert!(add_form_field(&pdf, 0, rect(0.0, 0.0, 30.0, 20.0), kind, "R").is_err());
     }
 
     #[test]

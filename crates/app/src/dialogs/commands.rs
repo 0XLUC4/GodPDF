@@ -244,6 +244,18 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(NumberPages),
     ),
     command(
+        "Header & footer…",
+        Organize,
+        "Text at the top and bottom of pages: page number, date, file name",
+        || Box::new(AddHeaderFooter),
+    ),
+    command(
+        "Bates numbering…",
+        Organize,
+        "A unique number with a prefix on every page, for legal files",
+        || Box::new(BatesNumbering),
+    ),
+    command(
         "Combine files…",
         Combine,
         "Combine PDFs, images and text files into one",
@@ -299,7 +311,7 @@ pub static COMMANDS: &[Command] = &[
     command(
         "Form field",
         Comment,
-        "Add a text box or a check box to fill in",
+        "Add a text box, check box, radio buttons or a list to fill in",
         || Box::new(tools::FieldTool),
     ),
     command(
@@ -371,7 +383,7 @@ pub static COMMANDS: &[Command] = &[
     command(
         "Add watermark…",
         Document,
-        "Draw a line of text across the pages",
+        "Draw a line of text or a picture across the pages",
         || Box::new(AddWatermark),
     ),
     command(

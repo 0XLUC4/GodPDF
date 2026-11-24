@@ -101,6 +101,19 @@ impl Form {
         match (self.kind, label) {
             (Kind::Split, super::kinds::PER_PART) => self.choice("Split") == 0,
             (Kind::Split, super::kinds::STARTS_AT) => self.choice("Split") == 1,
+            // Options are for radio buttons and lists.
+            (Kind::NewField { .. }, super::kinds::OPTIONS) => self.choice("Kind") >= 2,
+            // A picture has a size and an opacity; text has the rest.
+            (Kind::Watermark, super::kinds::SCALE) => self.choice(super::kinds::MARK) == 1,
+            (
+                Kind::Watermark,
+                "Text"
+                | "Size (pt)"
+                | "Angle (°)"
+                | "Colour"
+                | "Right of centre (pt)"
+                | "Above centre (pt)",
+            ) => self.choice(super::kinds::MARK) == 0,
             _ => true,
         }
     }

@@ -7,10 +7,26 @@ use super::geom::{self, DRect};
 /// Size of a new stamp, in points; a dated one is taller for its second line.
 const STAMP_SIZE: (f32, f32) = (150.0, 44.0);
 const DATED_STAMP_SIZE: (f32, f32) = (150.0, 58.0);
+/// Longest side of a picture stamp, in points.
+const PICTURE_STAMP: f32 = 150.0;
 
 /// A new stamp centred on `center`, moved back onto a page of size `page` if it overflows.
 pub fn stamp_rect(center: (f32, f32), page: (f32, f32), dated: bool) -> DRect {
     let (w, h) = if dated { DATED_STAMP_SIZE } else { STAMP_SIZE };
+    let rect = DRect {
+        x0: center.0 - w / 2.0,
+        y0: center.1 - h / 2.0,
+        x1: center.0 + w / 2.0,
+        y1: center.1 + h / 2.0,
+    };
+    rect.translate(geom::clamp_offset(rect, page, (0.0, 0.0)))
+}
+
+/// A picture stamp centred on `center`: its `natural` size, made smaller to fit in a square
+/// of `PICTURE_STAMP` points, then moved back onto the page like [`stamp_rect`].
+pub fn picture_rect(center: (f32, f32), natural: (f32, f32), page: (f32, f32)) -> DRect {
+    let fit = (PICTURE_STAMP / natural.0.max(natural.1).max(f32::EPSILON)).min(1.0);
+    let (w, h) = (natural.0 * fit, natural.1 * fit);
     let rect = DRect {
         x0: center.0 - w / 2.0,
         y0: center.1 - h / 2.0,
@@ -56,6 +72,22 @@ mod tests {
         assert_eq!(civil_date(11_016), (2000, 2, 29));
         assert_eq!(civil_date(20_402), (2025, 11, 10));
         assert_eq!(today().len(), 10);
+    }
+
+    #[test]
+    fn picture_stamps_shrink_to_fit() {
+        let rect = picture_rect((300.0, 400.0), (600.0, 300.0), (600.0, 800.0));
+        assert_eq!(
+            rect,
+            DRect {
+                x0: 225.0,
+                y0: 362.5,
+                x1: 375.0,
+                y1: 437.5
+            }
+        );
+        let small = picture_rect((10.0, 10.0), (40.0, 20.0), (600.0, 800.0));
+        assert_eq!((small.x0, small.y0, small.width()), (0.0, 0.0, 40.0));
     }
 
     #[test]

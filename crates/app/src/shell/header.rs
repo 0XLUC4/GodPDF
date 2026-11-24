@@ -567,6 +567,8 @@ pub(crate) fn look(label: &str) -> (&'static str, &'static str) {
         "Make a booklet" => (icons::BOOK_OPEN, ""),
         "Join into one long page" => (icons::ROWS, ""),
         "Number pages…" => (icons::LIST_NUMBERS, ""),
+        "Header & footer…" => (icons::TEXT_ALIGN_LEFT, ""),
+        "Bates numbering…" => (icons::HASH, ""),
         "Combine files…" => (icons::STACK, ""),
         "Select" => (icons::CURSOR, "V"),
         "Hand" => (icons::HAND, "H"),

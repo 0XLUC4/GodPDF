@@ -233,7 +233,7 @@ fn stamps_round_trip_with_and_without_date() {
         for date in [None, Some("2026-11-10".to_string())] {
             let stamp = Annotation::Stamp {
                 rect: RECT,
-                label,
+                label: label.clone(),
                 date: date.clone(),
             };
             let (pdf, _, back) = round_trip(&stamp);

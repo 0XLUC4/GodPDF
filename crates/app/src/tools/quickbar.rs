@@ -689,33 +689,68 @@ fn value_label(
 /// The stamp tool's preset picker/// The stamp tool's preset picker: one row per label, in the stamp's colour, and the date.
 fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
     let state = tool_state(cx);
-    let (current, dated) = (state.stamp, state.stamp_date);
+    let (current, dated) = (state.stamp.clone(), state.stamp_date);
+    let picture = state.stamp_picture.is_some();
+    let row = |id: String, text: String, color: Color, selected: bool| {
+        let hover = palette.hover;
+        div()
+            .id(SharedString::from(id))
+            .h(px(BUTTON))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(hsla(color))
+            .text_color(hsla(color))
+            .cursor_pointer()
+            .when(selected, |row| row.bg(palette.selected))
+            .when(!selected, |row| row.hover(move |style| style.bg(hover)))
+            .child(text)
+    };
     let mut list = div().flex().flex_col().gap(px(2.));
     for label in StampLabel::ALL {
-        let hover = palette.hover;
+        let selected = !picture && label == current;
         list = list.child(
-            div()
-                .id(SharedString::from(format!("stamp-{label:?}")))
-                .h(px(BUTTON))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(hsla(label.color()))
-                .text_color(hsla(label.color()))
-                .cursor_pointer()
-                .when(label == current, |row| row.bg(palette.selected))
-                .when(label != current, |row| {
-                    row.hover(move |style| style.bg(hover))
-                })
-                .child(label.text())
-                .on_click(move |_, _, cx: &mut App| {
-                    tool_state(cx).stamp = label;
-                    cx.refresh_windows();
-                }),
+            row(
+                format!("stamp-{label:?}"),
+                label.text().to_owned(),
+                label.color(),
+                selected,
+            )
+            .on_click(move |_, _, cx: &mut App| {
+                let state = tool_state(cx);
+                state.stamp = label.clone();
+                state.stamp_picture = None;
+                cx.refresh_windows();
+            }),
         );
     }
+    // The user's own words (asked in a dialog), then a picture of their own.
+    let (custom, custom_color) = match &current {
+        StampLabel::Custom { text, color } => (text.clone(), *color),
+        _ => ("Custom…".to_owned(), theme_text(palette)),
+    };
+    let custom_selected = !picture && matches!(current, StampLabel::Custom { .. });
+    list = list
+        .child(
+            row(
+                "stamp-custom".to_owned(),
+                custom,
+                custom_color,
+                custom_selected,
+            )
+            .on_click(|_, _, cx: &mut App| crate::dialogs::custom_stamp(cx)),
+        )
+        .child(
+            row(
+                "stamp-picture".to_owned(),
+                "Picture…".to_owned(),
+                theme_text(palette),
+                picture,
+            )
+            .on_click(|_, _, cx: &mut App| pick_stamp_picture(cx)),
+        );
     card(palette)
         .w(px(card_width(4)))
         .flex()
@@ -732,6 +767,32 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
             move |cx| tool_state(cx).stamp_date = !dated,
         ))
         .into_any_element()
+}
+
+/// The text colour of the theme, as a stamp colour.
+fn theme_text(palette: &Palette) -> Color {
+    let color = gpui::Rgba::from(palette.text);
+    Color {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+    }
+}
+
+/// Ask for a PNG or JPEG: the stamp tool places it from now on.
+fn pick_stamp_picture(cx: &mut App) {
+    crate::files::pick_file(cx, ("Picture", &["png", "jpg", "jpeg"]), |path, cx| {
+        let picture = std::fs::read(&path)
+            .map_err(|err| err.to_string())
+            .and_then(|bytes| canvas::decode_picture(&bytes));
+        match picture {
+            Ok(picture) => {
+                tool_state(cx).stamp_picture = Some(picture);
+                cx.refresh_windows();
+            }
+            Err(err) => toasts::error(cx, format!("Cannot use this picture: {err}")),
+        }
+    });
 }
 
 /// The redact tool's card once areas are marked: their count, apply them for good after a

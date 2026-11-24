@@ -1073,12 +1073,18 @@ fn place_stamp(tab: &mut DocTab, page: usize, point: (f32, f32), cx: &mut Contex
         return;
     };
     let state = tool_state(cx);
-    let (label, dated) = (state.stamp, state.stamp_date);
-    let rect = stamp::stamp_rect(point, displayed, dated).to_pdf(&geom, displayed);
-    let annotation = Annotation::Stamp {
-        rect,
-        label,
-        date: dated.then(stamp::today),
+    let (label, dated) = (state.stamp.clone(), state.stamp_date);
+    let annotation = match state.stamp_picture.clone() {
+        Some(picture) => Annotation::Image {
+            rect: stamp::picture_rect(point, natural_size(&picture), displayed)
+                .to_pdf(&geom, displayed),
+            picture,
+        },
+        None => Annotation::Stamp {
+            rect: stamp::stamp_rect(point, displayed, dated).to_pdf(&geom, displayed),
+            label,
+            date: dated.then(stamp::today),
+        },
     };
     let result = tab.apply("Stamp", |pdf| {
         godpdf_core::add_annotation(pdf, page, &annotation)
@@ -1168,7 +1174,7 @@ pub(super) fn natural_size(picture: &Picture) -> (f32, f32) {
 }
 
 /// A PNG or JPEG file as a picture to put on a page. A JPEG is kept as it is.
-fn decode_picture(bytes: &[u8]) -> Result<Picture, String> {
+pub(crate) fn decode_picture(bytes: &[u8]) -> Result<Picture, String> {
     if bytes.starts_with(&[0xFF, 0xD8])
         && let Ok(picture) = guarded(|| Picture::jpeg(bytes))
     {
@@ -1874,7 +1880,7 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec
             Some(strokes(lines, *width, hsla(*color), None, zoom))
         }
         Annotation::Stamp { label, date, .. } => {
-            Some(stamp_element(ghost.dst, *label, date.as_deref(), zoom))
+            Some(stamp_element(ghost.dst, label, date.as_deref(), zoom))
         }
         Annotation::Image { .. } if let Some(image) = picture_of(tab, ghost, geom.rotation) => {
             let snap = |value: f32| (value * zoom * scale).round() / scale;
@@ -1907,7 +1913,7 @@ fn picture_of(tab: &DocTab, ghost: &Ghost, rotation: i32) -> Option<Arc<RenderIm
 }
 
 /// A stamp drawn as core writes it: a frame `label.color()` and the label (and date) centred.
-fn stamp_element(rect: DRect, label: StampLabel, date: Option<&str>, zoom: f32) -> AnyElement {
+fn stamp_element(rect: DRect, label: &StampLabel, date: Option<&str>, zoom: f32) -> AnyElement {
     let (width, height) = (rect.width(), rect.height());
     let frame = (width.min(height) * 0.06).clamp(0.5, 4.0);
     let color = hsla(label.color());

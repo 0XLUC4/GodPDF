@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use godpdf_core::{
-    Annotation, CharStyle, Font, PageGeometry, Picture, PlacedAnnotation, Rect, StampLabel,
+    Annotation, CharStyle, Color, Font, PageGeometry, Picture, PlacedAnnotation, Rect, StampLabel,
 };
 use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;
@@ -1123,33 +1123,13 @@ fn unmark_at(tab: &mut DocTab, page: usize, point: (f32, f32)) -> bool {
     true
 }
 
-/// Black out every marked area for good (core `redact`), as one undo step.
+/// Redact every marked area for good, painted the tool's cover colour, as one undo step.
 pub(super) fn apply_redactions(tab: &mut DocTab, cx: &mut Context<DocTab>) {
-    let mut pages: Vec<usize> = tab
-        .canvas
-        .redactions
-        .iter()
-        .map(|(page, _)| *page)
-        .collect();
-    pages.sort_unstable();
-    pages.dedup();
-    if pages.is_empty() {
+    let marks = tab.canvas.redactions.clone();
+    if marks.is_empty() {
         return;
     }
-    let marks = tab.canvas.redactions.clone();
-    let result = tab.apply("Redact", |pdf| {
-        let mut bytes = pdf.to_vec();
-        for page in pages {
-            let areas: Vec<Rect> = marks
-                .iter()
-                .filter(|(on, _)| *on == page)
-                .map(|(_, rect)| *rect)
-                .collect();
-            bytes = godpdf_core::redact(&bytes, page, &areas)?;
-        }
-        Ok(bytes)
-    });
-    match result {
+    match redact_areas(tab, "Redact", &marks, tool_state(cx).redact_cover) {
         Ok(()) => {
             tab.canvas.redactions.clear();
             tab.canvas.selected = None;
@@ -1157,6 +1137,31 @@ pub(super) fn apply_redactions(tab: &mut DocTab, cx: &mut Context<DocTab>) {
         }
         Err(err) => toasts::error(cx, format!("Cannot redact: {err}")),
     }
+}
+
+/// Redact `areas` (page, PDF space) painted `cover` (core `redact_with`), as one undo step
+/// named `label`.
+pub(crate) fn redact_areas(
+    tab: &mut DocTab,
+    label: &str,
+    areas: &[(usize, Rect)],
+    cover: Option<Color>,
+) -> Result<(), String> {
+    let mut pages: Vec<usize> = areas.iter().map(|(page, _)| *page).collect();
+    pages.sort_unstable();
+    pages.dedup();
+    tab.apply(label, |pdf| {
+        let mut bytes = pdf.to_vec();
+        for page in pages {
+            let on_page: Vec<Rect> = areas
+                .iter()
+                .filter(|(on, _)| *on == page)
+                .map(|(_, rect)| *rect)
+                .collect();
+            bytes = godpdf_core::redact_with(&bytes, page, &on_page, cover)?;
+        }
+        Ok(bytes)
+    })
 }
 
 /// Size of a picture's pixels at 96 per inch, in points.

@@ -56,6 +56,8 @@ New versions arrive through the Updates button, which downloads the update and r
 - Sign with a signature drawn once and kept
 - Fill in forms on the page, add text fields and check boxes
 - Redact: remove text, pictures and comments under the marked areas for good
+- Redaction cover in black, white, any colour, or none
+- Redact every match of a search at once, from the find bar
 
 **Organize**
 - Page grid: reorder by drag and drop, rotate, delete, insert blank pages or other files, extract, split, reverse, remove blank pages
@@ -67,6 +69,7 @@ New versions arrive through the Updates button, which downloads the update and r
 - Open encrypted files, add or remove a password, remove hidden data
 - Page numbers and watermarks
 - Compress, export pages as PNG or JPEG, print
+- Export the whole text as a .txt file
 - Recognize the text of scans (OCR), compare two PDFs
 - Attached files, document properties, undo and redo
 

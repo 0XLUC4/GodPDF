@@ -196,6 +196,12 @@ fn apply(tab: &mut DocTab, change: Change, window: &mut Window, cx: &mut Context
                 move |annotation: &Annotation, _: &_, _: &_, _| restyled(annotation, style, change);
             rewrite(tab, selected.page, &selected.id, "Restyle", restyle, cx);
         }
+        // The custom colour picked in the redact card.
+        Target::Tool(Tool::Redact) => {
+            if let Change::Color(color) | Change::Fill(Some(color)) = change {
+                tool_state(cx).redact_cover = Some(color);
+            }
+        }
         Target::Tool(tool) => {
             let kind = tool_kind(tool).unwrap_or(Kind::Text);
             change_style(tool_state(cx).styles.of_mut(tool), kind, change);
@@ -440,7 +446,9 @@ fn style_card(
         Target::Tool(tool) => match tool_kind(tool) {
             Some(kind) => (kind, tool_state(cx).styles.of(tool), None),
             None if tool == Tool::Stamp => return Some(stamp_card(palette, cx)),
-            None if tool == Tool::Redact => return redact_card(tab, palette, cx),
+            None if tool == Tool::Redact => {
+                return Some(redact_card(tab, palette, window, cx));
+            }
             None if tool == Tool::Eraser => return Some(eraser_card(palette, cx)),
             None => return None,
         },
@@ -734,39 +742,86 @@ fn stamp_card(palette: &Palette, cx: &mut Context<DocTab>) -> AnyElement {
         .into_any_element()
 }
 
-/// The redact tool's card once areas are marked: their count, apply them for good after a
-/// warning, or clear them.
-fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> Option<AnyElement> {
-    let count = tab.canvas.redactions.len();
-    if count == 0 {
-        return None;
+/// Choices of the redact card's cover column besides a custom colour, with their tooltips.
+const REDACT_COVERS: [(Option<Color>, &str); 3] = [
+    (Some(SWATCHES[0].0), "Black"),
+    (Some(super::rgb(0xFF, 0xFF, 0xFF)), "White"),
+    (None, "No fill: remove the content, paint nothing"),
+];
+
+/// The redact tool's card: what covers the redacted areas (black, white, a custom colour or
+/// nothing) and, once areas are marked, their count, apply them for good after a warning, or
+/// clear them.
+fn redact_card(
+    tab: &DocTab,
+    palette: &Palette,
+    window: &mut Window,
+    cx: &mut Context<DocTab>,
+) -> AnyElement {
+    let cover = tool_state(cx).redact_cover;
+    let picker_open = tool_state(cx).picker.open == Some(Column::Stroke);
+    let is_cover = |choice: Option<Color>| match (choice, cover) {
+        (Some(choice), Some(cover)) => same_color(choice, cover),
+        (choice, cover) => choice.is_none() && cover.is_none(),
+    };
+    let mut covers = column_of("redact-cover", icons::PAINT_BUCKET, "Cover", palette);
+    for (index, (choice, name)) in REDACT_COVERS.into_iter().enumerate() {
+        covers = covers.child(widgets::tooltip(
+            swatch(("redact-cover", index), choice, is_cover(choice), palette).on_click(
+                move |_: &ClickEvent, _, cx: &mut App| {
+                    tool_state(cx).redact_cover = choice;
+                    cx.refresh_windows();
+                },
+            ),
+            name,
+        ));
     }
-    let apply = icon_button(
-        "redact-apply",
-        widgets::glyph(icons::CHECK),
-        false,
-        true,
-        palette,
-    )
-    .text_color(theme::hex(theme::RED))
-    .on_click(cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)));
-    let clear = icon_button(
-        "redact-clear",
-        widgets::glyph(icons::X),
-        false,
-        true,
-        palette,
-    )
-    .on_click(cx.listener(|tab, _: &ClickEvent, _, cx| {
-        tab.canvas.redactions.clear();
-        cx.notify();
-    }));
-    Some(
-        card(palette)
+    let custom = cover.filter(|_| !REDACT_COVERS.iter().any(|(choice, _)| is_cover(*choice)));
+    let shown = cover.map_or(0, color_to_rgb);
+    covers = covers.child(widgets::tooltip(
+        custom_swatch(
+            ("redact-cover", REDACT_COVERS.len()),
+            custom,
+            picker_open,
+            palette,
+        )
+        .on_click(move |_: &ClickEvent, _, cx: &mut App| {
+            picker::toggle(Column::Stroke, shown, cx);
+            cx.refresh_windows();
+        }),
+        match custom {
+            Some(color) => format!("Custom colour {}", picker::format_hex(color_to_rgb(color))),
+            None => "Custom colour…".to_owned(),
+        },
+    ));
+    let count = tab.canvas.redactions.len();
+    let marks = (count > 0).then(|| {
+        let apply = icon_button(
+            "redact-apply",
+            widgets::glyph(icons::CHECK),
+            false,
+            true,
+            palette,
+        )
+        .text_color(theme::hex(theme::RED))
+        .on_click(cx.listener(|_, _: &ClickEvent, window, cx| confirm_redactions(window, cx)));
+        let clear = icon_button(
+            "redact-clear",
+            widgets::glyph(icons::X),
+            false,
+            true,
+            palette,
+        )
+        .on_click(cx.listener(|tab, _: &ClickEvent, _, cx| {
+            tab.canvas.redactions.clear();
+            cx.notify();
+        }));
+        div()
             .flex()
             .flex_col()
             .items_center()
             .gap(px(2.))
+            .w(px(BUTTON))
             .child(value_label(
                 "redact-count",
                 count.to_string(),
@@ -775,8 +830,31 @@ fn redact_card(tab: &DocTab, palette: &Palette, cx: &mut Context<DocTab>) -> Opt
             ))
             .child(widgets::tooltip(apply, "Apply redactions…"))
             .child(widgets::tooltip(clear, "Clear marks"))
-            .into_any_element(),
-    )
+    });
+    let columns = 1 + usize::from(marks.is_some());
+    let redact_card = card(palette)
+        .flex()
+        .items_start()
+        .gap(px(COLUMN_GAP))
+        .child(covers)
+        .children(marks);
+    if !picker_open {
+        return redact_card.into_any_element();
+    }
+    let picker = picker::card(Column::Stroke, palette, window, cx);
+    // No room for both beside the bar: the picker stands in for the card.
+    let room = f32::from(tab.view.bounds.size.width) - INSET - RIGHT_CLEAR;
+    let needed = card_width(1) + card_width(columns) + picker::CARD_WIDTH + 2.0 * CARD_GAP;
+    if room < needed {
+        return picker;
+    }
+    div()
+        .flex()
+        .items_start()
+        .gap(px(CARD_GAP))
+        .child(redact_card)
+        .child(picker)
+        .into_any_element()
 }
 
 /// Smallest and largest page eraser brush, and its step, in points.
@@ -858,8 +936,8 @@ fn confirm_redactions(window: &mut Window, cx: &mut Context<DocTab>) {
         PromptLevel::Warning,
         "Apply redactions?",
         Some(
-            "The marked areas are blacked out and the text, images and comments under them are \
-             removed. This is permanent once the file is saved.",
+            "The text, images and comments under the marked areas are removed and the areas \
+             are covered as chosen. This is permanent once the file is saved.",
         ),
         &["Apply redactions", "Cancel"],
         cx,

@@ -32,7 +32,7 @@ use crate::icons;
 pub use canvas::Canvas;
 /// Write the text being typed and drop the gesture and selection (as Esc on the page does).
 pub use canvas::reset as finish_editing;
-pub(crate) use canvas::finish_shared_edit;
+pub(crate) use canvas::{finish_shared_edit, redact_areas};
 pub use picker::parse_hex;
 pub use sign::place_in as place_signature;
 
@@ -427,6 +427,8 @@ pub struct ToolState {
     pub erase_content: bool,
     /// Side of the page eraser's brush, in points.
     pub brush: f32,
+    /// What redacted areas are painted; `None` paints nothing (the content is still removed).
+    pub redact_cover: Option<Color>,
     /// The document the viewer shows, set while it renders: key actions go to it.
     active: Option<WeakEntity<DocTab>>,
     picture_card: Option<quickbar::PictureCard>,
@@ -449,6 +451,7 @@ impl Default for ToolState {
             field_kind: NewField::Text,
             erase_content: false,
             brush: 12.0,
+            redact_cover: Some(SWATCHES[0].0),
             active: None,
             picture_card: None,
             picker: picker::Picker::default(),
@@ -473,6 +476,12 @@ pub fn recent_colors(cx: &App) -> Vec<u32> {
 pub fn set_recent_colors(mut colors: Vec<u32>, cx: &mut App) {
     colors.truncate(picker::RECENT_MAX);
     tool_state(cx).recent_colors = colors;
+}
+
+/// What the redaction tool paints over redacted areas (black unless changed in its card).
+pub fn redact_cover(cx: &App) -> Option<Color> {
+    cx.try_global::<ToolState>()
+        .map_or(Some(SWATCHES[0].0), |state| state.redact_cover)
 }
 
 fn current_tool(cx: &App) -> Tool {
@@ -632,6 +641,33 @@ mod tests {
         assert!(!reachable(Tool::Sign) && !reachable(Tool::Field));
         assert_eq!(Tool::Underline.group(), Some(&Tool::MARKUP[..]));
         assert_eq!(Tool::Select.group(), None);
+    }
+
+    /// The command palette (Ctrl+K) finds every tool.
+    #[test]
+    fn every_tool_is_in_the_commands() {
+        use Tool::*;
+        let all = [
+            Select, Hand, Text, Note, Highlight, Ink, Rectangle, Ellipse, Line, Arrow, Underline,
+            StrikeOut, Stamp, Redact, Picture, Sign, Field, Eraser,
+        ];
+        let actions: Vec<&str> = crate::dialogs::COMMANDS
+            .iter()
+            .map(|command| (command.action)().name())
+            .collect();
+        for tool in all {
+            // Exhaustive: a new tool stops this compiling until it is added to `all` too.
+            let listed = match tool {
+                // Picked through "Sign…", once a signature is drawn.
+                Sign => false,
+                Select | Hand | Text | Note | Highlight | Ink | Rectangle | Ellipse | Line
+                | Arrow | Underline | StrikeOut | Stamp | Redact | Picture | Field | Eraser => true,
+            };
+            assert!(
+                !listed || actions.contains(&tool.action().name()),
+                "{tool:?} is missing from COMMANDS"
+            );
+        }
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod palette;
 mod print;
 mod ranges;
 mod signpad;
+mod text_export;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -75,7 +76,8 @@ actions!(
         DialogConfirm,
         DialogCancel,
         PaletteUp,
-        PaletteDown
+        PaletteDown,
+        ExportText
     ]
 );
 
@@ -159,6 +161,7 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &HalvePages, cx| open_form(Kind::Halve, cx));
     cx.on_action(|_: &PageColours, cx| open_form(Kind::Colours, cx));
     cx.on_action(|_: &ExportImages, cx| open_form(Kind::Images, cx));
+    cx.on_action(|_: &ExportText, cx| text_export::export_text(cx));
     cx.on_action(|_: &ExtractPages, cx| open_form(Kind::Extract, cx));
     cx.on_action(|_: &SplitDocument, cx| open_form(Kind::Split, cx));
     cx.on_action(|_: &SetPassword, cx| open_form(Kind::Encrypt, cx));

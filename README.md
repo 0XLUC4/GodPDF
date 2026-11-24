@@ -44,6 +44,8 @@ New versions arrive through the Updates button, which downloads the update and r
 - Highlight, underline and strike out by selecting the text
 - Text boxes with fonts, bold, italic, underline, subscript and superscript, and a handle to change their width
 - Sticky notes, ink, rectangles, ellipses, lines and arrows, with a fill colour for shapes
+- Polygons, polylines and revision clouds, drawn point by point
+- Measure distances, perimeters and areas to a scale you set (e.g. `1 cm = 2 m`), kept as comments
 - Stamps: Approved, Draft, Confidential, Rejected, Final, with an optional date
 - Preset colours plus a picker with hex input and recent colours
 - Move, resize, bring to front or send to back, all in real time

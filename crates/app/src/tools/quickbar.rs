@@ -130,6 +130,9 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
                 }
                 | Annotation::Circle {
                     color, width, fill, ..
+                }
+                | Annotation::Polygon {
+                    color, width, fill, ..
                 },
             ) => Target::Selected(
                 Kind::Shape,
@@ -139,13 +142,16 @@ fn target(tab: &mut DocTab, cx: &mut App) -> Target {
                 },
                 None,
             ),
-            Some(Annotation::Line { color, width, .. } | Annotation::Ink { color, width, .. }) => {
-                Target::Selected(
-                    Kind::Stroke,
-                    style(color, width, 14.0, Font::Helvetica),
-                    None,
-                )
-            }
+            Some(
+                Annotation::Line { color, width, .. }
+                | Annotation::Ink { color, width, .. }
+                | Annotation::PolyLine { color, width, .. }
+                | Annotation::Measure { color, width, .. },
+            ) => Target::Selected(
+                Kind::Stroke,
+                style(color, width, 14.0, Font::Helvetica),
+                None,
+            ),
             Some(
                 Annotation::Highlight { color, .. }
                 | Annotation::Underline { color, .. }
@@ -238,6 +244,32 @@ fn restyled(annotation: &Annotation, style: Style, change: Change) -> Annotation
             color,
             width: style.width,
         },
+        Annotation::Polygon {
+            vertices, cloud, ..
+        } => Annotation::Polygon {
+            vertices,
+            color,
+            width: style.width,
+            fill: style.fill,
+            cloud,
+        },
+        Annotation::PolyLine { vertices, .. } => Annotation::PolyLine {
+            vertices,
+            color,
+            width: style.width,
+        },
+        Annotation::Measure {
+            kind,
+            vertices,
+            scale,
+            ..
+        } => Annotation::Measure {
+            kind,
+            vertices,
+            color,
+            width: style.width,
+            scale,
+        },
         Annotation::FreeText {
             rect,
             text,
@@ -270,8 +302,9 @@ fn tool_kind(tool: Tool) -> Option<Kind> {
     match tool {
         Tool::Text => Some(Kind::Text),
         Tool::Ink | Tool::Line | Tool::Arrow => Some(Kind::Stroke),
-        Tool::Rectangle | Tool::Ellipse => Some(Kind::Shape),
+        Tool::Rectangle | Tool::Ellipse | Tool::Polygon | Tool::Cloud => Some(Kind::Shape),
         shape if shape.is_shape() => Some(Kind::Stroke),
+        measure if Tool::MEASURE.contains(&measure) => Some(Kind::Stroke),
         Tool::Highlight | Tool::Underline | Tool::StrikeOut => Some(Kind::Fill),
         _ => None,
     }
@@ -364,11 +397,13 @@ pub fn render(
         .gap(px(BAR_GAP))
         .max_h(px(max_height))
         .overflow_y_scroll();
-    let (shape, markup) = (tool_state(cx).shape, tool_state(cx).markup);
+    let state = tool_state(cx);
+    let (shape, markup, measure) = (state.shape, state.markup, state.measure);
     for candidate in Tool::BAR {
         // A group button stands for the last tool picked in its group.
         let (candidate, active) = match candidate.group() {
             Some(group) if candidate.is_shape() => (shape, group.contains(&tool)),
+            Some(group) if group == Tool::MEASURE => (measure, group.contains(&tool)),
             Some(group) => (markup, group.contains(&tool)),
             None => (candidate, candidate == tool),
         };
@@ -405,6 +440,7 @@ pub fn render(
         .child(widgets::tooltip(redo, "Redo (Ctrl+Y)"));
 
     let style_card = style_card(tab, &palette, window, cx);
+    let scale_card = super::measure::scale_card(tab, &palette, window, cx);
     Some(
         div()
             .absolute()
@@ -415,6 +451,7 @@ pub fn render(
             .gap(px(CARD_GAP))
             .child(tools)
             .children(style_card)
+            .children(scale_card)
             .into_any_element(),
     )
 }

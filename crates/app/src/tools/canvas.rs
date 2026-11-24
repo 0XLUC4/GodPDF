@@ -6,7 +6,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use godpdf_core::{
-    Annotation, CharStyle, Font, PageGeometry, Picture, PlacedAnnotation, Rect, StampLabel,
+    Annotation, CharStyle, Font, MeasureKind, PageGeometry, Picture, PlacedAnnotation, Rect,
+    StampLabel,
 };
 use gpui::component::menu::{ContextMenuExt, PopupMenu};
 use gpui::prelude::*;
@@ -18,7 +19,9 @@ use gpui::{
 use lyon::tessellation::{LineCap, LineJoin};
 
 use super::geom::{self, DRect};
-use super::{Tool, current_tool, editor, fields, hsla, pointer, richtext, sign, stamp, tool_state};
+use super::{
+    Tool, current_tool, editor, fields, hsla, pointer, poly, richtext, sign, stamp, tool_state,
+};
 use crate::doc::{DocTab, guarded};
 use crate::geometry::PageRect;
 use crate::{icons, text, toasts};
@@ -135,6 +138,10 @@ pub struct Canvas {
     pointer: Option<(usize, (f32, f32))>,
     /// The line, arrow or ink under the pointer (Select), outlined as hovered.
     hovered: Option<(usize, String)>,
+    /// The polygon, polyline or measurement being built click by click.
+    pub(super) path: Option<poly::Path>,
+    /// Scale of the measuring tools in this document.
+    pub(super) scale: godpdf_core::Scale,
 }
 
 impl Canvas {
@@ -253,6 +260,21 @@ pub(super) fn items(tab: &mut DocTab, page: usize, cx: &mut App) -> Option<Vec<I
                 .collect(),
             width / 2.0,
         )),
+        // Open paths are hit along their stroke; polygons and areas anywhere in their box.
+        Some(
+            Annotation::PolyLine {
+                vertices, width, ..
+            }
+            | Annotation::Measure {
+                kind: MeasureKind::Distance | MeasureKind::Perimeter,
+                vertices,
+                width,
+                ..
+            },
+        ) => Some((
+            vec![vertices.iter().map(|&point| shown(point)).collect()],
+            width / 2.0,
+        )),
         _ => None,
     };
     Some(
@@ -315,6 +337,7 @@ pub fn reset(tab: &mut DocTab, cx: &mut Context<DocTab>) {
     editor::commit(tab, cx);
     tab.canvas.gesture = None;
     tab.canvas.selected = None;
+    tab.canvas.path = None;
 }
 
 pub(crate) fn finish_shared_edit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
@@ -323,6 +346,10 @@ pub(crate) fn finish_shared_edit(tab: &mut DocTab, cx: &mut Context<DocTab>) {
 }
 
 pub fn delete_selected(tab: &mut DocTab, cx: &mut Context<DocTab>) {
+    // Backspace while a path is being built takes its last point back.
+    if poly::remove_last(tab) {
+        return;
+    }
     let Some(selected) = tab.canvas.selected.take() else {
         return;
     };
@@ -407,6 +434,12 @@ fn on_down(
             tab.canvas.gesture = Some(Gesture::Erase { erased });
         }
         Tool::Stamp => place_stamp(tab, page, point, cx),
+        Tool::Polygon
+        | Tool::PolyLine
+        | Tool::Cloud
+        | Tool::Distance
+        | Tool::Perimeter
+        | Tool::Area => poly::click(tab, page, point, event.click_count, cx),
         Tool::Sign => sign::click(tab, page, point, cx),
         Tool::Highlight | Tool::Underline | Tool::StrikeOut
             if text::select_from(tab, page, point, event.click_count) =>
@@ -655,6 +688,9 @@ fn on_move(tab: &mut DocTab, page: usize, event: &MouseMoveEvent, cx: &mut Conte
     let tool = current_tool(cx);
     if tool == Tool::Eraser {
         tab.canvas.pointer = page_point(tab, page, event.position).map(|point| (page, point));
+        cx.notify();
+    }
+    if poly::is_path_tool(tool) && poly::track(tab, page, event.position) {
         cx.notify();
     }
     let Some(gesture) = &tab.canvas.gesture else {
@@ -1550,6 +1586,7 @@ pub fn page_overlay(
             .collect();
         layer = layer.child(markup(tool, &lines, color, zoom));
     }
+    layer = layer.children(poly::preview(tab, page, zoom, cx));
     if let Some(point) = pointer
         && tab.canvas.editor.is_none()
     {
@@ -1876,6 +1913,9 @@ fn ghost_elements(tab: &mut DocTab, ghost: &Ghost, zoom: f32, scale: f32) -> Vec
         Annotation::Stamp { label, date, .. } => {
             Some(stamp_element(ghost.dst, *label, date.as_deref(), zoom))
         }
+        Annotation::Polygon { .. } | Annotation::PolyLine { .. } | Annotation::Measure { .. } => {
+            poly::element(&ghost.annotation, &geom, displayed, zoom)
+        }
         Annotation::Image { .. } if let Some(image) = picture_of(tab, ghost, geom.rotation) => {
             let snap = |value: f32| (value * zoom * scale).round() / scale;
             let (left, top) = (snap(ghost.dst.x0), snap(ghost.dst.y0));
@@ -1977,7 +2017,7 @@ pub(super) fn cut_out(
 
 /// Polylines (displayed points) stroked `width` points wide, over the whole page; with
 /// `fill`, each one is first painted inside as a closed area.
-fn strokes(
+pub(super) fn strokes(
     lines: Vec<Vec<(f32, f32)>>,
     width: f32,
     color: Hsla,

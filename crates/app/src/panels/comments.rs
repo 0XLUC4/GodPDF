@@ -1,7 +1,7 @@
 //! Comments panel: every annotation we understand,
 //! grouped by page. Read in a background job once per document generation, never per frame.
 
-use godpdf_core::Annotation;
+use godpdf_core::{Annotation, MeasureKind};
 use gpui::component::spinner::Spinner;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, div, px};
@@ -25,6 +25,12 @@ pub enum Kind {
     Ink,
     Picture,
     Stamp,
+    Polygon,
+    Cloud,
+    PolyLine,
+    Distance,
+    Perimeter,
+    Area,
 }
 
 impl Kind {
@@ -41,6 +47,12 @@ impl Kind {
             Self::Ink => "Ink",
             Self::Picture => "Picture",
             Self::Stamp => "Stamp",
+            Self::Polygon => "Polygon",
+            Self::Cloud => "Cloud",
+            Self::PolyLine => "Polyline",
+            Self::Distance => "Distance",
+            Self::Perimeter => "Perimeter",
+            Self::Area => "Area",
         }
     }
 
@@ -57,6 +69,12 @@ impl Kind {
             Self::Ink => icons::PENCIL_SIMPLE,
             Self::Picture => icons::IMAGE,
             Self::Stamp => icons::STAMP,
+            Self::Polygon => icons::POLYGON,
+            Self::Cloud => icons::CLOUD,
+            Self::PolyLine => icons::LINE_SEGMENTS,
+            Self::Distance => icons::RULER,
+            Self::Perimeter => icons::PATH,
+            Self::Area => icons::BOUNDING_BOX,
         }
     }
 }
@@ -82,6 +100,23 @@ impl Entry {
             Annotation::Ink { .. } => (Kind::Ink, String::new()),
             Annotation::Image { .. } => (Kind::Picture, String::new()),
             Annotation::Stamp { .. } => (Kind::Stamp, String::new()),
+            Annotation::Polygon { cloud: true, .. } => (Kind::Cloud, String::new()),
+            Annotation::Polygon { .. } => (Kind::Polygon, String::new()),
+            Annotation::PolyLine { .. } => (Kind::PolyLine, String::new()),
+            // The measured value, as written in /Contents.
+            Annotation::Measure {
+                kind,
+                vertices,
+                scale,
+                ..
+            } => {
+                let shown = match kind {
+                    MeasureKind::Distance => Kind::Distance,
+                    MeasureKind::Perimeter => Kind::Perimeter,
+                    MeasureKind::Area => Kind::Area,
+                };
+                (shown, scale.label(kind, &vertices))
+            }
         };
         Self { page, kind, text }
     }

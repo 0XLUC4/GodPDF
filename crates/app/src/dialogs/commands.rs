@@ -363,6 +363,42 @@ pub static COMMANDS: &[Command] = &[
         || Box::new(tools::RedactTool),
     ),
     command(
+        "Polygon",
+        Comment,
+        "Click the corners, double-click to close",
+        || Box::new(tools::PolygonTool),
+    ),
+    command(
+        "Polyline",
+        Comment,
+        "Click the points, double-click to finish",
+        || Box::new(tools::PolyLineTool),
+    ),
+    command(
+        "Cloud",
+        Comment,
+        "Circle an area with a revision cloud",
+        || Box::new(tools::CloudTool),
+    ),
+    command(
+        "Measure distance",
+        Comment,
+        "Length between two points, to scale",
+        || Box::new(tools::DistanceTool),
+    ),
+    command(
+        "Measure perimeter",
+        Comment,
+        "Length of a path, to scale",
+        || Box::new(tools::PerimeterTool),
+    ),
+    command(
+        "Measure area",
+        Comment,
+        "Area inside a polygon, to scale",
+        || Box::new(tools::AreaTool),
+    ),
+    command(
         "Picture",
         Comment,
         "Put a PNG or JPEG on the page, then move and resize it",

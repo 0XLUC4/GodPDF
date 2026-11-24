@@ -8,6 +8,9 @@ use crate::fonts::{CharStyle, Font, Script, style_at};
 use crate::pdf::{check_page, deref, dict_entry, load, page_ids, save};
 use crate::{Error, Result};
 
+pub(crate) mod shapes;
+pub use shapes::{MeasureKind, Scale, Unit};
+
 /// Rectangle in PDF points, unrotated page space (origin bottom-left).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -97,6 +100,30 @@ pub enum Annotation {
         rect: Rect,
         label: StampLabel,
         date: Option<String>,
+    },
+    /// Closed path through `vertices`, painted inside with `fill` when set; its edges are
+    /// scallops (a cloud, /BE /C) when `cloud`.
+    Polygon {
+        vertices: Vec<(f32, f32)>,
+        color: Color,
+        width: f32,
+        fill: Option<Color>,
+        cloud: bool,
+    },
+    /// Open path through `vertices`.
+    PolyLine {
+        vertices: Vec<(f32, f32)>,
+        color: Color,
+        width: f32,
+    },
+    /// A distance (two `vertices`), perimeter or area measured with `scale`, labelled with
+    /// its value.
+    Measure {
+        kind: MeasureKind,
+        vertices: Vec<(f32, f32)>,
+        color: Color,
+        width: f32,
+        scale: Scale,
     },
 }
 
@@ -385,6 +412,13 @@ impl Annotation {
                     *point = (point.0 + dx, point.1 + dy);
                 }
             }
+            Self::Polygon { vertices, .. }
+            | Self::PolyLine { vertices, .. }
+            | Self::Measure { vertices, .. } => {
+                for point in vertices {
+                    *point = (point.0 + dx, point.1 + dy);
+                }
+            }
         }
         moved
     }
@@ -435,6 +469,13 @@ impl Annotation {
                     *point = fit_point(*point, from, to);
                 }
             }
+            Self::Polygon { vertices, .. }
+            | Self::PolyLine { vertices, .. }
+            | Self::Measure { vertices, .. } => {
+                for point in vertices {
+                    *point = fit_point(*point, from, to);
+                }
+            }
         }
         fitted
     }
@@ -454,6 +495,14 @@ impl Annotation {
             Self::Underline { .. } => "Underline",
             Self::StrikeOut { .. } => "Strikethrough",
             Self::Stamp { .. } => "Stamp",
+            Self::Polygon { cloud: true, .. } => "Cloud",
+            Self::Polygon { .. } => "Polygon",
+            Self::PolyLine { .. } => "Polyline",
+            Self::Measure { kind, .. } => match kind {
+                MeasureKind::Distance => "Distance",
+                MeasureKind::Perimeter => "Perimeter",
+                MeasureKind::Area => "Area",
+            },
         }
     }
 }
@@ -729,6 +778,25 @@ fn annotation_parts(annotation: &Annotation) -> Result<Parts> {
             crate::stamp::check_text(label.text())?;
             Ok(stamp(normalized(*rect)?, label, date.as_deref()))
         }
+        Annotation::Polygon {
+            vertices,
+            color,
+            width,
+            fill,
+            cloud,
+        } => shapes::poly(vertices, *color, *width, *fill, true, *cloud),
+        Annotation::PolyLine {
+            vertices,
+            color,
+            width,
+        } => shapes::poly(vertices, *color, *width, None, false, false),
+        Annotation::Measure {
+            kind,
+            vertices,
+            color,
+            width,
+            scale,
+        } => shapes::measure(*kind, vertices, *color, *width, *scale),
     }
 }
 
@@ -1849,6 +1917,8 @@ fn parse_annotation(doc: &Document, dict: &Dictionary) -> Option<Annotation> {
             width: read_width(doc, dict),
             fill: read_rgb(doc, dict, b"IC"),
         }),
+        b"Line" if shapes::measure_kind(doc, dict).is_some() => shapes::parse(doc, dict),
+        b"Polygon" | b"PolyLine" => shapes::parse(doc, dict),
         b"Line" => {
             let &[x0, y0, x1, y1] = numbers(doc, dict, b"L")?.as_slice() else {
                 return None;

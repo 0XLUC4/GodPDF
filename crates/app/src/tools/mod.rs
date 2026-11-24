@@ -11,8 +11,10 @@ mod editor;
 mod fields;
 mod geom;
 mod links;
+mod measure;
 mod picker;
 pub mod pointer;
+mod poly;
 mod quickbar;
 mod richtext;
 mod sign;
@@ -69,7 +71,14 @@ actions!(
         ToggleBold,
         ToggleItalic,
         ToggleUnderline,
-        LinkTool
+        LinkTool,
+        PolygonTool,
+        PolyLineTool,
+        CloudTool,
+        DistanceTool,
+        PerimeterTool,
+        AreaTool,
+        FinishPath
     ]
 );
 
@@ -108,13 +117,21 @@ pub enum Tool {
     Eraser,
     /// Draw a box leading to a page or a web address.
     Link,
+    /// Paths built click by click ([`poly`]).
+    Polygon,
+    PolyLine,
+    Cloud,
+    /// Measurements, with the document's scale ([`measure`]).
+    Distance,
+    Perimeter,
+    Area,
 }
 
 impl Tool {
     /// The quick bar, top to bottom: the drawing tools, plus stamp and redact before the
     /// eraser. `Highlight` and `Rectangle` stand for their groups ([`Tool::group`]): the
     /// button shows the last tool picked in it, the style card picks another.
-    pub const BAR: [Tool; 12] = [
+    pub const BAR: [Tool; 13] = [
         Tool::Select,
         Tool::Hand,
         Tool::Text,
@@ -122,6 +139,7 @@ impl Tool {
         Tool::Highlight,
         Tool::Ink,
         Tool::Rectangle,
+        Tool::Distance,
         Tool::Picture,
         Tool::Link,
         Tool::Stamp,
@@ -129,9 +147,19 @@ impl Tool {
         Tool::Eraser,
     ];
     /// The shapes group.
-    pub const SHAPES: [Tool; 4] = [Tool::Rectangle, Tool::Ellipse, Tool::Line, Tool::Arrow];
+    pub const SHAPES: [Tool; 7] = [
+        Tool::Rectangle,
+        Tool::Ellipse,
+        Tool::Line,
+        Tool::Arrow,
+        Tool::Polygon,
+        Tool::PolyLine,
+        Tool::Cloud,
+    ];
     /// The text markup group.
     pub const MARKUP: [Tool; 3] = [Tool::Highlight, Tool::Underline, Tool::StrikeOut];
+    /// The measuring group.
+    pub const MEASURE: [Tool; 3] = [Tool::Distance, Tool::Perimeter, Tool::Area];
 
     pub fn is_shape(self) -> bool {
         Self::SHAPES.contains(&self)
@@ -139,7 +167,7 @@ impl Tool {
 
     /// The flyout group of the bar this tool is in, if any.
     pub fn group(self) -> Option<&'static [Tool]> {
-        [&Self::SHAPES[..], &Self::MARKUP[..]]
+        [&Self::SHAPES[..], &Self::MARKUP[..], &Self::MEASURE[..]]
             .into_iter()
             .find(|group| group.contains(&self))
     }
@@ -166,6 +194,12 @@ impl Tool {
             Self::Field => icons::TEXTBOX,
             Self::Eraser => icons::ERASER,
             Self::Link => icons::LINK_SIMPLE,
+            Self::Polygon => icons::POLYGON,
+            Self::PolyLine => icons::LINE_SEGMENTS,
+            Self::Cloud => icons::CLOUD,
+            Self::Distance => icons::RULER,
+            Self::Perimeter => icons::PATH,
+            Self::Area => icons::BOUNDING_BOX,
         }
     }
 
@@ -190,6 +224,12 @@ impl Tool {
             Self::Field => "Form field",
             Self::Eraser => "Eraser",
             Self::Link => "Link",
+            Self::Polygon => "Polygon",
+            Self::PolyLine => "Polyline",
+            Self::Cloud => "Cloud",
+            Self::Distance => "Distance",
+            Self::Perimeter => "Perimeter",
+            Self::Area => "Area",
         }
     }
 
@@ -211,7 +251,16 @@ impl Tool {
             Self::Redact => Some("X"),
             Self::Picture => Some("I"),
             Self::Eraser => Some("E"),
-            Self::Highlight | Self::Sign | Self::Field | Self::Link => None,
+            Self::Highlight
+            | Self::Sign
+            | Self::Field
+            | Self::Link
+            | Self::Polygon
+            | Self::PolyLine
+            | Self::Cloud
+            | Self::Distance
+            | Self::Perimeter
+            | Self::Area => None,
         }
     }
 
@@ -236,6 +285,12 @@ impl Tool {
             Self::Field => Box::new(FieldTool),
             Self::Eraser => Box::new(EraserTool),
             Self::Link => Box::new(LinkTool),
+            Self::Polygon => Box::new(PolygonTool),
+            Self::PolyLine => Box::new(PolyLineTool),
+            Self::Cloud => Box::new(CloudTool),
+            Self::Distance => Box::new(DistanceTool),
+            Self::Perimeter => Box::new(PerimeterTool),
+            Self::Area => Box::new(AreaTool),
         }
     }
 
@@ -296,6 +351,8 @@ pub struct Styles {
     pub shape: Style,
     pub underline: Style,
     pub strike_out: Style,
+    /// Every measuring tool.
+    pub measure: Style,
 }
 
 impl Default for Styles {
@@ -314,6 +371,7 @@ impl Default for Styles {
             shape: style(SWATCHES[0].0),
             underline: style(SWATCHES[3].0),
             strike_out: style(SWATCHES[2].0),
+            measure: style(SWATCHES[2].0),
         }
     }
 }
@@ -324,7 +382,8 @@ impl Styles {
         match tool {
             Tool::Highlight => &mut self.highlight,
             Tool::Ink => &mut self.ink,
-            Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Arrow => &mut self.shape,
+            shape if shape.is_shape() => &mut self.shape,
+            measure if Tool::MEASURE.contains(&measure) => &mut self.measure,
             Tool::Underline => &mut self.underline,
             Tool::StrikeOut => &mut self.strike_out,
             _ => &mut self.text,
@@ -335,7 +394,8 @@ impl Styles {
         match tool {
             Tool::Highlight => self.highlight,
             Tool::Ink => self.ink,
-            Tool::Rectangle | Tool::Ellipse | Tool::Line | Tool::Arrow => self.shape,
+            shape if shape.is_shape() => self.shape,
+            measure if Tool::MEASURE.contains(&measure) => self.measure,
             Tool::Underline => self.underline,
             Tool::StrikeOut => self.strike_out,
             _ => self.text,
@@ -428,6 +488,8 @@ pub struct ToolState {
     pub shape: Tool,
     /// The markup (highlight, underline, strikethrough) its group button picks.
     pub markup: Tool,
+    /// The measuring tool its group button picks.
+    pub measure: Tool,
     /// The stamp the stamp tool places, and whether it gets today's date.
     pub stamp: StampLabel,
     pub stamp_date: bool,
@@ -458,6 +520,7 @@ impl Default for ToolState {
             keep_ratio: true,
             shape: Tool::Rectangle,
             markup: Tool::Highlight,
+            measure: Tool::Distance,
             stamp: StampLabel::Approved,
             stamp_date: false,
             stamp_picture: None,
@@ -534,6 +597,8 @@ fn set_tool(tool: Tool, cx: &mut App) {
         state.shape = tool;
     } else if Tool::MARKUP.contains(&tool) {
         state.markup = tool;
+    } else if Tool::MEASURE.contains(&tool) {
+        state.measure = tool;
     }
     cx.refresh_windows();
 }
@@ -561,6 +626,7 @@ pub fn register(cx: &mut App) {
         KeyBinding::new("delete", DeleteSelection, keys),
         KeyBinding::new("backspace", DeleteSelection, keys),
         KeyBinding::new("escape", Deselect, keys),
+        KeyBinding::new("enter", FinishPath, keys),
         // Shifted brackets arrive as braces on some layouts: both are bound.
         KeyBinding::new(secondary!("shift-]"), BringToFront, keys),
         KeyBinding::new(secondary!("}"), BringToFront, keys),
@@ -591,6 +657,13 @@ pub fn register(cx: &mut App) {
     cx.on_action(|_: &SignTool, cx| set_tool(Tool::Sign, cx));
     cx.on_action(|_: &FieldTool, cx| set_tool(Tool::Field, cx));
     cx.on_action(|_: &LinkTool, cx| set_tool(Tool::Link, cx));
+    cx.on_action(|_: &PolygonTool, cx| set_tool(Tool::Polygon, cx));
+    cx.on_action(|_: &PolyLineTool, cx| set_tool(Tool::PolyLine, cx));
+    cx.on_action(|_: &CloudTool, cx| set_tool(Tool::Cloud, cx));
+    cx.on_action(|_: &DistanceTool, cx| set_tool(Tool::Distance, cx));
+    cx.on_action(|_: &PerimeterTool, cx| set_tool(Tool::Perimeter, cx));
+    cx.on_action(|_: &AreaTool, cx| set_tool(Tool::Area, cx));
+    cx.on_action(|_: &FinishPath, cx| poly::finish_active(cx));
     cx.on_action(|_: &DeleteSelection, cx| with_active(cx, canvas::delete_selected));
     // Esc closes the topmost floating card first: the colour picker.
     cx.on_action(|_: &Deselect, cx| {
@@ -657,7 +730,13 @@ mod tests {
                     .group()
                     .is_some_and(|group| Tool::BAR.contains(&group[0]))
         };
-        let tools = [Tool::SHAPES.as_slice(), &Tool::MARKUP, &Tool::BAR].concat();
+        let tools = [
+            Tool::SHAPES.as_slice(),
+            &Tool::MARKUP,
+            &Tool::MEASURE,
+            &Tool::BAR,
+        ]
+        .concat();
         assert!(tools.into_iter().all(reachable));
         // Chosen from the signature and form panels.
         assert!(!reachable(Tool::Sign) && !reachable(Tool::Field));

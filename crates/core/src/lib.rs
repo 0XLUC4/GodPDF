@@ -27,12 +27,14 @@ mod stamp;
 mod text;
 mod textlayer;
 
+pub use annotate::shapes::{cloud_outline, label_layout, path_length, polygon_area};
 pub use annotate::{
     Annotation, Color, FREE_TEXT_ASCENT, FREE_TEXT_LINE_HEIGHT, FREE_TEXT_PADDING, Picture,
     PlacedAnnotation, Rect, StampLabel, ZOrder, add_annotation, add_annotations, annotations,
     free_text_rect, free_text_width, remove_annotation, reorder_annotation, replace_annotation,
     wrap_free_text, wrap_styled,
 };
+pub use annotate::{MeasureKind, Scale, Unit};
 pub use attach::{Attachment, add_attachment, attachments, remove_attachment};
 pub use bookmarks::{contents_page, write_outline};
 pub use clean::{

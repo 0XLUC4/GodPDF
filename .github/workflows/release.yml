@@ -22,6 +22,7 @@ env:
 
 jobs:
   windows:
+    if: ${{ github.event_name != 'release' || !contains(github.event.release.assets.*.name, 'GodPDF-windows-x64.exe') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

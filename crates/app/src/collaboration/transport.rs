@@ -16,6 +16,7 @@ pub(super) const MAX_PDF: usize = 64 * 1024 * 1024;
 const CODE_DIGITS: usize = 6;
 const MAX_LABEL: usize = 256;
 const SECRET_LEN: usize = 32;
+const TICKET_PREFIX: &str = "godpdf:";
 const ALPN: &[u8] = b"godpdf/snapshot/2";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The host's address record can take a few seconds to reach the DNS: the guest retries.
@@ -36,11 +37,42 @@ pub(super) struct Revision {
     pub grant: Option<Turn>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Cursor {
+    pub page: u32,
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Cursor {
+    fn encode(self) -> [u8; 12] {
+        let mut bytes = [0; 12];
+        bytes[..4].copy_from_slice(&self.page.to_le_bytes());
+        bytes[4..8].copy_from_slice(&self.x.to_le_bytes());
+        bytes[8..].copy_from_slice(&self.y.to_le_bytes());
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let [a, b, c, d, e, f, g, h, i, j, k, l] = *bytes else {
+            return None;
+        };
+        let x = f32::from_le_bytes([e, f, g, h]);
+        let y = f32::from_le_bytes([i, j, k, l]);
+        ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then_some(Self {
+            page: u32::from_le_bytes([a, b, c, d]),
+            x,
+            y,
+        })
+    }
+}
+
 pub(super) enum Event {
-    Invitation(String),
+    Invitation { code: String, ticket: String },
     Connected(String),
     Document(Arc<Vec<u8>>),
     Update(Revision),
+    Cursor(Option<Cursor>),
     Failed(String),
 }
 
@@ -49,7 +81,11 @@ pub(super) enum Start {
     Join { code: String },
 }
 
-type Channels = (watch::Sender<Option<Revision>>, mpsc::Receiver<Event>);
+type Channels = (
+    watch::Sender<Option<Revision>>,
+    mpsc::Receiver<Event>,
+    watch::Sender<Option<Cursor>>,
+);
 type SessionResult<T> = Result<T, &'static str>;
 
 /// A random 6-digit code, e.g. "042917".
@@ -92,9 +128,23 @@ fn host_key(code: &str) -> SecretKey {
     SecretKey::from_bytes(&derive(code, "endpoint"))
 }
 
+pub(super) fn parse_invitation(input: &str) -> Option<(String, EndpointAddr)> {
+    if let Some(ticket) = input.trim().strip_prefix(TICKET_PREFIX) {
+        if ticket.len() > 4096 {
+            return None;
+        }
+        let (code, address): (String, EndpointAddr) = serde_json::from_str(ticket).ok()?;
+        let code = normalize_code(&code)?;
+        return (address.id == host_key(&code).public()).then_some((code, address));
+    }
+    let code = normalize_code(input)?;
+    let address = EndpointAddr::new(host_key(&code).public());
+    Some((code, address))
+}
+
 enum Session {
     Host(Arc<Vec<u8>>),
-    Join(String),
+    Join { code: String, host: EndpointAddr },
 }
 
 pub(super) fn start(mode: Start, peer_label: String) -> Result<Channels, String> {
@@ -114,10 +164,12 @@ fn start_worker(
             Session::Host(document)
         }
         Start::Join { code } => {
-            Session::Join(normalize_code(&code).ok_or("Enter the 6-digit code")?)
+            let (code, host) = parse_invitation(&code).ok_or("Enter a valid invitation or code")?;
+            Session::Join { code, host }
         }
     };
     let (outgoing, revisions) = watch::channel(None);
+    let (cursor_sender, cursors) = watch::channel(None);
     let mut cancellation = revisions.clone();
     let (events, incoming) = mpsc::channel(4);
     thread::Builder::new()
@@ -134,7 +186,7 @@ fn start_worker(
                     biased;
                     _ = async { while cancellation.changed().await.is_ok() {} } => return,
                     _ = events.closed() => return,
-                    result = run(session, label, revisions, &events, local) => result,
+                    result = run(session, label, revisions, cursors, &events, local) => result,
                 };
                 if let Err(message) = result {
                     let _ = events.try_send(Event::Failed(message.into()));
@@ -142,13 +194,14 @@ fn start_worker(
             });
         })
         .map_err(|_| "Could not start collaboration thread".to_owned())?;
-    Ok((outgoing, incoming))
+    Ok((outgoing, incoming, cursor_sender))
 }
 
 async fn run(
     session: Session,
     label: String,
-    revisions: watch::Receiver<Option<Revision>>,
+    mut revisions: watch::Receiver<Option<Revision>>,
+    cursors: watch::Receiver<Option<Cursor>>,
     events: &mpsc::Sender<Event>,
     local: Option<MemoryLookup>,
 ) -> SessionResult<()> {
@@ -164,7 +217,7 @@ async fn run(
             let key = host_key(&code);
             (code, key)
         }
-        Session::Join(code) => (code.clone(), SecretKey::generate()),
+        Session::Join { code, .. } => (code.clone(), SecretKey::generate()),
     };
     let endpoint = builder
         .secret_key(secret_key)
@@ -175,21 +228,28 @@ async fn run(
     let secret = derive(&code, "join");
 
     // Keep the connection alive for both stream futures.
-    let (_connection, send, recv, exchanged) = match session {
+    let (connection, send, recv, exchanged) = match session {
         Session::Host(document) => {
-            if let Some(lookup) = &local {
+            let address = if let Some(lookup) = &local {
                 let port = endpoint
                     .bound_sockets()
                     .into_iter()
                     .find(|addr| addr.is_ipv4())
                     .ok_or("Could not bind loopback endpoint")?
                     .port();
-                lookup.add_endpoint_info(
-                    EndpointAddr::new(endpoint.id()).with_ip_addr(([127, 0, 0, 1], port).into()),
-                );
-            }
-            // Shown at once: the endpoint publishes its address in the background.
-            publish(events, Event::Invitation(code)).await?;
+                let address =
+                    EndpointAddr::new(endpoint.id()).with_ip_addr(([127, 0, 0, 1], port).into());
+                lookup.add_endpoint_info(address.clone());
+                address
+            } else {
+                // Give the home relay a chance to appear without blocking LAN sharing offline.
+                let _ = timeout(Duration::from_secs(3), endpoint.online()).await;
+                endpoint.addr()
+            };
+            let encoded = serde_json::to_string(&(&code, address))
+                .map_err(|_| "Could not encode the sharing invitation")?;
+            let ticket = format!("{TICKET_PREFIX}{encoded}");
+            publish(events, Event::Invitation { code, ticket }).await?;
 
             let (connection, mut send, mut recv, guest_label) = loop {
                 let incoming = endpoint
@@ -216,6 +276,12 @@ async fn run(
                 }
             };
 
+            // The host can edit while waiting for the guest to enter the code.
+            let document = revisions
+                .borrow_and_update()
+                .as_ref()
+                .map(|revision| revision.bytes.clone())
+                .unwrap_or(document);
             timeout(TRANSFER_TIMEOUT, async {
                 write_label(&mut send, &label).await?;
                 write_frame(&mut send, &document, MAX_PDF).await?;
@@ -229,8 +295,7 @@ async fn run(
             publish(events, Event::Connected(guest_label)).await?;
             (connection, send, recv, document)
         }
-        Session::Join(code) => {
-            let host = EndpointAddr::new(host_key(&code).public());
+        Session::Join { host, .. } => {
             let deadline = Instant::now() + SETUP_TIMEOUT;
             let connection = loop {
                 match timeout(AUTH_TIMEOUT, endpoint.connect(host.clone(), ALPN)).await {
@@ -266,6 +331,55 @@ async fn run(
     tokio::select! {
         result = read_revisions(recv, events, &exchanged) => result,
         result = write_revisions(send, revisions, &exchanged) => result,
+        result = exchange_cursors(&connection, cursors, events) => result,
+    }
+}
+
+async fn exchange_cursors(
+    connection: &iroh::endpoint::Connection,
+    outgoing: watch::Receiver<Option<Cursor>>,
+    events: &mpsc::Sender<Event>,
+) -> SessionResult<()> {
+    // Datagram loss must neither block a PDF revision nor leave a stale pointer visible.
+    let mut tick = tokio::time::interval(Duration::from_millis(40));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut latest = None;
+    let mut last_packet = Instant::now();
+    let mut last_sent = None;
+    let mut last_send = Instant::now();
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let position = *outgoing.borrow();
+                if position != last_sent
+                    || (position.is_some() && last_send.elapsed() >= Duration::from_millis(250))
+                {
+                    let packet = position.map_or_else(|| vec![0], |cursor| cursor.encode().to_vec());
+                    let _ = connection.send_datagram(packet.into());
+                    last_sent = position;
+                    last_send = Instant::now();
+                }
+                if latest.is_some() && last_packet.elapsed() > Duration::from_secs(1) {
+                    latest = None;
+                    publish(events, Event::Cursor(None)).await?;
+                }
+            }
+            packet = connection.read_datagram() => {
+                let packet = packet.map_err(|_| "Collaboration stream closed")?;
+                let position = if packet.as_ref() == [0] {
+                    None
+                } else if let Some(position) = Cursor::decode(&packet) {
+                    Some(position)
+                } else {
+                    continue;
+                };
+                last_packet = Instant::now();
+                if latest != position {
+                    latest = position;
+                    publish(events, Event::Cursor(position)).await?;
+                }
+            }
+        }
     }
 }
 
@@ -427,7 +541,7 @@ mod tests {
     async fn loopback_shares_snapshot_and_revisions() {
         let lookup = MemoryLookup::new();
         let document = Arc::new(godpdf_core::blank_document(72.0, 72.0).unwrap());
-        let (host, mut host_events) = start_worker(
+        let (host, mut host_events, host_cursor) = start_worker(
             Start::Host {
                 document: document.clone(),
             },
@@ -435,14 +549,23 @@ mod tests {
             Some(lookup.clone()),
         )
         .unwrap();
-        let Some(Event::Invitation(code)) = next(&mut host_events).await else {
+        let Some(Event::Invitation { code, ticket }) = next(&mut host_events).await else {
             panic!("expected invitation");
         };
         assert_eq!(normalize_code(&code).as_ref(), Some(&code));
 
-        let spaced = format!("{} {}", &code[..3], &code[3..]);
-        let (guest, mut guest_events) =
-            start_worker(Start::Join { code: spaced }, "Guest".into(), Some(lookup)).unwrap();
+        let document = Arc::new(godpdf_core::insert_blank_page(&document, 1, 72.0, 72.0).unwrap());
+        host.send_replace(Some(Revision {
+            bytes: document.clone(),
+            turn: INITIAL_TURN,
+            grant: None,
+        }));
+        let (guest, mut guest_events, guest_cursor) = start_worker(
+            Start::Join { code: ticket },
+            "Guest".into(),
+            Some(MemoryLookup::new()),
+        )
+        .unwrap();
         assert!(
             matches!(next(&mut guest_events).await, Some(Event::Document(bytes)) if bytes == document)
         );
@@ -456,7 +579,7 @@ mod tests {
         let mut previous = document;
         let mut turn = INITIAL_TURN;
         for (sender, receiver, page) in
-            [(&host, &mut guest_events, 1), (&guest, &mut host_events, 2)]
+            [(&host, &mut guest_events, 2), (&guest, &mut host_events, 3)]
         {
             let bytes =
                 Arc::new(godpdf_core::insert_blank_page(&previous, page, 72.0, 72.0).unwrap());
@@ -488,13 +611,37 @@ mod tests {
             matches!(next(&mut guest_events).await, Some(Event::Update(update)) if update.bytes == previous && update.grant == Some([9; 32]))
         );
 
+        let host_position = Cursor {
+            page: 1,
+            x: 0.25,
+            y: 0.75,
+        };
+        let guest_position = Cursor {
+            page: 0,
+            x: 0.75,
+            y: 0.25,
+        };
+        host_cursor.send_replace(Some(host_position));
+        guest_cursor.send_replace(Some(guest_position));
+        assert!(
+            matches!(next(&mut guest_events).await, Some(Event::Cursor(Some(position))) if position == host_position)
+        );
+        assert!(
+            matches!(next(&mut host_events).await, Some(Event::Cursor(Some(position))) if position == guest_position)
+        );
+        guest_cursor.send_replace(None);
+        assert!(matches!(
+            next(&mut host_events).await,
+            Some(Event::Cursor(None))
+        ));
+
         drop(guest);
         assert!(next(&mut guest_events).await.is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn sender_drop_cancels_pending_accept() {
-        let (host, mut events) = start_worker(
+        let (host, mut events, _cursor) = start_worker(
             Start::Host {
                 document: Arc::new(vec![1]),
             },
@@ -504,7 +651,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             next(&mut events).await,
-            Some(Event::Invitation(_))
+            Some(Event::Invitation { .. })
         ));
         drop(host);
         assert!(next(&mut events).await.is_none());
@@ -530,25 +677,26 @@ mod tests {
 mod network_tests {
     use super::*;
 
-    /// Real iroh DNS + relays: `cargo test -p godpdf -- --ignored code_finds_host_over_internet`.
+    /// Uses the production Iroh configuration, including relay discovery when available.
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "needs internet"]
-    async fn code_finds_host_over_internet() {
+    async fn copied_invitation_finds_host_with_production_transport() {
         let document = Arc::new(godpdf_core::blank_document(72.0, 72.0).unwrap());
         let started = std::time::Instant::now();
-        let (_host, mut host_events) = start(
+        let (_host, mut host_events, _host_cursor) = start(
             Start::Host {
                 document: document.clone(),
             },
             "Host".into(),
         )
         .unwrap();
-        let Some(Event::Invitation(code)) = host_events.recv().await else {
+        let Some(Event::Invitation { ticket, .. }) = host_events.recv().await else {
             panic!("expected invitation");
         };
-        println!("code {code} after {:?}", started.elapsed());
+        println!("invitation ready after {:?}", started.elapsed());
         let joined = std::time::Instant::now();
-        let (_guest, mut guest_events) = start(Start::Join { code }, "Guest".into()).unwrap();
+        let (_guest, mut guest_events, _guest_cursor) =
+            start(Start::Join { code: ticket }, "Guest".into()).unwrap();
         let event = timeout(Duration::from_secs(60), guest_events.recv())
             .await
             .unwrap();

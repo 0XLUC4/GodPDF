@@ -529,7 +529,12 @@ pub fn page_overlay(
                     cx.notify();
                 }),
             )
-            .on_mouse_move(cx.listener(move |tab, event, _, cx| edit_hover(tab, page, event, cx)))
+            .on_mouse_move(
+                cx.listener(move |tab, event: &gpui::MouseMoveEvent, _, cx| {
+                    tab.share_cursor(event.position);
+                    edit_hover(tab, page, event, cx);
+                }),
+            )
             .on_hover(cx.listener(move |tab, hovered: &bool, _, cx| {
                 if !hovered && tab.text.hover.is_some_and(|(at, _)| at == page) {
                     tab.text.hover = None;

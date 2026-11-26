@@ -16,7 +16,7 @@ use gpui::{
 
 use crate::app::GodPdfApp;
 use crate::doc::DocTab;
-use crate::geometry::{Spread, ZOOM_STEP};
+use crate::geometry::{PageRect, Spread, ZOOM_STEP};
 use crate::theme::Palette;
 use crate::tools;
 
@@ -103,6 +103,14 @@ impl Render for DocTab {
         if self.view.presenting.is_some() {
             return self.presentation(window, cx);
         }
+        // Keyboard navigation and resizing can move a page under a stationary mouse.
+        if self
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.cursor_sender.borrow().is_some())
+        {
+            self.share_cursor(window.mouse_position());
+        }
         let palette = Palette::of(cx);
         let measure = measure(cx.entity());
 
@@ -114,7 +122,16 @@ impl Render for DocTab {
             .bg(palette.canvas)
             .child(measure)
             .on_scroll(cx.listener(Self::on_wheel))
-            .on_mouse_move(cx.listener(Self::on_drag_thumb))
+            .on_mouse_move(cx.listener(|tab, event: &MouseMoveEvent, window, cx| {
+                tab.on_drag_thumb(event, window, cx);
+                tab.share_cursor(event.position);
+            }))
+            .on_hover(cx.listener(|tab, _: &bool, window, _| {
+                tab.share_cursor(window.mouse_position());
+            }))
+            .on_mouse_exit(cx.listener(|tab, _, _, _| {
+                tab.hide_shared_cursor();
+            }))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|tab, _, _, cx| {
@@ -202,7 +219,8 @@ impl Render for DocTab {
                     .children(hits)
                     .children(text_under)
                     .children(overlay)
-                    .children(text_over),
+                    .children(text_over)
+                    .children(self.remote_cursor(page, rect)),
             );
         }
         self.trim_cache(visible, window);
@@ -240,6 +258,79 @@ fn fill_zoom(size: (f32, f32), view: (f32, f32)) -> f32 {
 }
 
 impl DocTab {
+    pub(crate) fn share_cursor(&self, position: gpui::Point<Pixels>) {
+        let Some(shared) = &self.shared else {
+            return;
+        };
+        if shared.peer_name.is_none() || self.companion {
+            return;
+        }
+        let bounds = self.view.bounds;
+        let (scroll_x, scroll_y) = self.view.scroll;
+        let x = f32::from(position.x - bounds.origin.x) + scroll_x;
+        let y = f32::from(position.y - bounds.origin.y) + scroll_y;
+        let cursor = bounds
+            .contains(&position)
+            .then(|| self.layout())
+            .and_then(|layout| {
+                let (page, _) = layout.hit(x, y)?;
+                let rect = layout.rects[page];
+                Some(crate::collaboration::Cursor {
+                    page: u32::try_from(page).ok()?,
+                    x: ((x - rect.x) / rect.width).clamp(0.0, 1.0),
+                    y: ((y - rect.y) / rect.height).clamp(0.0, 1.0),
+                })
+            });
+        shared.cursor_sender.send_if_modified(|previous| {
+            if *previous == cursor {
+                return false;
+            }
+            *previous = cursor;
+            true
+        });
+    }
+
+    fn hide_shared_cursor(&self) {
+        if let Some(shared) = &self.shared {
+            shared.cursor_sender.send_replace(None);
+        }
+    }
+
+    fn remote_cursor(&self, page: usize, rect: PageRect) -> Option<Div> {
+        let shared = self.shared.as_ref()?;
+        let cursor = shared.peer_cursor?;
+        let name = shared.peer_name.as_ref()?;
+        if cursor.page as usize != page {
+            return None;
+        }
+        let fill = gpui::rgb(if shared.hosted { 0x087c70 } else { 0x5639b5 });
+        Some(
+            div()
+                .absolute()
+                .left(px(cursor.x * rect.width))
+                .top(px(cursor.y * rect.height))
+                .flex()
+                .items_start()
+                .gap(px(2.))
+                .child(
+                    crate::widgets::glyph(crate::icons::CURSOR)
+                        .text_color(fill)
+                        .text_size(px(17.)),
+                )
+                .child(
+                    div()
+                        .rounded(px(4.))
+                        .bg(fill)
+                        .px(px(5.))
+                        .py(px(2.))
+                        .text_color(white())
+                        .text_size(px(12.))
+                        .whitespace_nowrap()
+                        .child(name.clone()),
+                ),
+        )
+    }
+
     fn set_bounds(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
         if self.view.bounds == bounds {
             return;
@@ -285,6 +376,7 @@ impl DocTab {
         } else {
             self.scroll_by((-lines_x * LINE_HEIGHT, -lines_y * LINE_HEIGHT));
         }
+        self.share_cursor(event.position);
         cx.stop_propagation();
         cx.notify();
     }
@@ -385,6 +477,7 @@ impl DocTab {
 
     /// Show the current page alone, fitted to the full-screen window.
     fn present(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_shared_cursor();
         if self.page_count() == 0 || self.view.presenting.is_some() {
             return;
         }

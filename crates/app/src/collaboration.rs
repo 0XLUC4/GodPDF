@@ -18,6 +18,7 @@ use crate::doc::{DocTab, guarded};
 use crate::theme::Palette;
 use crate::widgets::{accent_button, framed_button};
 use crate::{fonts, text, toasts, tools};
+pub(crate) use transport::Cursor;
 use transport::{Event, INITIAL_TURN, MAX_PDF, Revision, Start, Turn};
 
 pub(crate) const SHARED_PDF_LIMIT: usize = MAX_PDF;
@@ -27,6 +28,10 @@ pub(crate) struct SharedDocument {
     pub(crate) editing: bool,
     turn: Turn,
     sender: watch::Sender<Option<Revision>>,
+    pub(crate) cursor_sender: watch::Sender<Option<Cursor>>,
+    pub(crate) peer_cursor: Option<Cursor>,
+    pub(crate) peer_name: Option<String>,
+    pub(crate) hosted: bool,
 }
 
 impl SharedDocument {
@@ -80,8 +85,14 @@ pub(crate) struct Collaboration {
 struct Session {
     tab: Option<WeakEntity<DocTab>>,
     sender: watch::Sender<Option<Revision>>,
-    invitation: Option<String>,
+    cursor_sender: watch::Sender<Option<Cursor>>,
+    invitation: Option<Invitation>,
     peer: Option<String>,
+}
+
+struct Invitation {
+    code: String,
+    ticket: String,
 }
 
 /// Label of the header button: "Share" in a PDF, "Join" elsewhere, "Shared" during a session.
@@ -118,7 +129,9 @@ pub(crate) fn toggle(app: &mut GodPdfApp, window: &mut Window, cx: &mut Context<
                 .collaboration
                 .code
                 .get_or_insert_with(|| {
-                    cx.new(|cx| InputState::new(window, cx).placeholder("123 456"))
+                    cx.new(|cx| {
+                        InputState::new(window, cx).placeholder("Invitation or 6-digit code")
+                    })
                 })
                 .clone();
             input.update(cx, |input, cx| {
@@ -140,8 +153,8 @@ fn join(app: &mut GodPdfApp, cx: &mut Context<GodPdfApp>) {
         return;
     };
     let code = input.read(cx).value().to_string();
-    if transport::normalize_code(&code).is_none() {
-        toasts::note(cx, "Enter the 6-digit code you received");
+    if transport::parse_invitation(&code).is_none() {
+        toasts::note(cx, "Paste the invitation or enter the 6-digit code");
         return;
     }
     start(app, Start::Join { code }, None, cx);
@@ -198,7 +211,7 @@ fn start(
     if app.collaboration.session.is_some() {
         return;
     }
-    let (sender, mut events) = match transport::start(mode, computer_name()) {
+    let (sender, mut events, cursor_sender) = match transport::start(mode, computer_name()) {
         Ok(transport) => transport,
         Err(error) => {
             toasts::error(cx, error);
@@ -211,6 +224,10 @@ fn start(
                 editing: true,
                 turn: INITIAL_TURN,
                 sender: sender.clone(),
+                cursor_sender: cursor_sender.clone(),
+                peer_cursor: None,
+                peer_name: None,
+                hosted: true,
             });
             cx.notify();
         });
@@ -220,6 +237,7 @@ fn start(
     app.collaboration.session = Some(Session {
         tab: tab.map(|tab| tab.downgrade()),
         sender,
+        cursor_sender,
         invitation: None,
         peer: None,
     });
@@ -263,7 +281,9 @@ fn receive(app: &mut GodPdfApp, event: Event, cx: &mut Context<GodPdfApp>) -> Re
         .as_mut()
         .ok_or("The session has ended")?;
     match event {
-        Event::Invitation(code) => session.invitation = Some(code),
+        Event::Invitation { code, ticket } => {
+            session.invitation = Some(Invitation { code, ticket })
+        }
         Event::Connected(peer) => {
             let peer: String = peer
                 .chars()
@@ -271,6 +291,14 @@ fn receive(app: &mut GodPdfApp, event: Event, cx: &mut Context<GodPdfApp>) -> Re
                 .take(48)
                 .collect();
             toasts::note(cx, format!("Connected with {peer}"));
+            if let Some(tab) = session.tab.as_ref().and_then(WeakEntity::upgrade) {
+                tab.update(cx, |tab, cx| {
+                    if let Some(shared) = &mut tab.shared {
+                        shared.peer_name = Some(peer.clone());
+                    }
+                    cx.notify();
+                });
+            }
             session.peer = Some(peer);
             session.invitation = None;
             app.collaboration.open = false;
@@ -281,6 +309,7 @@ fn receive(app: &mut GodPdfApp, event: Event, cx: &mut Context<GodPdfApp>) -> Re
             }
             validate_pdf(&bytes)?;
             let sender = session.sender.clone();
+            let cursor_sender = session.cursor_sender.clone();
             app.open_bytes(
                 "Shared document.pdf".into(),
                 None,
@@ -293,11 +322,25 @@ fn receive(app: &mut GodPdfApp, event: Event, cx: &mut Context<GodPdfApp>) -> Re
                     editing: false,
                     turn: INITIAL_TURN,
                     sender,
+                    cursor_sender,
+                    peer_cursor: None,
+                    peer_name: None,
+                    hosted: false,
                 });
                 cx.notify();
             });
             if let Some(session) = &mut app.collaboration.session {
                 session.tab = Some(tab.downgrade());
+            }
+        }
+        Event::Cursor(position) => {
+            if let Some(tab) = session.tab.as_ref().and_then(WeakEntity::upgrade) {
+                tab.update(cx, |tab, cx| {
+                    if let Some(shared) = &mut tab.shared {
+                        shared.peer_cursor = position;
+                        cx.notify();
+                    }
+                });
             }
         }
         Event::Update(revision) => {
@@ -417,9 +460,9 @@ fn can_edit(session: &Session, cx: &Context<GodPdfApp>) -> bool {
         .is_some_and(|tab| tab.read(cx).can_edit())
 }
 
-fn copy_code(code: &str, cx: &mut gpui::App) {
-    cx.write_to_clipboard(ClipboardItem::new_string(code.to_owned()));
-    toasts::note(cx, "Code copied");
+fn copy_invitation(ticket: &str, cx: &mut gpui::App) {
+    cx.write_to_clipboard(ClipboardItem::new_string(ticket.to_owned()));
+    toasts::note(cx, "Invitation copied");
 }
 
 /// Slim bar under the header while a session runs and its popup is closed.
@@ -430,6 +473,16 @@ pub(crate) fn panel(
     cx: &mut Context<GodPdfApp>,
 ) -> Option<AnyElement> {
     let session = app.collaboration.session.as_ref()?;
+    let active = app.active_tab();
+    if app.collaboration.open
+        || !app.doc_view()
+        || active.map(Entity::downgrade).as_ref() != session.tab.as_ref()
+        || active.is_some_and(|tab| tab.read(cx).grid.on)
+    {
+        session
+            .cursor_sender
+            .send_if_modified(|cursor| cursor.take().is_some());
+    }
     if app.collaboration.open {
         return None;
     }
@@ -445,13 +498,13 @@ pub(crate) fn panel(
         .border_color(palette.border)
         .text_color(palette.text_dim)
         .child(status(session, editing));
-    if let Some(code) = &session.invitation {
-        let code = code.clone();
+    if let Some(invitation) = &session.invitation {
+        let ticket = invitation.ticket.clone();
         row = row.child(
-            Button::new("copy-share-code")
+            Button::new("copy-share-invitation")
                 .ghost()
-                .child(format!("Code {}", spaced(&code)))
-                .on_click(move |_, _, cx| copy_code(&code, cx)),
+                .child("Copy invitation")
+                .on_click(move |_, _, cx| copy_invitation(&ticket, cx)),
         );
     }
     if editing && session.peer.is_some() {
@@ -471,7 +524,7 @@ pub(crate) fn panel(
     Some(row.into_any_element())
 }
 
-/// The share / join popup: a 6-digit code to give, or to type.
+/// The share / join popup accepts a copied invitation or a short code.
 pub(crate) fn overlay(
     app: &mut GodPdfApp,
     window: &mut Window,
@@ -486,47 +539,46 @@ pub(crate) fn overlay(
         .on_action(cx.listener(|app, _: &DialogCancel, _, cx| close_popup(app, cx)));
     let close = framed_button("share-close", "Close", true, &palette)
         .on_click(cx.listener(|app, _, _, cx| close_popup(app, cx)));
-    let card =
-        match &app.collaboration.session {
-            None => {
-                let input = app.collaboration.code.clone().unwrap_or_else(|| {
-                    cx.new(|cx| InputState::new(window, cx).placeholder("123 456"))
-                });
-                app.collaboration.code = Some(input.clone());
-                card.on_action(cx.listener(|app, _: &DialogConfirm, _, cx| join(app, cx)))
-                    .child(dialogs::title("Join a shared PDF"))
-                    .child(
-                        div()
-                            .text_color(palette.text_dim)
-                            .child("Enter the 6-digit code you received."),
-                    )
-                    .child(Input::new(&input))
-                    .child(
-                        dialogs::button_row()
-                            .child(
-                                accent_button("share-join", "Join", true, &palette)
-                                    .on_click(cx.listener(|app, _, _, cx| join(app, cx))),
-                            )
-                            .child(close),
-                    )
-            }
-            Some(session) => {
-                let editing = can_edit(session, cx);
-                let mut card = card
-                    .on_action(cx.listener(|app, _: &DialogConfirm, _, cx| close_popup(app, cx)))
-                    .child(dialogs::title(
-                        if session.tab.is_some() && session.invitation.is_some() {
-                            "Share this PDF"
-                        } else {
-                            "Shared PDF"
-                        },
-                    ));
-                let mut buttons = dialogs::button_row();
-                if let Some(code) = &session.invitation {
-                    let copied = code.clone();
-                    card = card
+    let card = match &app.collaboration.session {
+        None => {
+            let input = app.collaboration.code.clone().unwrap_or_else(|| {
+                cx.new(|cx| InputState::new(window, cx).placeholder("Invitation or 6-digit code"))
+            });
+            app.collaboration.code = Some(input.clone());
+            card.on_action(cx.listener(|app, _: &DialogConfirm, _, cx| join(app, cx)))
+                .child(dialogs::title("Join a shared PDF"))
+                .child(
+                    div()
+                        .text_color(palette.text_dim)
+                        .child("Paste the invitation or enter the 6-digit code."),
+                )
+                .child(Input::new(&input))
+                .child(
+                    dialogs::button_row()
+                        .child(
+                            accent_button("share-join", "Join", true, &palette)
+                                .on_click(cx.listener(|app, _, _, cx| join(app, cx))),
+                        )
+                        .child(close),
+                )
+        }
+        Some(session) => {
+            let editing = can_edit(session, cx);
+            let mut card = card
+                .on_action(cx.listener(|app, _: &DialogConfirm, _, cx| close_popup(app, cx)))
+                .child(dialogs::title(
+                    if session.tab.is_some() && session.invitation.is_some() {
+                        "Share this PDF"
+                    } else {
+                        "Shared PDF"
+                    },
+                ));
+            let mut buttons = dialogs::button_row();
+            if let Some(invitation) = &session.invitation {
+                let ticket = invitation.ticket.clone();
+                card = card
                         .child(div().text_color(palette.text_dim).child(
-                            "Give this code to the other person: in GodPDF they click Join.",
+                            "Copy the invitation and send it to the other person. In GodPDF, they click Join and paste it.",
                         ))
                         .child(
                             div()
@@ -535,39 +587,39 @@ pub(crate) fn overlay(
                                 .justify_center()
                                 .font_family(fonts::MONO)
                                 .text_size(px(34.))
-                                .child(spaced(code)),
+                                .child(spaced(&invitation.code)),
                         );
-                    buttons = buttons.child(
-                        accent_button("share-copy", "Copy code", true, &palette)
-                            .on_click(move |_, _, cx| copy_code(&copied, cx)),
-                    );
-                }
-                card = card.child(
-                    div()
-                        .text_color(palette.text_dim)
-                        .child(status(session, editing)),
+                buttons = buttons.child(
+                    accent_button("share-copy", "Copy invitation", true, &palette)
+                        .on_click(move |_, _, cx| copy_invitation(&ticket, cx)),
                 );
-                if editing && session.peer.is_some() {
-                    buttons = buttons.child(
-                        accent_button("share-pass", "Pass editing control", true, &palette)
-                            .on_click(cx.listener(|app, _, _, cx| pass(app, cx))),
-                    );
-                }
-                let end = if session.peer.is_some() {
-                    "End session"
-                } else {
-                    "Cancel"
-                };
-                card.child(
-                    buttons
-                        .child(
-                            framed_button("share-end", end, true, &palette)
-                                .on_click(cx.listener(|app, _, _, cx| leave(app, cx))),
-                        )
-                        .child(close),
-                )
             }
-        };
+            card = card.child(
+                div()
+                    .text_color(palette.text_dim)
+                    .child(status(session, editing)),
+            );
+            if editing && session.peer.is_some() {
+                buttons = buttons.child(
+                    accent_button("share-pass", "Pass editing control", true, &palette)
+                        .on_click(cx.listener(|app, _, _, cx| pass(app, cx))),
+                );
+            }
+            let end = if session.peer.is_some() {
+                "End session"
+            } else {
+                "Cancel"
+            };
+            card.child(
+                buttons
+                    .child(
+                        framed_button("share-end", end, true, &palette)
+                            .on_click(cx.listener(|app, _, _, cx| leave(app, cx))),
+                    )
+                    .child(close),
+            )
+        }
+    };
     Some(
         div()
             .id("share-backdrop")
@@ -600,6 +652,10 @@ mod tests {
             editing: true,
             turn: INITIAL_TURN,
             sender,
+            cursor_sender: watch::channel(None).0,
+            peer_cursor: None,
+            peer_name: None,
+            hosted: true,
         });
         tab.apply("Add second page", |bytes| {
             godpdf_core::insert_blank_page(bytes, 1, 72.0, 72.0)

@@ -1,12 +1,13 @@
-use std::{cell::RefCell, sync::Arc, thread, time::Duration};
+use std::{cell::RefCell, net::Ipv4Addr, sync::Arc, thread, time::Duration};
 
 use iroh::{
-    Endpoint, EndpointAddr, SecretKey,
+    Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey,
     address_lookup::MemoryLookup,
     endpoint::{RecvStream, SendStream, presets},
 };
 use sha2::{Digest, Sha256};
 use tokio::{
+    net::UdpSocket,
     runtime::Builder,
     sync::{mpsc, watch},
     time::{Instant, sleep, timeout},
@@ -16,12 +17,12 @@ pub(super) const MAX_PDF: usize = 64 * 1024 * 1024;
 const CODE_DIGITS: usize = 6;
 const MAX_LABEL: usize = 256;
 const SECRET_LEN: usize = 32;
-const TICKET_PREFIX: &str = "godpdf:";
 const ALPN: &[u8] = b"godpdf/snapshot/2";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The host's address record can take a few seconds to reach the DNS: the guest retries.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(45);
 const RETRY_DELAY: Duration = Duration::from_millis(700);
+const LAN_LOOKUP_TIMEOUT: Duration = Duration::from_millis(300);
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Revision flags: a new editing turn follows; the body equals the last PDF exchanged.
 const FLAG_GRANT: u8 = 1;
@@ -68,7 +69,7 @@ impl Cursor {
 }
 
 pub(super) enum Event {
-    Invitation { code: String, ticket: String },
+    Invitation(String),
     Connected(String),
     Document(Arc<Vec<u8>>),
     Update(Revision),
@@ -128,27 +129,56 @@ fn host_key(code: &str) -> SecretKey {
     SecretKey::from_bytes(&derive(code, "endpoint"))
 }
 
-pub(super) fn parse_invitation(input: &str) -> Option<(String, EndpointAddr)> {
-    if let Some(ticket) = input.trim().strip_prefix(TICKET_PREFIX) {
-        if ticket.len() > 4096 {
-            return None;
+fn discovery_port(probe: &[u8; 32]) -> u16 {
+    40_000 + u16::from_le_bytes([probe[0], probe[1]]) % 9_000
+}
+
+async fn announce_on_lan(socket: UdpSocket, probe: [u8; 32], quic_port: u16) {
+    let mut request = [0; 33];
+    while let Ok((length, guest)) = socket.recv_from(&mut request).await {
+        if request.get(..length) == Some(&probe[..]) {
+            let _ = socket.send_to(&quic_port.to_le_bytes(), guest).await;
         }
-        let (code, address): (String, EndpointAddr) = serde_json::from_str(ticket).ok()?;
-        let code = normalize_code(&code)?;
-        return (address.id == host_key(&code).public()).then_some((code, address));
     }
-    let code = normalize_code(input)?;
-    let address = EndpointAddr::new(host_key(&code).public());
-    Some((code, address))
+}
+
+async fn find_on_lan(probe: &[u8; 32], host: &EndpointAddr) -> Option<EndpointAddr> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await.ok()?;
+    socket.set_broadcast(true).ok()?;
+    let port = discovery_port(probe);
+    for address in [Ipv4Addr::BROADCAST, Ipv4Addr::LOCALHOST] {
+        let _ = socket.send_to(probe, (address, port)).await;
+    }
+    let mut response = [0; 3];
+    loop {
+        let (length, source) = socket.recv_from(&mut response).await.ok()?;
+        if length == 2 && source.port() == port {
+            let quic_port = u16::from_le_bytes([response[0], response[1]]);
+            if quic_port != 0 {
+                return Some(host.clone().with_ip_addr((source.ip(), quic_port).into()));
+            }
+        }
+    }
+}
+
+fn dedicated_relay(value: &str) -> SessionResult<RelayUrl> {
+    let relay = value
+        .trim()
+        .parse::<RelayUrl>()
+        .map_err(|_| "Invalid GodPDF relay URL")?;
+    if relay.scheme() != "https" || relay.host().is_none() {
+        return Err("The GodPDF relay must have a valid HTTPS URL");
+    }
+    Ok(relay)
 }
 
 enum Session {
     Host(Arc<Vec<u8>>),
-    Join { code: String, host: EndpointAddr },
+    Join(String),
 }
 
 pub(super) fn start(mode: Start, peer_label: String) -> Result<Channels, String> {
-    start_worker(mode, peer_label, None)
+    start_worker(mode, peer_label, None, true)
 }
 
 /// `local`, for tests: peers find each other in memory, on the loopback interface.
@@ -156,6 +186,7 @@ fn start_worker(
     mode: Start,
     label: String,
     local: Option<MemoryLookup>,
+    use_lan: bool,
 ) -> Result<Channels, String> {
     validate_label(&label)?;
     let session = match mode {
@@ -164,8 +195,7 @@ fn start_worker(
             Session::Host(document)
         }
         Start::Join { code } => {
-            let (code, host) = parse_invitation(&code).ok_or("Enter a valid invitation or code")?;
-            Session::Join { code, host }
+            Session::Join(normalize_code(&code).ok_or("Enter the 6-digit code")?)
         }
     };
     let (outgoing, revisions) = watch::channel(None);
@@ -186,7 +216,7 @@ fn start_worker(
                     biased;
                     _ = async { while cancellation.changed().await.is_ok() {} } => return,
                     _ = events.closed() => return,
-                    result = run(session, label, revisions, cursors, &events, local) => result,
+                    result = run(session, label, revisions, cursors, &events, local, use_lan) => result,
                 };
                 if let Err(message) = result {
                     let _ = events.try_send(Event::Failed(message.into()));
@@ -204,11 +234,27 @@ async fn run(
     cursors: watch::Receiver<Option<Cursor>>,
     events: &mpsc::Sender<Event>,
     local: Option<MemoryLookup>,
+    use_lan: bool,
 ) -> SessionResult<()> {
+    let relay = if local.is_none() {
+        std::env::var("GODPDF_RELAY_URL")
+            .ok()
+            .map(|value| dedicated_relay(&value))
+            .transpose()?
+    } else {
+        None
+    };
+    let relay_mode = match &relay {
+        Some(url) => RelayMode::custom([url.clone()]),
+        None => iroh::endpoint::default_relay_mode(),
+    };
     let builder = match &local {
         Some(lookup) => Endpoint::builder(presets::Minimal)
             .relay_mode(iroh::RelayMode::Disabled)
             .address_lookup(lookup.clone()),
+        None if relay.is_some() => {
+            Endpoint::builder(presets::Minimal).relay_mode(relay_mode.clone())
+        }
         None => Endpoint::builder(presets::N0),
     };
     let (code, secret_key) = match &session {
@@ -217,7 +263,7 @@ async fn run(
             let key = host_key(&code);
             (code, key)
         }
-        Session::Join { code, .. } => (code.clone(), SecretKey::generate()),
+        Session::Join(code) => (code.clone(), SecretKey::generate()),
     };
     let endpoint = builder
         .secret_key(secret_key)
@@ -226,54 +272,59 @@ async fn run(
         .await
         .map_err(|_| "Could not bind collaboration endpoint")?;
     let secret = derive(&code, "join");
+    let probe = derive(&code, "lan-discovery");
 
     // Keep the connection alive for both stream futures.
     let (connection, send, recv, exchanged) = match session {
         Session::Host(document) => {
-            let address = if let Some(lookup) = &local {
-                let port = endpoint
-                    .bound_sockets()
-                    .into_iter()
-                    .find(|addr| addr.is_ipv4())
-                    .ok_or("Could not bind loopback endpoint")?
-                    .port();
-                let address =
-                    EndpointAddr::new(endpoint.id()).with_ip_addr(([127, 0, 0, 1], port).into());
-                lookup.add_endpoint_info(address.clone());
-                address
-            } else {
-                // Give the home relay a chance to appear without blocking LAN sharing offline.
-                let _ = timeout(Duration::from_secs(3), endpoint.online()).await;
-                endpoint.addr()
-            };
-            let encoded = serde_json::to_string(&(&code, address))
-                .map_err(|_| "Could not encode the sharing invitation")?;
-            let ticket = format!("{TICKET_PREFIX}{encoded}");
-            publish(events, Event::Invitation { code, ticket }).await?;
-
-            let (connection, mut send, mut recv, guest_label) = loop {
-                let incoming = endpoint
-                    .accept()
+            let quic_port = endpoint
+                .bound_sockets()
+                .into_iter()
+                .find(|addr| addr.is_ipv4())
+                .map(|addr| addr.port());
+            let discovery = match quic_port {
+                Some(port) => UdpSocket::bind((Ipv4Addr::UNSPECIFIED, discovery_port(&probe)))
                     .await
-                    .ok_or("Collaboration endpoint closed")?;
-                let candidate = timeout(AUTH_TIMEOUT, async {
-                    let connection = incoming.await.map_err(|_| "Connection failed")?;
-                    let (send, mut recv) =
-                        connection.accept_bi().await.map_err(|_| "Stream failed")?;
-                    let mut supplied = [0; SECRET_LEN];
-                    recv.read_exact(&mut supplied)
+                    .ok()
+                    .map(|socket| (socket, port)),
+                None => None,
+            };
+            publish(events, Event::Invitation(code)).await?;
+
+            let accept = async {
+                loop {
+                    let incoming = endpoint
+                        .accept()
                         .await
-                        .map_err(|_| "Invitation check failed")?;
-                    if supplied != secret {
-                        return Err("Invitation check failed");
+                        .ok_or("Collaboration endpoint closed")?;
+                    let candidate = timeout(AUTH_TIMEOUT, async {
+                        let connection = incoming.await.map_err(|_| "Connection failed")?;
+                        let (send, mut recv) =
+                            connection.accept_bi().await.map_err(|_| "Stream failed")?;
+                        let mut supplied = [0; SECRET_LEN];
+                        recv.read_exact(&mut supplied)
+                            .await
+                            .map_err(|_| "Invitation check failed")?;
+                        if supplied != secret {
+                            return Err("Invitation check failed");
+                        }
+                        let guest_label = read_label(&mut recv).await?;
+                        Ok((connection, send, recv, guest_label))
+                    })
+                    .await;
+                    if let Ok(Ok(authenticated)) = candidate {
+                        break Ok::<_, &'static str>(authenticated);
                     }
-                    let guest_label = read_label(&mut recv).await?;
-                    Ok((connection, send, recv, guest_label))
-                })
-                .await;
-                if let Ok(Ok(authenticated)) = candidate {
-                    break authenticated;
                 }
+            };
+            let (connection, mut send, mut recv, guest_label) = tokio::select! {
+                result = accept => result?,
+                _ = async {
+                    if let Some((socket, port)) = discovery {
+                        announce_on_lan(socket, probe, port).await;
+                    }
+                    std::future::pending::<()>().await;
+                } => unreachable!(),
             };
 
             // The host can edit while waiting for the guest to enter the code.
@@ -295,10 +346,36 @@ async fn run(
             publish(events, Event::Connected(guest_label)).await?;
             (connection, send, recv, document)
         }
-        Session::Join { host, .. } => {
+        Session::Join(_) => {
             let deadline = Instant::now() + SETUP_TIMEOUT;
+            let host = EndpointAddr::new(host_key(&code).public());
+            let mut internet_target = host.clone();
+            if local.is_none() {
+                // Try the same relays as the host even if its DNS record is unavailable.
+                let relays = relay_mode.relay_map();
+                for relay in relays.urls::<Vec<_>>() {
+                    internet_target = internet_target.with_relay_url(relay);
+                }
+            }
+            let mut use_relay_hints = true;
             let connection = loop {
-                match timeout(AUTH_TIMEOUT, endpoint.connect(host.clone(), ALPN)).await {
+                let fallback = if use_relay_hints || relay.is_some() {
+                    &internet_target
+                } else {
+                    &host
+                };
+                use_relay_hints = !use_relay_hints;
+                let target = if use_lan {
+                    timeout(LAN_LOOKUP_TIMEOUT, find_on_lan(&probe, &host))
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|lan| fallback.clone().with_addrs(lan.addrs))
+                        .unwrap_or_else(|| fallback.clone())
+                } else {
+                    fallback.clone()
+                };
+                match timeout(AUTH_TIMEOUT, endpoint.connect(target, ALPN)).await {
                     Ok(Ok(connection)) => break connection,
                     _ if Instant::now() + RETRY_DELAY >= deadline => {
                         return Err("No shared PDF found for this code");
@@ -547,9 +624,10 @@ mod tests {
             },
             "Host".into(),
             Some(lookup.clone()),
+            true,
         )
         .unwrap();
-        let Some(Event::Invitation { code, ticket }) = next(&mut host_events).await else {
+        let Some(Event::Invitation(code)) = next(&mut host_events).await else {
             panic!("expected invitation");
         };
         assert_eq!(normalize_code(&code).as_ref(), Some(&code));
@@ -561,9 +639,12 @@ mod tests {
             grant: None,
         }));
         let (guest, mut guest_events, guest_cursor) = start_worker(
-            Start::Join { code: ticket },
+            Start::Join {
+                code: format!("{} {}", &code[..3], &code[3..]),
+            },
             "Guest".into(),
             Some(MemoryLookup::new()),
+            true,
         )
         .unwrap();
         assert!(
@@ -647,11 +728,12 @@ mod tests {
             },
             "Host".into(),
             Some(MemoryLookup::new()),
+            true,
         )
         .unwrap();
         assert!(matches!(
             next(&mut events).await,
-            Some(Event::Invitation { .. })
+            Some(Event::Invitation(_))
         ));
         drop(host);
         assert!(next(&mut events).await.is_none());
@@ -664,12 +746,21 @@ mod tests {
         assert_eq!(normalize_code(" 123-456 "), Some("123456".into()));
         assert_eq!(normalize_code("12345"), None);
         assert_eq!(normalize_code("12345a"), None);
+        assert_eq!(normalize_code("godpdf:123456"), None);
         assert_ne!(derive("123456", "endpoint"), derive("123456", "join"));
     }
 
     #[test]
+    fn dedicated_relay_requires_https() {
+        let relay = dedicated_relay("https://relay.example.com").unwrap();
+        assert_eq!(relay.host_str(), Some("relay.example.com"));
+        assert!(dedicated_relay("http://relay.example.com").is_err());
+        assert!(dedicated_relay("relay.example.com").is_err());
+    }
+
+    #[test]
     fn invalid_codes_are_refused_before_connecting() {
-        assert!(start_worker(Start::Join { code: "abc".into() }, "Guest".into(), None).is_err());
+        assert!(start(Start::Join { code: "abc".into() }, "Guest".into()).is_err());
     }
 }
 
@@ -680,7 +771,7 @@ mod network_tests {
     /// Uses the production Iroh configuration, including relay discovery when available.
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "needs internet"]
-    async fn copied_invitation_finds_host_with_production_transport() {
+    async fn short_code_finds_host_without_lan_discovery() {
         let document = Arc::new(godpdf_core::blank_document(72.0, 72.0).unwrap());
         let started = std::time::Instant::now();
         let (_host, mut host_events, _host_cursor) = start(
@@ -690,13 +781,13 @@ mod network_tests {
             "Host".into(),
         )
         .unwrap();
-        let Some(Event::Invitation { ticket, .. }) = host_events.recv().await else {
+        let Some(Event::Invitation(code)) = host_events.recv().await else {
             panic!("expected invitation");
         };
         println!("invitation ready after {:?}", started.elapsed());
         let joined = std::time::Instant::now();
         let (_guest, mut guest_events, _guest_cursor) =
-            start(Start::Join { code: ticket }, "Guest".into()).unwrap();
+            start_worker(Start::Join { code }, "Guest".into(), None, false).unwrap();
         let event = timeout(Duration::from_secs(60), guest_events.recv())
             .await
             .unwrap();

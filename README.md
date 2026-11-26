@@ -98,6 +98,8 @@ You start with editing control. The other person sees changes as you make them. 
 
 The connection is encrypted. GodPDF connects directly when possible and can use an encrypted relay on different networks. Shared PDFs must be unencrypted at the file level and at most 64 MiB. The host and guest must keep GodPDF running during the session.
 
+On the same Wi-Fi, GodPDF can find the host using the six-digit code without internet access. If you operate a dedicated Iroh relay, set `GODPDF_RELAY_URL` to its HTTPS URL and restart GodPDF on both computers. They still join using the same six-digit code.
+
 ## Certificate signatures
 
 **Sign with certificate…** (`Ctrl+K`) signs with the key of a `.pfx` or `.p12` file (RSA or ECDSA P-256, SHA-256). GodPDF asks for the file's password and an optional reason and location. It then writes a signed copy to a new file: a detached CMS signature (`adbe.pkcs7.detached`) added as an incremental update, so earlier signatures remain valid. The password is used only to read the key and is not stored.
